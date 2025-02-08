@@ -1,16 +1,30 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import { listen } from "@tauri-apps/api/event";
+
+
+async function startListening(on_msg: React.Dispatch<React.SetStateAction<string>>) {
+  try {
+    await invoke("start_listening");
+    listen("message", (payload) => {
+      on_msg(payload.payload as string);
+    });
+  } catch (error) {
+    console.error(error);
+  }
+}
 
 function App() {
   const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const listenerSet = useRef(false);
+  useEffect(() => {
+    if (!listenerSet.current) {
+      startListening(setGreetMsg);
+      listenerSet.current = true;
+    }
+  }, []);
 
   return (
     <main className="container">
@@ -33,12 +47,11 @@ function App() {
         className="row"
         onSubmit={(e) => {
           e.preventDefault();
-          greet();
         }}
       >
         <input
           id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
+          onChange={() => {}}
           placeholder="Enter a name..."
         />
         <button type="submit">Greet</button>
