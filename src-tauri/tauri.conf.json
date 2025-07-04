@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "copy_stack",
+  "productName": "Copy Stack",
   "version": "0.1.0",
   "identifier": "com.copy-stack.app",
   "build": {
@@ -12,9 +12,17 @@
   "app": {
     "windows": [
       {
-        "title": "copy_stack",
-        "width": 800,
-        "height": 600
+        "title": "Copy Stack",
+        "width": 900,
+        "height": 700,
+        "minWidth": 600,
+        "minHeight": 400,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "visible": true
       }
     ],
     "security": {
