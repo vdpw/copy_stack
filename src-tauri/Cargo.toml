@@ -26,4 +26,5 @@ serde_json = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
 copy_event_listener = { path = "../../copy_event_listener" }
