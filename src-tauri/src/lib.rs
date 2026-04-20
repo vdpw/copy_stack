@@ -7,11 +7,15 @@ use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
 use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
-use tauri::{Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // State to hold the database
 pub struct AppState {
     db: Mutex<Database>,
+}
+
+fn emit_events_updated(app_handle: &AppHandle) {
+    let _ = app_handle.emit("copy-events-updated", ());
 }
 
 #[tauri::command]
@@ -33,16 +37,31 @@ async fn clear_all_events(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn copy_to_clipboard(event_data: String) -> Result<(), String> {
-    // Deserialize the event data
-    let event: Event = serde_json::from_str(&event_data)
-        .map_err(|e| format!("Failed to deserialize event: {}", e))?;
+async fn copy_to_clipboard(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let event = {
+        let db = state.db.lock().unwrap();
+        db.get_event_by_id(&id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Event not found: {}", id))?
+    };
 
-    // Create a new clipboard listener and set the event
     let listener = ClipboardListener::new();
     listener
         .set_clipboard_event(event)
-        .map_err(|e| format!("Failed to set clipboard: {}", e))
+        .map_err(|e| format!("Failed to set clipboard: {}", e))?;
+
+    {
+        let db = state.db.lock().unwrap();
+        db.move_event_to_top(&id).map_err(|e| e.to_string())?;
+    }
+
+    emit_events_updated(&app_handle);
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -85,13 +104,15 @@ pub fn run(rx: Receiver<Event>) {
             let app_handle_clone = app_handle.clone();
             std::thread::spawn(move || {
                 for event in rx {
-                    // Store the event in the database
+                    let mut updated = false;
+
                     if let Ok(db) = app_handle_clone.state::<AppState>().db.lock() {
-                        db.insert_event(&event).unwrap();
+                        updated = db.insert_event(&event).is_ok();
                     }
 
-                    // Emit the event to the frontend
-                    app_handle_clone.emit("new-copy-event", event).unwrap();
+                    if updated {
+                        emit_events_updated(&app_handle_clone);
+                    }
                 }
             });
 
