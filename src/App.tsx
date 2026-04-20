@@ -104,9 +104,10 @@ function App() {
           }
   };
 
-  const copyToClipboard = async (eventData: string) => {
+  const copyToClipboard = async (id: string) => {
     try {
-      await invoke("copy_to_clipboard", { eventData });
+      await invoke("copy_to_clipboard", { id });
+      await loadEvents();
     } catch (error) {
           }
   };
@@ -123,27 +124,14 @@ function App() {
     loadEvents();
     loadMaxItems();
 
-    // Listen for new copy events
-    const unlisten = listen("new-copy-event", event => {
-      const newEvent = event.payload as ClipboardEvent;
-      // Convert the event to StoredEvent format for consistency
-      const storedEvent: StoredEvent = {
-        id: crypto.randomUUID(),
-        event_data: JSON.stringify(newEvent),
-        timestamp: new Date().toISOString(),
-      };
-      setCopyEvents(prev => {
-        const newEvents = [storedEvent, ...prev];
-        // Enforce max_items limit in UI
-        const limitedEvents = newEvents.slice(0, maxItems);
-        return limitedEvents;
-      });
+    const unlisten = listen("copy-events-updated", () => {
+      void loadEvents();
     });
 
     return () => {
       unlisten.then(f => f());
     };
-  }, [maxItems]);
+  }, []);
 
   // Debug effect to track showConfirmDialog state
   useEffect(() => {}, [showConfirmDialog]);
@@ -309,7 +297,7 @@ function App() {
                   </div>
                   <div className="event-actions">
                     <button
-                      onClick={() => copyToClipboard(event.event_data)}
+                      onClick={() => copyToClipboard(event.id)}
                       className="btn btn-primary"
                       title="Copy to clipboard"
                     >
