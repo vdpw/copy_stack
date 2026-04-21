@@ -1,12 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle, Copy, RefreshCw, Settings, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  AlertTriangle,
+  Archive,
+  Copy,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  Settings2,
+  Trash2,
+} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import "./App.css";
+
+type View = "history" | "settings";
 
 interface Data {
   type: string;
-  data: number[]; // Vec<u8> serialized as number array
+  data: number[];
 }
 
 interface Item {
@@ -19,134 +30,161 @@ interface ClipboardEvent {
 
 interface StoredEvent {
   id: string;
-  event_data: string; // JSON serialized ClipboardEvent
+  event_data: string;
   timestamp: string;
 }
 
+interface AppSettings {
+  max_items: number;
+  show_in_menu_bar: boolean;
+}
+
 function App() {
+  const [activeView, setActiveView] = useState<View>("history");
   const [copyEvents, setCopyEvents] = useState<StoredEvent[]>([]);
   const [loading, setLoading] = useState(false);
-  const [maxItems, setMaxItems] = useState(100);
-  const [showSettings, setShowSettings] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
+  const [maxItems, setMaxItems] = useState(100);
+  const [pendingMaxItemsInput, setPendingMaxItemsInput] = useState("100");
+  const [menuBarVisible, setMenuBarVisible] = useState(true);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [pendingMaxItems, setPendingMaxItems] = useState(100);
   const [eventsToDelete, setEventsToDelete] = useState(0);
 
-  const loadEvents = async () => {
+  const loadEvents = useCallback(async () => {
     setLoading(true);
     try {
       const events = await invoke<StoredEvent[]>("get_copy_events");
       setCopyEvents(events);
     } catch (error) {
-          } finally {
+      console.error("Failed to load clipboard history", error);
+    } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadMaxItems = async () => {
+  const loadSettings = useCallback(async () => {
     try {
-      const max = await invoke<number>("get_max_items");
-      setMaxItems(max);
-      setPendingMaxItems(max); // Also update pendingMaxItems to match
+      const settings = await invoke<AppSettings>("get_app_settings");
+      setMaxItems(settings.max_items);
+      setPendingMaxItemsInput(String(settings.max_items));
+      setMenuBarVisible(settings.show_in_menu_bar);
     } catch (error) {
-          }
-  };
+      console.error("Failed to load app settings", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadEvents();
+    void loadSettings();
+
+    let unlistenHistory: (() => void) | undefined;
+    let unlistenNavigation: (() => void) | undefined;
+
+    const registerListeners = async () => {
+      unlistenHistory = await listen("clipboard-history-updated", () => {
+        void loadEvents();
+      });
+      unlistenNavigation = await listen<string>("app:navigate", event => {
+        setActiveView(event.payload === "settings" ? "settings" : "history");
+      });
+    };
+
+    void registerListeners();
+
+    return () => {
+      unlistenHistory?.();
+      unlistenNavigation?.();
+    };
+  }, [loadEvents, loadSettings]);
+
+  const parsedPendingMaxItems = Number.parseInt(pendingMaxItemsInput, 10);
+  const isPendingMaxItemsValid =
+    Number.isInteger(parsedPendingMaxItems) &&
+    parsedPendingMaxItems >= 1 &&
+    parsedPendingMaxItems <= 1000;
+  const isStorageLimitDirty =
+    isPendingMaxItemsValid && parsedPendingMaxItems !== maxItems;
 
   const updateMaxItems = async (newMaxItems: number) => {
     setSettingsLoading(true);
     try {
       await invoke("set_max_items", { maxItems: newMaxItems });
       setMaxItems(newMaxItems);
-      await loadEvents(); // Reload events after changing limit
+      setPendingMaxItemsInput(String(newMaxItems));
+      await loadEvents();
     } catch (error) {
-          } finally {
+      console.error("Failed to update max items", error);
+    } finally {
       setSettingsLoading(false);
     }
   };
 
-  const handleMaxItemsChange = (value: string) => {
-    const numValue = parseInt(value);
-
-    if (!isNaN(numValue) && numValue >= 1 && numValue <= 1000) {
-      // Always update pendingMaxItems to reflect the input value
-      setPendingMaxItems(numValue);
-
-      const currentEventCount = copyEvents.length;
-
-      if (numValue < currentEventCount) {
-        // Show confirmation dialog
-        setEventsToDelete(currentEventCount - numValue);
-        setShowConfirmDialog(true);
-      } else {
-        // No confirmation needed, update directly
-        updateMaxItems(numValue);
-      }
-    } else {
+  const updateMenuBarVisibility = async (nextVisible: boolean) => {
+    setSettingsLoading(true);
+    try {
+      await invoke("set_show_in_menu_bar", {
+        showInMenuBar: nextVisible,
+      });
+      setMenuBarVisible(nextVisible);
+    } catch (error) {
+      console.error("Failed to update menu bar visibility", error);
+    } finally {
+      setSettingsLoading(false);
     }
+  };
+
+  const handleApplyStorageLimit = async () => {
+    if (!isPendingMaxItemsValid || !isStorageLimitDirty) {
+      return;
+    }
+
+    if (parsedPendingMaxItems < copyEvents.length) {
+      setEventsToDelete(copyEvents.length - parsedPendingMaxItems);
+      setShowConfirmDialog(true);
+      return;
+    }
+
+    await updateMaxItems(parsedPendingMaxItems);
   };
 
   const confirmMaxItemsChange = async () => {
     setShowConfirmDialog(false);
-    await updateMaxItems(pendingMaxItems);
+    if (!isPendingMaxItemsValid) {
+      return;
+    }
+    await updateMaxItems(parsedPendingMaxItems);
   };
 
   const cancelMaxItemsChange = () => {
     setShowConfirmDialog(false);
-    setPendingMaxItems(maxItems);
+    setPendingMaxItemsInput(String(maxItems));
   };
 
   const deleteEvent = async (id: string) => {
     try {
       await invoke("delete_copy_event", { id });
-      await loadEvents(); // Reload the list
+      await loadEvents();
     } catch (error) {
-          }
+      console.error("Failed to delete clipboard item", error);
+    }
   };
 
   const copyToClipboard = async (eventData: string) => {
     try {
       await invoke("copy_to_clipboard", { eventData });
     } catch (error) {
-          }
+      console.error("Failed to restore clipboard item", error);
+    }
   };
 
   const clearAllEvents = async () => {
     try {
       await invoke("clear_all_events");
-      await loadEvents(); // Reload the list
+      await loadEvents();
     } catch (error) {
-          }
+      console.error("Failed to clear clipboard history", error);
+    }
   };
-
-  useEffect(() => {
-    loadEvents();
-    loadMaxItems();
-
-    // Listen for new copy events
-    const unlisten = listen("new-copy-event", event => {
-      const newEvent = event.payload as ClipboardEvent;
-      // Convert the event to StoredEvent format for consistency
-      const storedEvent: StoredEvent = {
-        id: crypto.randomUUID(),
-        event_data: JSON.stringify(newEvent),
-        timestamp: new Date().toISOString(),
-      };
-      setCopyEvents(prev => {
-        const newEvents = [storedEvent, ...prev];
-        // Enforce max_items limit in UI
-        const limitedEvents = newEvents.slice(0, maxItems);
-        return limitedEvents;
-      });
-    });
-
-    return () => {
-      unlisten.then(f => f());
-    };
-  }, [maxItems]);
-
-  // Debug effect to track showConfirmDialog state
-  useEffect(() => {}, [showConfirmDialog]);
 
   const formatTimestamp = (timestamp: string) => {
     return new Date(timestamp).toLocaleString();
@@ -155,116 +193,349 @@ function App() {
   const getEventContent = (eventData: string): string => {
     try {
       const event: ClipboardEvent = JSON.parse(eventData);
-      if (event.items.length === 0) return "Empty clipboard";
+      if (event.items.length === 0) {
+        return "Empty clipboard";
+      }
 
-      // Try to find text content first
       for (const item of event.items) {
         for (const data of item.data_list) {
           if (
             data.type === "public.utf8-plain-text" ||
-            data.type === "public.utf16-plain-text"
+            data.type === "public.utf16-plain-text" ||
+            data.type === "NSStringPboardType"
           ) {
-            // Convert number array back to string
-            const text = new TextDecoder().decode(new Uint8Array(data.data));
-            return text;
+            const decoder =
+              data.type === "public.utf16-plain-text"
+                ? new TextDecoder("utf-16le")
+                : new TextDecoder();
+            const text = decoder.decode(new Uint8Array(data.data));
+            if (text.trim().length > 0) {
+              return text;
+            }
           }
         }
       }
 
-      // If no text found, show the first available data type
       if (event.items[0]?.data_list[0]) {
-        const dataType = event.items[0].data_list[0].type;
-        return `[${dataType}]`;
+        return `[${event.items[0].data_list[0].type}]`;
       }
 
       return "Unknown content type";
     } catch (error) {
-            return "Error parsing content";
+      console.error("Failed to parse clipboard payload", error);
+      return "Error parsing content";
     }
   };
 
-  const truncateContent = (content: string, maxLength: number = 100) => {
-    if (content.length <= maxLength) return content;
-    return content.substring(0, maxLength) + "...";
+  const truncateContent = (content: string, maxLength = 160) => {
+    const flattened = content.replace(/\s+/g, " ").trim();
+    if (flattened.length <= maxLength) {
+      return flattened;
+    }
+    return `${flattened.slice(0, maxLength)}...`;
   };
 
   return (
-    <div className="app">
-      <header className="header">
-        <h1>Copy Stack</h1>
-        <div className="header-actions">
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className="btn btn-secondary"
-            title="Settings"
-          >
-            <Settings size={16} />
-            Settings
-          </button>
-          <button
-            onClick={loadEvents}
-            disabled={loading}
-            className="btn btn-secondary"
-          >
-            <RefreshCw size={16} />
-            Refresh
-          </button>
-          <button onClick={clearAllEvents} className="btn btn-danger">
-            <Trash2 size={16} />
-            Clear All
-          </button>
+    <div className="app-shell">
+      <header className="hero">
+        <div className="hero-copy">
+          <p className="eyebrow">macOS clipboard stack</p>
+          <h1>Copy Stack</h1>
+          <p className="hero-description">
+            Run in the menu bar, browse recent clipboard events, and keep local
+            history trimmed to the size you want.
+          </p>
+        </div>
+
+        <div className="hero-stats">
+          <div className="stat-card">
+            <span className="stat-label">Stored items</span>
+            <strong>{copyEvents.length}</strong>
+            <span className="stat-detail">Up to {maxItems} saved locally</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-label">Menu bar</span>
+            <strong>{menuBarVisible ? "Visible" : "Hidden"}</strong>
+            <span className="stat-detail">
+              {menuBarVisible
+                ? "Recent clips are available from the tray menu."
+                : "Turn it back on from Settings when needed."}
+            </span>
+          </div>
         </div>
       </header>
 
-      {showSettings && (
-        <div className="settings-panel">
-          <div className="settings-content">
-            <h3>Settings</h3>
-            <div className="setting-item">
-              <label htmlFor="maxItems">Maximum items to store:</label>
-              <div className="setting-control">
-                <input
-                  id="maxItems"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={pendingMaxItems}
-                  onChange={e => handleMaxItemsChange(e.target.value)}
-                  disabled={settingsLoading}
-                  className="setting-input"
-                />
-                <span className="setting-hint">(1-1000)</span>
-              </div>
-            </div>
-            <div className="setting-info">
-              <p>
-                Current events: {copyEvents.length} / {maxItems}
-              </p>
-            </div>
+      <div className="workspace">
+        <aside className="side-nav">
+          <button
+            className={`nav-button ${
+              activeView === "history" ? "is-active" : ""
+            }`}
+            onClick={() => setActiveView("history")}
+          >
+            <Archive size={18} />
+            History
+          </button>
+          <button
+            className={`nav-button ${
+              activeView === "settings" ? "is-active" : ""
+            }`}
+            onClick={() => setActiveView("settings")}
+          >
+            <Settings2 size={18} />
+            Settings
+          </button>
+
+          <div className="side-note">
+            Every stored clip is mirrored into the menu bar as a direct action,
+            so selecting a tray item restores it back to the clipboard.
           </div>
-        </div>
-      )}
+        </aside>
+
+        <main className="content-panel">
+          {activeView === "history" ? (
+            <>
+              <section className="panel-header">
+                <div>
+                  <p className="section-kicker">Clipboard history</p>
+                  <h2>Recent events</h2>
+                  <p className="section-description">
+                    Refresh the list, restore an item, or clear the local stack.
+                  </p>
+                </div>
+
+                <div className="panel-actions">
+                  <button
+                    onClick={() => void loadEvents()}
+                    disabled={loading}
+                    className="btn btn-secondary"
+                  >
+                    <RefreshCw size={16} />
+                    Refresh
+                  </button>
+                  <button
+                    onClick={() => void clearAllEvents()}
+                    className="btn btn-danger"
+                    disabled={copyEvents.length === 0}
+                  >
+                    <Trash2 size={16} />
+                    Clear all
+                  </button>
+                </div>
+              </section>
+
+              {loading ? (
+                <div className="placeholder-card">Loading clipboard history...</div>
+              ) : copyEvents.length === 0 ? (
+                <div className="empty-state">
+                  <h3>No clipboard events yet</h3>
+                  <p>
+                    Start copying text or files and they will appear here and in
+                    the menu bar menu.
+                  </p>
+                </div>
+              ) : (
+                <div className="events-list">
+                  {copyEvents.map(event => {
+                    const content = getEventContent(event.event_data);
+                    return (
+                      <article key={event.id} className="event-card">
+                        <div className="event-content">
+                          <p className="event-text">
+                            {truncateContent(content)}
+                          </p>
+                          <p className="event-timestamp">
+                            {formatTimestamp(event.timestamp)}
+                          </p>
+                        </div>
+
+                        <div className="event-actions">
+                          <button
+                            onClick={() => void copyToClipboard(event.event_data)}
+                            className="btn btn-primary"
+                            title="Restore to clipboard"
+                          >
+                            <Copy size={16} />
+                          </button>
+                          <button
+                            onClick={() => void deleteEvent(event.id)}
+                            className="btn btn-danger"
+                            title="Delete item"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <section className="panel-header">
+                <div>
+                  <p className="section-kicker">Configuration</p>
+                  <h2>Settings</h2>
+                  <p className="section-description">
+                    Control how much history stays on device and whether the app
+                    is shown in the macOS menu bar.
+                  </p>
+                </div>
+              </section>
+
+              <div className="settings-grid">
+                <article className="settings-card">
+                  <div className="settings-card-header">
+                    <div>
+                      <p className="settings-label">Local retention</p>
+                      <h3>Stored event limit</h3>
+                    </div>
+                  </div>
+
+                  <p className="settings-description">
+                    Reduce or expand the number of clipboard events kept in the
+                    local SQLite store. Lowering the limit immediately removes
+                    the oldest items after confirmation.
+                  </p>
+
+                  <div className="storage-control">
+                    <label htmlFor="max-items-input">Maximum saved events</label>
+                    <div className="storage-input-row">
+                      <input
+                        id="max-items-input"
+                        type="number"
+                        min="1"
+                        max="1000"
+                        value={pendingMaxItemsInput}
+                        onChange={event =>
+                          setPendingMaxItemsInput(event.target.value)
+                        }
+                        disabled={settingsLoading}
+                        className="storage-input"
+                      />
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => void handleApplyStorageLimit()}
+                        disabled={
+                          settingsLoading ||
+                          !isPendingMaxItemsValid ||
+                          !isStorageLimitDirty
+                        }
+                      >
+                        Apply
+                      </button>
+                    </div>
+
+                    <p className="settings-helper">
+                      Currently storing {copyEvents.length} of {maxItems} events.
+                    </p>
+                    {!isPendingMaxItemsValid && (
+                      <p className="settings-error">
+                        Enter a whole number between 1 and 1000.
+                      </p>
+                    )}
+                  </div>
+                </article>
+
+                <article className="settings-card">
+                  <div className="settings-card-header">
+                    <div>
+                      <p className="settings-label">Menu bar</p>
+                      <h3>Tray visibility</h3>
+                    </div>
+                  </div>
+
+                  <p className="settings-description">
+                    Hide or show Copy Stack in the macOS menu bar. When it is
+                    visible, each recent clipboard event appears as its own tray
+                    menu item.
+                  </p>
+
+                  <button
+                    className={`toggle-button ${
+                      menuBarVisible ? "is-on" : "is-off"
+                    }`}
+                    onClick={() =>
+                      void updateMenuBarVisibility(!menuBarVisible)
+                    }
+                    disabled={settingsLoading}
+                    role="switch"
+                    aria-checked={menuBarVisible}
+                  >
+                    <span className="toggle-track">
+                      <span className="toggle-thumb" />
+                    </span>
+                    <span className="toggle-copy">
+                      <strong>
+                        {menuBarVisible
+                          ? "Shown in the menu bar"
+                          : "Hidden from the menu bar"}
+                      </strong>
+                      <span>
+                        {menuBarVisible ? (
+                          <>
+                            <Eye size={14} />
+                            Tray menu is active.
+                          </>
+                        ) : (
+                          <>
+                            <EyeOff size={14} />
+                            Re-open the window from the Dock to turn it back on.
+                          </>
+                        )}
+                      </span>
+                    </span>
+                  </button>
+                </article>
+
+                <article className="settings-card settings-card-accent">
+                  <div className="settings-card-header">
+                    <div>
+                      <p className="settings-label">Current status</p>
+                      <h3>What changes immediately</h3>
+                    </div>
+                  </div>
+
+                  <ul className="status-list">
+                    <li>
+                      New clipboard events update the app window and tray menu
+                      automatically.
+                    </li>
+                    <li>
+                      Clearing or deleting history refreshes the menu-bar list
+                      right away.
+                    </li>
+                    <li>
+                      Closing the main window keeps the app running so the menu
+                      bar entry can stay available.
+                    </li>
+                  </ul>
+                </article>
+              </div>
+            </>
+          )}
+        </main>
+      </div>
 
       {showConfirmDialog && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
               <AlertTriangle size={24} className="warning-icon" />
-              <h3>Confirm Action</h3>
+              <h3>Reduce stored history?</h3>
             </div>
+
             <div className="modal-body">
               <p>
-                You are about to reduce the maximum items from{" "}
-                <strong>{maxItems}</strong> to{" "}
-                <strong>{pendingMaxItems}</strong>.
+                Changing the storage limit from <strong>{maxItems}</strong> to{" "}
+                <strong>{parsedPendingMaxItems}</strong> will remove the{" "}
+                <strong>{eventsToDelete}</strong> oldest clipboard events from
+                local storage.
               </p>
-              <p>
-                This will permanently delete the{" "}
-                <strong>{eventsToDelete} oldest events</strong> from your
-                clipboard history.
-              </p>
-              <p className="warning-text">This action cannot be undone!</p>
+              <p className="warning-text">This action cannot be undone.</p>
             </div>
+
             <div className="modal-actions">
               <button
                 onClick={cancelMaxItemsChange}
@@ -274,61 +545,16 @@ function App() {
                 Cancel
               </button>
               <button
-                onClick={confirmMaxItemsChange}
+                onClick={() => void confirmMaxItemsChange()}
                 className="btn btn-danger"
                 disabled={settingsLoading}
               >
-                {settingsLoading ? "Updating..." : "Delete & Update"}
+                {settingsLoading ? "Updating..." : "Delete and update"}
               </button>
             </div>
           </div>
         </div>
       )}
-
-      <main className="main">
-        {loading ? (
-          <div className="loading">Loading...</div>
-        ) : copyEvents.length === 0 ? (
-          <div className="empty-state">
-            <p>No copy events yet. Start copying text to see them here!</p>
-            <p className="hint">
-              💡 This is a desktop clipboard manager application
-            </p>
-          </div>
-        ) : (
-          <div className="events-list">
-            {copyEvents.map(event => {
-              const content = getEventContent(event.event_data);
-              return (
-                <div key={event.id} className="event-card">
-                  <div className="event-content">
-                    <p className="event-text">{truncateContent(content)}</p>
-                    <p className="event-timestamp">
-                      {formatTimestamp(event.timestamp)}
-                    </p>
-                  </div>
-                  <div className="event-actions">
-                    <button
-                      onClick={() => copyToClipboard(event.event_data)}
-                      className="btn btn-primary"
-                      title="Copy to clipboard"
-                    >
-                      <Copy size={16} />
-                    </button>
-                    <button
-                      onClick={() => deleteEvent(event.id)}
-                      className="btn btn-danger"
-                      title="Delete event"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </main>
     </div>
   );
 }

@@ -3,14 +3,24 @@ use copy_event_listener::event::Event;
 use rusqlite::{Connection, Result};
 use serde_json;
 use sha2::{Digest, Sha256};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use uuid::Uuid;
+
+const DEFAULT_MAX_ITEMS: u32 = 100;
+const MAX_ITEMS_KEY: &str = "max_items";
+const SHOW_IN_MENU_BAR_KEY: &str = "show_in_menu_bar";
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredEvent {
     pub id: String,
     pub event_data: String, // JSON serialized Event
     pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct AppSettings {
+    pub max_items: u32,
+    pub show_in_menu_bar: bool,
 }
 
 impl StoredEvent {
@@ -28,9 +38,15 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn new(_app_handle: &AppHandle) -> Result<Self> {
-        // For now, use a simple path in the current directory
-        let db_path = std::path::Path::new("copy_stack.db");
+    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+        let app_data_dir = app_handle
+            .path()
+            .app_data_dir()
+            .map_err(|_| rusqlite::Error::InvalidPath(std::path::PathBuf::from("app_data_dir")))?;
+        std::fs::create_dir_all(&app_data_dir)
+            .map_err(|_| rusqlite::Error::InvalidPath(app_data_dir.clone()))?;
+
+        let db_path = app_data_dir.join("copy_stack.db");
         let conn = Connection::open(db_path)?;
 
         // Create tables for storing copy_event_listener::event::Event
@@ -58,30 +74,45 @@ impl Database {
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('max_items', '100')",
             [],
         )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('show_in_menu_bar', 'true')",
+            [],
+        )?;
 
         Ok(Self { conn })
     }
 
-    pub fn get_max_items(&self) -> Result<u32> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT value FROM settings WHERE key = 'max_items'")?;
-        let mut rows = stmt.query([])?;
+    pub fn get_settings(&self) -> Result<AppSettings> {
+        Ok(AppSettings {
+            max_items: self.get_max_items()?,
+            show_in_menu_bar: self.get_show_in_menu_bar()?,
+        })
+    }
 
-        if let Some(row) = rows.next()? {
-            let value: String = row.get(0)?;
-            value
-                .parse::<u32>()
-                .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))
-        } else {
-            Ok(100) // Default value
-        }
+    pub fn get_max_items(&self) -> Result<u32> {
+        self.get_u32_setting(MAX_ITEMS_KEY, DEFAULT_MAX_ITEMS)
     }
 
     pub fn set_max_items(&self, max_items: u32) -> Result<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO settings (key, value) VALUES ('max_items', ?1)",
-            [&max_items.to_string()],
+        self.set_setting(MAX_ITEMS_KEY, &max_items.to_string())?;
+        Ok(())
+    }
+
+    pub fn get_show_in_menu_bar(&self) -> Result<bool> {
+        let value = self.get_string_setting(SHOW_IN_MENU_BAR_KEY)?;
+        Ok(match value.as_deref() {
+            Some("false") => false,
+            Some("0") => false,
+            Some("true") => true,
+            Some("1") => true,
+            Some(_) | None => true,
+        })
+    }
+
+    pub fn set_show_in_menu_bar(&self, show_in_menu_bar: bool) -> Result<()> {
+        self.set_setting(
+            SHOW_IN_MENU_BAR_KEY,
+            if show_in_menu_bar { "true" } else { "false" },
         )?;
         Ok(())
     }
@@ -235,6 +266,37 @@ impl Database {
             )?;
         }
 
+        Ok(())
+    }
+
+    fn get_u32_setting(&self, key: &str, default: u32) -> Result<u32> {
+        match self.get_string_setting(key)? {
+            Some(value) => value
+                .parse::<u32>()
+                .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string())),
+            None => Ok(default),
+        }
+    }
+
+    fn get_string_setting(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM settings WHERE key = ?1")?;
+        let mut rows = stmt.query([key])?;
+
+        if let Some(row) = rows.next()? {
+            let value: String = row.get(0)?;
+            Ok(Some(value))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+            [key, value],
+        )?;
         Ok(())
     }
 }
