@@ -169,9 +169,10 @@ function App() {
     }
   };
 
-  const copyToClipboard = async (eventData: string) => {
+  const copyToClipboard = async (id: string) => {
     try {
-      await invoke("copy_to_clipboard", { eventData });
+      await invoke("copy_to_clipboard", { id });
+      await loadEvents();
     } catch (error) {
       console.error("Failed to restore clipboard item", error);
     }
@@ -351,7 +352,7 @@ function App() {
 
                         <div className="event-actions">
                           <button
-                            onClick={() => void copyToClipboard(event.event_data)}
+                            onClick={() => void copyToClipboard(event.id)}
                             className="btn btn-primary"
                             title="Restore to clipboard"
                           >

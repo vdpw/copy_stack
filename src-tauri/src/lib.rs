@@ -44,16 +44,32 @@ async fn clear_all_events(app: AppHandle, state: State<'_, AppState>) -> Result<
 }
 
 #[tauri::command]
-async fn copy_to_clipboard(event_data: String) -> Result<(), String> {
-    // Deserialize the event data
-    let event: Event = serde_json::from_str(&event_data)
-        .map_err(|e| format!("Failed to deserialize event: {}", e))?;
+async fn copy_to_clipboard(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let event = {
+        let db = state.db.lock().unwrap();
+        db.get_event_by_id(&id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Event not found: {}", id))?
+    };
 
-    // Create a new clipboard listener and set the event
     let listener = ClipboardListener::new();
     listener
         .set_clipboard_event(event)
-        .map_err(|e| format!("Failed to set clipboard: {}", e))
+        .map_err(|e| format!("Failed to set clipboard: {}", e))?;
+
+    {
+        let db = state.db.lock().unwrap();
+        db.move_event_to_top(&id).map_err(|e| e.to_string())?;
+    }
+
+    tray::sync(&app_handle)?;
+    tray::notify_history_changed(&app_handle)?;
+
+    Ok(())
 }
 
 #[tauri::command]
