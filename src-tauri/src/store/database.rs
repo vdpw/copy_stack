@@ -1,3 +1,4 @@
+use crate::event::{deserialize_event, serialize_event, ClipboardEvent};
 use chrono::{DateTime, Utc};
 use copy_event_listener::event::{Data, Event, Item};
 use rusqlite::{Connection, Result};
@@ -259,7 +260,7 @@ impl Database {
 
     pub fn insert_event(&self, event: &Event) -> Result<()> {
         let now = Utc::now();
-        let event_data = serde_json::to_string(event)
+        let event_data = serialize_event(event)
             .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
         let content_hash = self.generate_content_hash(event)?;
         let next_sort_order = self.next_sort_order()?;
@@ -335,7 +336,7 @@ impl Database {
     }
 
     fn generate_content_hash_from_event_data(&self, event_data: &str) -> Result<String> {
-        match serde_json::from_str::<Event>(event_data) {
+        match deserialize_event(event_data) {
             Ok(event) => self.generate_content_hash(&event),
             Err(_) => {
                 let mut hasher = Sha256::new();
@@ -350,7 +351,7 @@ impl Database {
         let mut hasher = Sha256::new();
 
         if fragments.is_empty() {
-            let fallback = serde_json::to_string(event)
+            let fallback = serialize_event(event)
                 .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
             hasher.update(fallback.as_bytes());
         } else {
@@ -497,7 +498,23 @@ impl Database {
         let mut rows = stmt.query([id])?;
         if let Some(row) = rows.next()? {
             let event_data: String = row.get(0)?;
-            let event: Event = serde_json::from_str(&event_data)
+            let event = deserialize_event(&event_data)
+                .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+            Ok(Some(event))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_clipboard_event_by_id(&self, id: &str) -> Result<Option<ClipboardEvent>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT event_data FROM clipboard_events WHERE id = ?1")?;
+
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            let event_data: String = row.get(0)?;
+            let event: ClipboardEvent = serde_json::from_str(&event_data)
                 .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
             Ok(Some(event))
         } else {
