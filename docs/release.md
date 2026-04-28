@@ -39,7 +39,30 @@ It runs on `macos-latest`.
 8. Install frontend dependencies with `pnpm install --frozen-lockfile`.
 9. Run `pnpm type-check`.
 10. Run `pnpm lint`.
-11. Publish with `tauri-apps/tauri-action@v0`.
+11. Publish unsigned macOS artifacts with `tauri-apps/tauri-action@v0`.
+
+## Unsigned macOS Releases
+
+The project currently publishes unsigned macOS builds because it is not enrolled
+in the Apple Developer Program.
+
+Unsigned apps downloaded from GitHub can trigger macOS Gatekeeper warnings such
+as:
+
+```text
+"Copy Stack.app" is damaged and can't be opened. You should move it to the Trash.
+```
+
+Users who trust the downloaded release can remove the quarantine attribute after
+dragging the app into `/Applications`:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Copy Stack.app"
+open "/Applications/Copy Stack.app"
+```
+
+Users can also build from source with the development tooling instead of using a
+downloaded artifact.
 
 ## Local Dependency Replacement
 
@@ -94,6 +117,13 @@ Before pushing a release tag:
    `pnpm desktop:dev`.
 7. Confirm `copy_event_listener = "0.1.2"` is still the intended published crate
    for release builds.
+8. After the release uploads, download the `.dmg` on a clean macOS machine and
+   verify that the app opens after removing quarantine:
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Copy Stack.app"
+   open "/Applications/Copy Stack.app"
+   ```
 
 ## Release Artifacts
 
@@ -110,7 +140,9 @@ The workflow uses:
 
 - The published `copy_event_listener` crate can differ from the local path
   checkout used during development.
-- macOS packaging can fail because of platform signing, target, or Tauri
-  dependency issues.
+- macOS packaging can fail because of target or Tauri dependency issues.
+- A release built without Developer ID signing and notarization can be rejected
+  by Gatekeeper after browser download even if it runs locally from a build
+  directory.
 - Frontend checks do not validate clipboard behavior; manual desktop QA is
   still required before tagging.

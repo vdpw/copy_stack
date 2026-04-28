@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   publish-tauri:
-    name: Build and publish macOS ${{ matrix.target }}
+    name: Build and publish unsigned macOS ${{ matrix.target }}
     runs-on: macos-latest
     strategy:
       fail-fast: false
