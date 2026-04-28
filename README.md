@@ -135,12 +135,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Roadmap
 
-- [ ] Keyboard shortcuts
-- [ ] Search functionality
-- [ ] Categories and tags
-- [ ] Cloud sync
 - [ ] Rich previews for more clipboard formats
-- [ ] Export/import functionality
+- [ ] Categories and tags
+- [ ] Windows platform support
+- [ ] Search functionality
+- [ ] Keyboard shortcuts
 
 ## Troubleshooting
 
