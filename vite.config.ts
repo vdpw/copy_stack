@@ -12,6 +12,10 @@ export default defineConfig(async () => ({
   //
   // 1. prevent vite from obscuring rust errors
   clearScreen: false,
-  // 2. Disable local development server by not configuring it
-  // server: undefined,
+  // 2. Use a stable dev server URL for Tauri.
+  server: {
+    port: 5173,
+    strictPort: true,
+    host: host || false,
+  },
 }));

@@ -2,12 +2,16 @@ use chrono::{DateTime, Utc};
 use copy_event_listener::event::{Data, Event, Item};
 use rusqlite::{Connection, Result};
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 use tauri::AppHandle;
 use uuid::Uuid;
 
+const APP_DATA_DIR: &str = ".copy_stack";
+const DB_FILE_NAME: &str = "copy_stack.db";
 const DEFAULT_MAX_ITEMS: u32 = 100;
 const MAX_ITEMS_KEY: &str = "max_items";
 const SHOW_IN_MENU_BAR_KEY: &str = "show_in_menu_bar";
+const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredEvent {
@@ -20,6 +24,7 @@ pub struct StoredEvent {
 pub struct AppSettings {
     pub max_items: u32,
     pub show_in_menu_bar: bool,
+    pub move_restored_item_to_top: bool,
 }
 
 impl StoredEvent {
@@ -48,13 +53,24 @@ pub struct Database {
 
 impl Database {
     pub fn new(_app_handle: &AppHandle) -> Result<Self> {
-        let db_path = std::path::Path::new("copy_stack.db");
-        let conn = Connection::open(db_path)?;
+        let db_path = Self::database_path()?;
+        debug_log!("[copy_stack] database path: {}", db_path.display());
+        let conn = Connection::open(&db_path)?;
         let db = Self { conn };
 
         db.initialize_schema()?;
 
         Ok(db)
+    }
+
+    fn database_path() -> Result<PathBuf> {
+        let home_dir = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| rusqlite::Error::InvalidPath(PathBuf::from("~")))?;
+        let data_dir = home_dir.join(APP_DATA_DIR);
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|_| rusqlite::Error::InvalidPath(data_dir.clone()))?;
+        Ok(data_dir.join(DB_FILE_NAME))
     }
 
     fn initialize_schema(&self) -> Result<()> {
@@ -109,6 +125,10 @@ impl Database {
         )?;
         self.conn.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('show_in_menu_bar', 'true')",
+            [],
+        )?;
+        self.conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('move_restored_item_to_top', 'false')",
             [],
         )?;
 
@@ -196,6 +216,7 @@ impl Database {
         Ok(AppSettings {
             max_items: self.get_max_items()?,
             show_in_menu_bar: self.get_show_in_menu_bar()?,
+            move_restored_item_to_top: self.get_move_restored_item_to_top()?,
         })
     }
 
@@ -209,20 +230,29 @@ impl Database {
     }
 
     pub fn get_show_in_menu_bar(&self) -> Result<bool> {
-        let value = self.get_string_setting(SHOW_IN_MENU_BAR_KEY)?;
-        Ok(match value.as_deref() {
-            Some("false") => false,
-            Some("0") => false,
-            Some("true") => true,
-            Some("1") => true,
-            Some(_) | None => true,
-        })
+        self.get_bool_setting(SHOW_IN_MENU_BAR_KEY, true)
     }
 
     pub fn set_show_in_menu_bar(&self, show_in_menu_bar: bool) -> Result<()> {
         self.set_setting(
             SHOW_IN_MENU_BAR_KEY,
             if show_in_menu_bar { "true" } else { "false" },
+        )?;
+        Ok(())
+    }
+
+    pub fn get_move_restored_item_to_top(&self) -> Result<bool> {
+        self.get_bool_setting(MOVE_RESTORED_ITEM_TO_TOP_KEY, false)
+    }
+
+    pub fn set_move_restored_item_to_top(&self, move_restored_item_to_top: bool) -> Result<()> {
+        self.set_setting(
+            MOVE_RESTORED_ITEM_TO_TOP_KEY,
+            if move_restored_item_to_top {
+                "true"
+            } else {
+                "false"
+            },
         )?;
         Ok(())
     }
@@ -333,6 +363,10 @@ impl Database {
         }
 
         Ok(format!("{:x}", hasher.finalize()))
+    }
+
+    pub fn event_content_hash(&self, event: &Event) -> Result<String> {
+        self.generate_content_hash(event)
     }
 
     fn extract_hash_fragments(&self, event: &Event) -> Vec<HashFragment> {
@@ -512,6 +546,17 @@ impl Database {
                 .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string())),
             None => Ok(default),
         }
+    }
+
+    fn get_bool_setting(&self, key: &str, default: bool) -> Result<bool> {
+        let value = self.get_string_setting(key)?;
+        Ok(match value.as_deref() {
+            Some("false") => false,
+            Some("0") => false,
+            Some("true") => true,
+            Some("1") => true,
+            Some(_) | None => default,
+        })
     }
 
     fn get_string_setting(&self, key: &str) -> Result<Option<String>> {

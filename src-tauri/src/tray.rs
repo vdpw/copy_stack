@@ -1,6 +1,8 @@
 use crate::store::StoredEvent;
-use crate::AppState;
-use copy_event_listener::clipboard::ClipboardListener;
+use crate::{
+    clear_restore_suppression_if_matches, queue_restore_suppression, restore_event_to_clipboard,
+    AppState,
+};
 use copy_event_listener::event::{Data, Event};
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
@@ -29,8 +31,8 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .tooltip("Copy Stack")
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
-            if let Err(error) = handle_menu_event(app, event.id().as_ref()) {
-                eprintln!("tray menu action failed: {}", error);
+            if let Err(_error) = handle_menu_event(app, event.id().as_ref()) {
+                debug_error!("tray menu action failed: {}", _error);
             }
         });
 
@@ -106,17 +108,45 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) -> Result<()
 }
 
 fn restore_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) -> Result<(), String> {
-    let event = {
+    let (event, content_hash, move_restored_item_to_top) = {
         let state = app.state::<AppState>();
         let db = state.db.lock().unwrap();
-        db.get_event_by_id(event_id)
+        let event = db
+            .get_event_by_id(event_id)
             .map_err(|error| error.to_string())?
-    }
-    .ok_or_else(|| format!("Clipboard item not found: {}", event_id))?;
+            .ok_or_else(|| format!("Clipboard item not found: {}", event_id))?;
+        let content_hash = db
+            .event_content_hash(&event)
+            .map_err(|error| error.to_string())?;
+        let move_restored_item_to_top = db
+            .get_move_restored_item_to_top()
+            .map_err(|error| error.to_string())?;
+        (event, content_hash, move_restored_item_to_top)
+    };
 
-    ClipboardListener::new()
-        .set_clipboard_event(event)
-        .map_err(|error| format!("Failed to restore clipboard item: {}", error))
+    if !move_restored_item_to_top {
+        let state = app.state::<AppState>();
+        queue_restore_suppression(&state, content_hash.clone());
+    }
+
+    if let Err(error) = restore_event_to_clipboard(event) {
+        let state = app.state::<AppState>();
+        clear_restore_suppression_if_matches(&state, &content_hash);
+        return Err(error);
+    }
+
+    if move_restored_item_to_top {
+        {
+            let state = app.state::<AppState>();
+            let db = state.db.lock().unwrap();
+            db.move_event_to_top(event_id)
+                .map_err(|error| error.to_string())?;
+        }
+        notify_history_changed(app)?;
+        sync(app)?;
+    }
+
+    Ok(())
 }
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {

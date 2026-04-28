@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   AlertTriangle,
+  ArrowUpDown,
   Archive,
   Copy,
   Eye,
@@ -37,6 +38,7 @@ interface StoredEvent {
 interface AppSettings {
   max_items: number;
   show_in_menu_bar: boolean;
+  move_restored_item_to_top: boolean;
 }
 
 function App() {
@@ -47,6 +49,7 @@ function App() {
   const [maxItems, setMaxItems] = useState(100);
   const [pendingMaxItemsInput, setPendingMaxItemsInput] = useState("100");
   const [menuBarVisible, setMenuBarVisible] = useState(true);
+  const [moveRestoredItemToTop, setMoveRestoredItemToTop] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [eventsToDelete, setEventsToDelete] = useState(0);
 
@@ -56,7 +59,9 @@ function App() {
       const events = await invoke<StoredEvent[]>("get_copy_events");
       setCopyEvents(events);
     } catch (error) {
-      console.error("Failed to load clipboard history", error);
+      if (import.meta.env.DEV) {
+        console.error("Failed to load clipboard history", error);
+      }
     } finally {
       setLoading(false);
     }
@@ -68,8 +73,11 @@ function App() {
       setMaxItems(settings.max_items);
       setPendingMaxItemsInput(String(settings.max_items));
       setMenuBarVisible(settings.show_in_menu_bar);
+      setMoveRestoredItemToTop(settings.move_restored_item_to_top);
     } catch (error) {
-      console.error("Failed to load app settings", error);
+      if (import.meta.env.DEV) {
+        console.error("Failed to load app settings", error);
+      }
     }
   }, []);
 
@@ -113,7 +121,9 @@ function App() {
       setPendingMaxItemsInput(String(newMaxItems));
       await loadEvents();
     } catch (error) {
-      console.error("Failed to update max items", error);
+      if (import.meta.env.DEV) {
+        console.error("Failed to update max items", error);
+      }
     } finally {
       setSettingsLoading(false);
     }
@@ -127,7 +137,25 @@ function App() {
       });
       setMenuBarVisible(nextVisible);
     } catch (error) {
-      console.error("Failed to update menu bar visibility", error);
+      if (import.meta.env.DEV) {
+        console.error("Failed to update menu bar visibility", error);
+      }
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const updateRestoreOrdering = async (nextEnabled: boolean) => {
+    setSettingsLoading(true);
+    try {
+      await invoke("set_move_restored_item_to_top", {
+        moveRestoredItemToTop: nextEnabled,
+      });
+      setMoveRestoredItemToTop(nextEnabled);
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error("Failed to update restore ordering", error);
+      }
     } finally {
       setSettingsLoading(false);
     }
@@ -165,16 +193,32 @@ function App() {
       await invoke("delete_copy_event", { id });
       await loadEvents();
     } catch (error) {
-      console.error("Failed to delete clipboard item", error);
+      if (import.meta.env.DEV) {
+        console.error("Failed to delete clipboard item", error);
+      }
     }
   };
 
   const copyToClipboard = async (id: string) => {
+    if (import.meta.env.DEV) {
+      console.info("[copy_stack] restore requested from UI", { id });
+    }
     try {
       await invoke("copy_to_clipboard", { id });
+      if (import.meta.env.DEV) {
+        console.info("[copy_stack] restore command completed", { id });
+      }
       await loadEvents();
+      if (import.meta.env.DEV) {
+        console.info("[copy_stack] history refreshed after restore", { id });
+      }
     } catch (error) {
-      console.error("Failed to restore clipboard item", error);
+      if (import.meta.env.DEV) {
+        console.error("[copy_stack] failed to restore clipboard item", {
+          id,
+          error,
+        });
+      }
     }
   };
 
@@ -183,7 +227,9 @@ function App() {
       await invoke("clear_all_events");
       await loadEvents();
     } catch (error) {
-      console.error("Failed to clear clipboard history", error);
+      if (import.meta.env.DEV) {
+        console.error("Failed to clear clipboard history", error);
+      }
     }
   };
 
@@ -223,7 +269,9 @@ function App() {
 
       return "Unknown content type";
     } catch (error) {
-      console.error("Failed to parse clipboard payload", error);
+      if (import.meta.env.DEV) {
+        console.error("Failed to parse clipboard payload", error);
+      }
       return "Error parsing content";
     }
   };
@@ -442,6 +490,49 @@ function App() {
                 <article className="settings-card">
                   <div className="settings-card-header">
                     <div>
+                      <p className="settings-label">List order</p>
+                      <h3>Restore ordering</h3>
+                    </div>
+                  </div>
+
+                  <p className="settings-description">
+                    Choose whether restoring a stored clipboard item keeps its
+                    current position or moves it back to the top of history.
+                  </p>
+
+                  <button
+                    className={`toggle-button ${
+                      moveRestoredItemToTop ? "is-on" : "is-off"
+                    }`}
+                    onClick={() =>
+                      void updateRestoreOrdering(!moveRestoredItemToTop)
+                    }
+                    disabled={settingsLoading}
+                    role="switch"
+                    aria-checked={moveRestoredItemToTop}
+                  >
+                    <span className="toggle-track">
+                      <span className="toggle-thumb" />
+                    </span>
+                    <span className="toggle-copy">
+                      <strong>
+                        {moveRestoredItemToTop
+                          ? "Move restored items to top"
+                          : "Keep restored items in place"}
+                      </strong>
+                      <span>
+                        <ArrowUpDown size={14} />
+                        {moveRestoredItemToTop
+                          ? "Copy actions refresh list order."
+                          : "Copy actions preserve list order."}
+                      </span>
+                    </span>
+                  </button>
+                </article>
+
+                <article className="settings-card">
+                  <div className="settings-card-header">
+                    <div>
                       <p className="settings-label">Menu bar</p>
                       <h3>Tray visibility</h3>
                     </div>
@@ -506,6 +597,10 @@ function App() {
                     <li>
                       Clearing or deleting history refreshes the menu-bar list
                       right away.
+                    </li>
+                    <li>
+                      Restoring an item keeps or updates its position based on
+                      the restore ordering setting.
                     </li>
                     <li>
                       Closing the main window keeps the app running so the menu
