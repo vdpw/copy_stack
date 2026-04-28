@@ -554,11 +554,12 @@ dependencies = [
 [[package]]
 name = "copy_event_listener"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df88c01019b8a51a111fea1bc8b6fe07ffc3c5ebdc6415aca756e154ddb87891"
 dependencies = [
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
- "serde",
 ]
 
 [[package]]

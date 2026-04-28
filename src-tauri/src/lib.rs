@@ -21,6 +21,7 @@ pub mod event;
 mod store;
 mod tray;
 
+use crate::event::ClipboardEvent;
 use crate::store::{AppSettings, Database, StoredEvent};
 use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
@@ -166,9 +167,12 @@ fn should_skip_pending_restore_event(state: &AppState, content_hash: &str) -> bo
 }
 
 #[tauri::command]
-async fn get_event_by_id(state: State<'_, AppState>, id: String) -> Result<Option<Event>, String> {
+async fn get_event_by_id(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<ClipboardEvent>, String> {
     let db = state.db.lock().unwrap();
-    db.get_event_by_id(&id).map_err(|e| e.to_string())
+    db.get_clipboard_event_by_id(&id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

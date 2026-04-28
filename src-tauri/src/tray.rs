@@ -1,9 +1,9 @@
+use crate::event::{deserialize_clipboard_event, ClipboardData, ClipboardEvent};
 use crate::store::StoredEvent;
 use crate::{
     clear_restore_suppression_if_matches, queue_restore_suppression, restore_event_to_clipboard,
     AppState,
 };
-use copy_event_listener::event::{Data, Event};
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -206,7 +206,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
 }
 
 fn event_menu_label(event: &StoredEvent) -> String {
-    let parsed_event = match serde_json::from_str::<Event>(&event.event_data) {
+    let parsed_event = match deserialize_clipboard_event(&event.event_data) {
         Ok(event) => event,
         Err(_) => return "Unreadable clipboard item".to_string(),
     };
@@ -214,7 +214,7 @@ fn event_menu_label(event: &StoredEvent) -> String {
     truncate_label(extract_preview(&parsed_event))
 }
 
-fn extract_preview(event: &Event) -> String {
+fn extract_preview(event: &ClipboardEvent) -> String {
     for item in &event.items {
         for data in &item.data_list {
             if is_plain_text(&data.r#type) {
@@ -243,7 +243,7 @@ fn is_plain_text(data_type: &str) -> bool {
     )
 }
 
-fn decode_text(data: &Data) -> String {
+fn decode_text(data: &ClipboardData) -> String {
     match data.r#type.as_str() {
         "public.utf16-plain-text" => decode_utf16(&data.data)
             .unwrap_or_else(|| String::from_utf8_lossy(&data.data).into_owned()),
