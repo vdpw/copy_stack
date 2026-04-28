@@ -6,7 +6,7 @@ mod tray;
 use crate::store::{AppSettings, Database, StoredEvent};
 use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{channel, Receiver};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State, WindowEvent};
 
@@ -56,10 +56,7 @@ async fn copy_to_clipboard(
             .ok_or_else(|| format!("Event not found: {}", id))?
     };
 
-    let listener = ClipboardListener::new();
-    listener
-        .set_clipboard_event(event)
-        .map_err(|e| format!("Failed to set clipboard: {}", e))?;
+    set_clipboard_event_on_main_thread(&app_handle, event)?;
 
     {
         let db = state.db.lock().unwrap();
@@ -70,6 +67,23 @@ async fn copy_to_clipboard(
     tray::notify_history_changed(&app_handle)?;
 
     Ok(())
+}
+
+fn set_clipboard_event_on_main_thread(app_handle: &AppHandle, event: Event) -> Result<(), String> {
+    let (result_tx, result_rx) = channel();
+
+    app_handle
+        .run_on_main_thread(move || {
+            let result = ClipboardListener::new()
+                .set_clipboard_event(event)
+                .map_err(|e| format!("Failed to set clipboard: {}", e));
+            let _ = result_tx.send(result);
+        })
+        .map_err(|e| format!("Failed to schedule clipboard update: {}", e))?;
+
+    result_rx
+        .recv()
+        .map_err(|e| format!("Failed to receive clipboard update result: {}", e))?
 }
 
 #[tauri::command]
