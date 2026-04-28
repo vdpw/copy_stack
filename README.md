@@ -27,17 +27,20 @@ The app features a modern gradient background with glassmorphism cards and a cle
 ### Development Setup
 
 1. Clone the repository:
+
 ```bash
 git clone <repository-url>
 cd copy_stack
 ```
 
 2. Install dependencies:
+
 ```bash
 pnpm install
 ```
 
 3. Start the development server:
+
 ```bash
 # For desktop development
 pnpm desktop:dev
@@ -67,6 +70,13 @@ pnpm build
 5. **Refresh**: Use the refresh button to reload the clipboard history
 
 ## Development
+
+### Documentation
+
+Detailed project docs live in [`docs/index.md`](docs/index.md). The root
+[`AGENTS.md`](AGENTS.md) file is a compact menu for coding agents and links to
+the detailed docs for architecture, frontend, backend, persistence, clipboard
+flows, development, release, and troubleshooting.
 
 ### Project Structure
 
@@ -125,12 +135,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Roadmap
 
-- [ ] Real clipboard monitoring (currently simulated)
 - [ ] Keyboard shortcuts
 - [ ] Search functionality
 - [ ] Categories and tags
 - [ ] Cloud sync
-- [ ] Multiple clipboard formats support
+- [ ] Rich previews for more clipboard formats
 - [ ] Export/import functionality
 
 ## Troubleshooting
@@ -139,7 +148,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 1. **Build fails**: Ensure you have Rust and Tauri CLI installed
 2. **Window not displaying**: Check your display settings and window manager
-3. **Clipboard not detected**: The current version uses simulated data for demonstration
+3. **Clipboard not detected**: Run the desktop app with `pnpm desktop:dev`, confirm the local `copy_event_listener` dependency is available, and check debug logs from the Rust process
 
 ### Platform Support
 

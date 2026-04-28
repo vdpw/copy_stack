@@ -1,61 +1,88 @@
 # AGENTS.md
 
-## Project Summary
+This file is the compact project menu for coding agents. Keep detailed
+explanations in `docs/` and load them on demand.
 
-`copy_stack` is a Tauri desktop clipboard manager with:
+## What This Project Is
 
-- a React 18 + TypeScript + Vite frontend in `src/`
-- a Rust/Tauri backend in `src-tauri/`
-- clipboard monitoring provided by the local path dependency `../copy_event_listener`
-- SQLite persistence via `rusqlite`
+`copy_stack` is a Tauri 2 desktop clipboard manager. The UI is React 18,
+TypeScript, and Vite in `src/`; the backend is Rust in `src-tauri/`; clipboard
+capture comes from the local path dependency `../../copy_event_listener`; local
+history and settings are stored in SQLite via `rusqlite`.
 
-The frontend talks to Rust through Tauri commands in `src-tauri/src/lib.rs` and receives live clipboard updates through the `"new-copy-event"` event channel.
+The app captures clipboard events, stores normalized history in SQLite, renders
+history in the Tauri window, and mirrors recent items into the macOS menu bar.
 
-## Repository Layout
+## Runtime And Tooling
 
-- `src/App.tsx`: main UI, Tauri command calls, event subscription, clipboard payload decoding
-- `src/App.css`: app styling
-- `src-tauri/src/main.rs`: starts the clipboard listener thread and boots Tauri
-- `src-tauri/src/lib.rs`: Tauri setup, shared app state, command handlers, event emission
-- `src-tauri/src/store/database.rs`: SQLite schema, settings, deduplication, retention logic
-- `src-tauri/tauri.conf.json`: Tauri app configuration
+- Package manager: `pnpm`.
+- Frontend dev server: Vite on port `5173`.
+- Desktop shell: Tauri 2.
+- Rust edition: 2021.
+- Database: `$HOME/.copy_stack/copy_stack.db`.
+- Local clipboard dependency: `copy_event_listener = { path = "../../copy_event_listener" }`.
+- Release workflow swaps that local dependency to `copy_event_listener = "0.1.2"`.
 
-## Setup And Commands
+## Commands
 
 - Install JS deps: `pnpm install`
-- Web dev: `pnpm dev`
+- Web dev only: `pnpm dev`
 - Desktop dev: `pnpm desktop:dev`
 - Web build: `pnpm build`
 - Desktop build: `pnpm desktop:build`
-- Type-check frontend: `pnpm type-check`
-- Lint frontend: `pnpm lint`
-- Format frontend docs/assets: `pnpm format`
-- Check Rust backend: `cargo check --manifest-path src-tauri/Cargo.toml`
-- Format Rust backend: `cargo fmt --manifest-path src-tauri/Cargo.toml`
+- Frontend type-check: `pnpm type-check`
+- Frontend lint: `pnpm lint`
+- Frontend/doc format: `pnpm format`
+- Rust check: `cargo check --manifest-path src-tauri/Cargo.toml`
+- Rust format: `cargo fmt --manifest-path src-tauri/Cargo.toml`
 
-## Working Notes
+## Documentation Menu
 
-- The Rust backend currently stores data in `copy_stack.db` in the repo root. Treat it as local state, not source-controlled project data.
-- Local development uses the path dependency `../copy_event_listener`, but GitHub Actions production builds are expected to switch that dependency to the published crate `copy_event_listener = "0.1.2"`.
-- Clipboard events are stored as serialized `copy_event_listener::event::Event` JSON in SQLite, then decoded in the frontend for display.
-- Duplicate clipboard content is deduplicated in `Database::insert_event` using a SHA-256 hash of the serialized event payload.
-- The `max_items` setting is enforced in both Rust storage cleanup and frontend list rendering.
-- The README still says clipboard monitoring is simulated, but the current code uses the real `copy_event_listener` path dependency. Prefer the code over the README when they conflict.
+Start with `docs/index.md`, then load only the docs relevant to the task.
 
-## Change Guidance
+- Product and scope: `docs/project-overview.md`
+- System architecture: `docs/architecture.md`
+- Frontend guide: `docs/frontend.md`
+- Backend guide: `docs/backend.md`
+- Persistence and data model: `docs/persistence.md`
+- Clipboard event flows: `docs/clipboard-flows.md`
+- Development workflow: `docs/development.md`
+- Release workflow: `docs/release.md`
+- Troubleshooting: `docs/troubleshooting.md`
+- Ordering and dedupe design decision: `docs/design/copy-event-ordering.md`
 
-- If you add or rename a Tauri command, update both the Rust handler list in `src-tauri/src/lib.rs` and the corresponding frontend `invoke(...)` usage.
-- If you change the event payload shape, keep Rust serialization and the TypeScript interfaces in `src/App.tsx` in sync.
-- If you touch persistence or retention logic, verify behavior with an existing `copy_stack.db` instead of assuming a clean database.
-- Avoid committing generated or machine-local files such as `copy_stack.db`, `dist/`, or `node_modules/`.
+## Read Before Modifying
+
+- UI, state, payload decoding, or Tauri `invoke(...)` calls: read `docs/frontend.md`.
+- Tauri commands, listener wiring, restore behavior, or tray sync: read `docs/backend.md`.
+- SQLite schema, migrations, retention, or deduplication: read `docs/persistence.md`.
+- Clipboard capture, restore, menu item selection, or live refresh: read `docs/clipboard-flows.md`.
+- Builds, checks, local dependency setup, or manual QA: read `docs/development.md`.
+- GitHub release behavior or packaged builds: read `docs/release.md`.
+
+## Non-Obvious Constraints
+
+- Clipboard monitoring is real, not simulated. The current code uses the
+  `copy_event_listener` crate.
+- The frontend listens for `clipboard-history-updated` and `app:navigate`, not
+  `new-copy-event`.
+- History order is persisted in SQLite with `sort_order`; do not reorder only in
+  React.
+- Deduplication uses a normalized content hash, not a hash of the full serialized
+  event payload.
+- The app preserves restored-item order by default. It queues a short restore
+  suppression so the listener does not reinsert the app's own clipboard write.
+- Keep TypeScript payload interfaces in `src/App.tsx` synchronized with Rust
+  serialization in `src-tauri/src/store/database.rs` and Tauri commands in
+  `src-tauri/src/lib.rs`.
+- Avoid committing generated or local files such as `node_modules/`, `dist/`,
+  `src-tauri/target/`, `src-tauri/gen/`, and SQLite database files.
 
 ## Verification Expectations
 
-For frontend-only changes, run `pnpm type-check` and `pnpm lint`.
-
-For Rust-only or cross-stack changes, run:
-
-- `cargo check --manifest-path src-tauri/Cargo.toml`
-- `pnpm type-check`
-
-For behavior changes involving clipboard capture, retention, or Tauri command wiring, also validate manually with `pnpm desktop:dev`.
+- Frontend-only changes: run `pnpm type-check` and `pnpm lint`.
+- Rust-only changes: run `cargo check --manifest-path src-tauri/Cargo.toml`.
+- Cross-stack changes: run `cargo check --manifest-path src-tauri/Cargo.toml`
+  and `pnpm type-check`.
+- Clipboard capture, retention, restore-order, menu bar, or command wiring
+  changes also need manual validation with `pnpm desktop:dev`.
