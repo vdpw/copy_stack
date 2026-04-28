@@ -10,8 +10,10 @@ permissions:
 
 jobs:
   publish-tauri:
-    name: Build and publish macOS ${{ matrix.target }}
+    name: Build and publish ad-hoc signed macOS ${{ matrix.target }}
     runs-on: macos-latest
+    env:
+      APPLE_SIGNING_IDENTITY: "-"
     strategy:
       fail-fast: false
       matrix:
