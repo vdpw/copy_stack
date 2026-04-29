@@ -14,7 +14,7 @@ in the current codebase.
 ## Current Capabilities
 
 - Capture clipboard events through `copy_event_listener`.
-- Persist clipboard event payloads as JSON in SQLite.
+- Persist clipboard event payloads as binary blobs in SQLite.
 - Render recent clipboard history in the main Tauri window.
 - Restore a saved clipboard item through a Tauri command or tray menu item.
 - Delete one event or clear all history.
@@ -35,7 +35,7 @@ items.
 ### Restore Previous Content
 
 The user clicks the restore button in the app or selects an item from the tray
-menu. The backend deserializes the stored `copy_event_listener::event::Event`
+menu. The backend decodes the stored `copy_event_listener::event::Event` blob
 and writes it back to the system clipboard.
 
 ### Keep History Bounded

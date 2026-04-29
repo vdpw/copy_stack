@@ -1,4 +1,4 @@
-use crate::event::{deserialize_clipboard_event, ClipboardData, ClipboardEvent};
+use crate::event::{ClipboardData, ClipboardEvent};
 use crate::store::StoredEvent;
 use crate::{
     clear_restore_suppression_if_matches, queue_restore_suppression, restore_event_to_clipboard,
@@ -206,12 +206,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
 }
 
 fn event_menu_label(event: &StoredEvent) -> String {
-    let parsed_event = match deserialize_clipboard_event(&event.event_data) {
-        Ok(event) => event,
-        Err(_) => return "Unreadable clipboard item".to_string(),
-    };
-
-    truncate_label(extract_preview(&parsed_event))
+    truncate_label(extract_preview(&event.event_data))
 }
 
 fn extract_preview(event: &ClipboardEvent) -> String {

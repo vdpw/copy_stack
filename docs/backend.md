@@ -6,7 +6,8 @@
 - Tauri 2 with tray icon support.
 - `tauri-plugin-opener`.
 - SQLite through `rusqlite` with the bundled SQLite feature.
-- JSON serialization with `serde` and `serde_json`.
+- JSON API payloads with `serde`; persisted clipboard events use a compact
+  binary blob format.
 - Timestamps with `chrono`.
 - Content hashing with `sha2`.
 - Clipboard capture and restore through `copy_event_listener`.
@@ -20,8 +21,8 @@
 - `src-tauri/src/tray.rs`: menu bar setup, tray menu sync, tray action handling,
   and frontend event emission.
 - `src-tauri/src/store/mod.rs`: re-exports store types.
-- `src-tauri/src/event/`: older standalone event structs. These are not the
-  active persisted event type.
+- `src-tauri/src/event/`: frontend payload structs, clipboard event filtering,
+  and binary event blob encode/decode helpers.
 
 ## Application Startup
 
@@ -82,7 +83,7 @@ content.
 
 ### `get_event_by_content_hash`
 
-Returns the deserialized `copy_event_listener::event::Event` for a row. This is
+Returns the decoded `copy_event_listener::event::Event` for a row. This is
 registered as a command, although the current frontend does not call it.
 
 ### `get_app_settings`

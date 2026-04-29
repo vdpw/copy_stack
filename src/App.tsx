@@ -31,7 +31,7 @@ interface ClipboardEvent {
 
 interface StoredEvent {
   content_hash: string;
-  event_data: string;
+  event_data: ClipboardEvent;
   timestamp: number;
 }
 
@@ -210,7 +210,9 @@ function App() {
       }
       await loadEvents();
       if (import.meta.env.DEV) {
-        console.info("[copy_stack] history refreshed after restore", { contentHash });
+        console.info("[copy_stack] history refreshed after restore", {
+          contentHash,
+        });
       }
     } catch (error) {
       if (import.meta.env.DEV) {
@@ -237,9 +239,8 @@ function App() {
     return new Date(timestamp).toLocaleString();
   };
 
-  const getEventContent = (eventData: string): string => {
+  const getEventContent = (event: ClipboardEvent): string => {
     try {
-      const event: ClipboardEvent = JSON.parse(eventData);
       if (event.items.length === 0) {
         return "Empty clipboard";
       }
@@ -270,7 +271,7 @@ function App() {
       return "Unknown content type";
     } catch (error) {
       if (import.meta.env.DEV) {
-        console.error("Failed to parse clipboard payload", error);
+        console.error("Failed to read clipboard payload", error);
       }
       return "Error parsing content";
     }
@@ -374,7 +375,9 @@ function App() {
               </section>
 
               {loading ? (
-                <div className="placeholder-card">Loading clipboard history...</div>
+                <div className="placeholder-card">
+                  Loading clipboard history...
+                </div>
               ) : copyEvents.length === 0 ? (
                 <div className="empty-state">
                   <h3>No clipboard events yet</h3>
@@ -451,7 +454,9 @@ function App() {
                   </p>
 
                   <div className="storage-control">
-                    <label htmlFor="max-items-input">Maximum saved events</label>
+                    <label htmlFor="max-items-input">
+                      Maximum saved events
+                    </label>
                     <div className="storage-input-row">
                       <input
                         id="max-items-input"
@@ -479,7 +484,8 @@ function App() {
                     </div>
 
                     <p className="settings-helper">
-                      Currently storing {copyEvents.length} of {maxItems} events.
+                      Currently storing {copyEvents.length} of {maxItems}{" "}
+                      events.
                     </p>
                     {!isPendingMaxItemsValid && (
                       <p className="settings-error">

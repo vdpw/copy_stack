@@ -146,15 +146,15 @@ This setting does not rewrite existing history.
 
 ## Payload Flow
 
-Stored payloads are serialized Rust values:
+Stored payloads are binary-encoded Rust values:
 
 ```text
-copy_event_listener::event::Event -> serde_json -> clipboard_events.event_data
+copy_event_listener::event::Event -> binary event blob -> clipboard_events.event_data
 ```
 
-React parses `event_data` only for preview rendering. Restore operations use the
-backend to deserialize and pass the original event back to
-`ClipboardListener::set_clipboard_event(...)`.
+The backend decodes `event_data` before returning history to React for preview
+rendering. Restore operations use the backend to decode and pass the original
+event back to `ClipboardListener::set_clipboard_event(...)`.
 
 ## Flow Change Checklist
 

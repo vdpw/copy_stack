@@ -40,7 +40,8 @@ listener capture, persistence, restore, and tray refresh.
 
 ## Duplicate Items Behave Unexpectedly
 
-Deduplication uses normalized content fragments, not the full serialized event.
+Deduplication uses normalized content fragments, not the full binary event
+payload.
 For text-like clipboard items, whitespace is normalized and null characters are
 removed before hashing.
 
@@ -110,9 +111,9 @@ sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings WHERE
 
 ## Frontend Preview Shows `Error parsing content`
 
-The frontend could not parse `event_data` into the expected clipboard event
-shape. Check whether the stored payload was written by an older incompatible
-version or whether the upstream `copy_event_listener` event shape changed.
+The frontend could not read `event_data` in the expected clipboard event shape.
+Check whether the backend failed to decode the stored blob or whether the
+upstream `copy_event_listener` event shape changed.
 
 If the shape changed, update the TypeScript interfaces and preview decoding in
 `src/App.tsx`.
