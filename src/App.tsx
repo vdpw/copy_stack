@@ -30,9 +30,9 @@ interface ClipboardEvent {
 }
 
 interface StoredEvent {
-  id: string;
+  content_hash: string;
   event_data: string;
-  timestamp: string;
+  timestamp: number;
 }
 
 interface AppSettings {
@@ -188,9 +188,9 @@ function App() {
     setPendingMaxItemsInput(String(maxItems));
   };
 
-  const deleteEvent = async (id: string) => {
+  const deleteEvent = async (contentHash: string) => {
     try {
-      await invoke("delete_copy_event", { id });
+      await invoke("delete_copy_event", { contentHash });
       await loadEvents();
     } catch (error) {
       if (import.meta.env.DEV) {
@@ -199,23 +199,23 @@ function App() {
     }
   };
 
-  const copyToClipboard = async (id: string) => {
+  const copyToClipboard = async (contentHash: string) => {
     if (import.meta.env.DEV) {
-      console.info("[copy_stack] restore requested from UI", { id });
+      console.info("[copy_stack] restore requested from UI", { contentHash });
     }
     try {
-      await invoke("copy_to_clipboard", { id });
+      await invoke("copy_to_clipboard", { contentHash });
       if (import.meta.env.DEV) {
-        console.info("[copy_stack] restore command completed", { id });
+        console.info("[copy_stack] restore command completed", { contentHash });
       }
       await loadEvents();
       if (import.meta.env.DEV) {
-        console.info("[copy_stack] history refreshed after restore", { id });
+        console.info("[copy_stack] history refreshed after restore", { contentHash });
       }
     } catch (error) {
       if (import.meta.env.DEV) {
         console.error("[copy_stack] failed to restore clipboard item", {
-          id,
+          contentHash,
           error,
         });
       }
@@ -233,7 +233,7 @@ function App() {
     }
   };
 
-  const formatTimestamp = (timestamp: string) => {
+  const formatTimestamp = (timestamp: number) => {
     return new Date(timestamp).toLocaleString();
   };
 
@@ -388,7 +388,7 @@ function App() {
                   {copyEvents.map(event => {
                     const content = getEventContent(event.event_data);
                     return (
-                      <article key={event.id} className="event-card">
+                      <article key={event.content_hash} className="event-card">
                         <div className="event-content">
                           <p className="event-text">
                             {truncateContent(content)}
@@ -400,14 +400,16 @@ function App() {
 
                         <div className="event-actions">
                           <button
-                            onClick={() => void copyToClipboard(event.id)}
+                            onClick={() =>
+                              void copyToClipboard(event.content_hash)
+                            }
                             className="btn btn-primary"
                             title="Restore to clipboard"
                           >
                             <Copy size={16} />
                           </button>
                           <button
-                            onClick={() => void deleteEvent(event.id)}
+                            onClick={() => void deleteEvent(event.content_hash)}
                             className="btn btn-danger"
                             title="Delete item"
                           >

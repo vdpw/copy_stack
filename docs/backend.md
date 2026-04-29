@@ -7,7 +7,6 @@
 - `tauri-plugin-opener`.
 - SQLite through `rusqlite` with the bundled SQLite feature.
 - JSON serialization with `serde` and `serde_json`.
-- UUID generation with `uuid`.
 - Timestamps with `chrono`.
 - Content hashing with `sha2`.
 - Clipboard capture and restore through `copy_event_listener`.
@@ -62,11 +61,11 @@ frontend event emission.
 
 ### `get_copy_events`
 
-Returns all stored events ordered by `sort_order DESC, timestamp DESC`.
+Returns all stored events ordered by `timestamp DESC, content_hash ASC`.
 
 ### `delete_copy_event`
 
-Deletes one row by id, then syncs the tray.
+Deletes one row by content hash, then syncs the tray.
 
 ### `clear_all_events`
 
@@ -81,7 +80,7 @@ When restore ordering is disabled, it queues restore suppression before writing
 to the clipboard so the listener does not immediately reprocess that same
 content.
 
-### `get_event_by_id`
+### `get_event_by_content_hash`
 
 Returns the deserialized `copy_event_listener::event::Event` for a row. This is
 registered as a command, although the current frontend does not call it.
@@ -139,7 +138,7 @@ hash matches.
 
 Tray menu item ids use stable prefixes:
 
-- `event::<event-id>` for clipboard items.
+- `event::<content-hash>` for clipboard items.
 - `action::open-history`
 - `action::open-settings`
 - `action::clear-history`

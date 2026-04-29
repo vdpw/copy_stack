@@ -25,7 +25,7 @@ sequenceDiagram
   Listener->>Backend: send Event over mpsc channel
   Backend->>DB: compute content hash
   Backend->>Backend: check restore suppression
-  Backend->>DB: insert new row or update duplicate
+  Backend->>DB: insert new row or refresh duplicate payload
   Backend->>Tray: rebuild menu
   Backend->>UI: emit clipboard-history-updated
   UI->>Backend: invoke get_copy_events
@@ -36,7 +36,7 @@ sequenceDiagram
 Important rules:
 
 - The listener polls every 500 milliseconds.
-- Duplicate content updates the existing row and moves it to the top.
+- Duplicate content updates the existing row payload and preserves its order.
 - The UI reloads from SQLite instead of inserting optimistic rows.
 - Tray sync runs after successful persistence.
 
@@ -50,7 +50,7 @@ sequenceDiagram
   participant Clipboard as System Clipboard
   participant Tray as Tray Menu
 
-  UI->>Backend: invoke copy_to_clipboard(id)
+  UI->>Backend: invoke copy_to_clipboard(content_hash)
   Backend->>DB: load stored event and settings
   Backend->>Backend: queue suppression if restore ordering is disabled
   Backend->>Clipboard: write stored Event
@@ -67,7 +67,7 @@ backend notification keeps other UI refresh paths consistent.
 
 ## Restore From Tray Menu
 
-The tray menu item id is `event::<event-id>`. Selecting it runs
+The tray menu item id is `event::<content-hash>`. Selecting it runs
 `restore_event(...)` in `src-tauri/src/tray.rs`.
 
 Flow:
@@ -86,7 +86,7 @@ notify or sync immediately because the stored list did not change.
 Frontend flow:
 
 1. User clicks the delete button.
-2. `delete_copy_event` is invoked with `{ id }`.
+2. `delete_copy_event` is invoked with `{ contentHash }`.
 3. Backend deletes the row.
 4. Backend syncs the tray.
 5. Frontend reloads history after the command returns.

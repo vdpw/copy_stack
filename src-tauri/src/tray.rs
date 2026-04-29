@@ -100,38 +100,38 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) -> Result<()
             Ok(())
         }
         _ if menu_id.starts_with(EVENT_ITEM_PREFIX) => {
-            let event_id = &menu_id[EVENT_ITEM_PREFIX.len()..];
-            restore_event(app, event_id)
+            let content_hash = &menu_id[EVENT_ITEM_PREFIX.len()..];
+            restore_event(app, content_hash)
         }
         _ => Ok(()),
     }
 }
 
-fn restore_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) -> Result<(), String> {
-    let (event, content_hash, move_restored_item_to_top) = {
+fn restore_event<R: Runtime>(app: &AppHandle<R>, content_hash: &str) -> Result<(), String> {
+    let (event, restore_content_hash, move_restored_item_to_top) = {
         let state = app.state::<AppState>();
         let db = state.db.lock().unwrap();
         let event = db
-            .get_event_by_id(event_id)
+            .get_event_by_content_hash(content_hash)
             .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("Clipboard item not found: {}", event_id))?;
-        let content_hash = db
+            .ok_or_else(|| format!("Clipboard item not found: {}", content_hash))?;
+        let restore_content_hash = db
             .event_content_hash(&event)
             .map_err(|error| error.to_string())?;
         let move_restored_item_to_top = db
             .get_move_restored_item_to_top()
             .map_err(|error| error.to_string())?;
-        (event, content_hash, move_restored_item_to_top)
+        (event, restore_content_hash, move_restored_item_to_top)
     };
 
     if !move_restored_item_to_top {
         let state = app.state::<AppState>();
-        queue_restore_suppression(&state, content_hash.clone());
+        queue_restore_suppression(&state, restore_content_hash.clone());
     }
 
     if let Err(error) = restore_event_to_clipboard(event) {
         let state = app.state::<AppState>();
-        clear_restore_suppression_if_matches(&state, &content_hash);
+        clear_restore_suppression_if_matches(&state, &restore_content_hash);
         return Err(error);
     }
 
@@ -139,7 +139,7 @@ fn restore_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) -> Result<(), S
         {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
-            db.move_event_to_top(event_id)
+            db.move_event_to_top(&restore_content_hash)
                 .map_err(|error| error.to_string())?;
         }
         notify_history_changed(app)?;
@@ -185,7 +185,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
     } else {
         for event in &events {
             let item = MenuItemBuilder::with_id(
-                format!("{}{}", EVENT_ITEM_PREFIX, event.id.as_str()),
+                format!("{}{}", EVENT_ITEM_PREFIX, event.content_hash.as_str()),
                 event_menu_label(event),
             )
             .build(app)

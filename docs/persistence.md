@@ -26,31 +26,24 @@ The `Database` struct wraps one `rusqlite::Connection`. Tauri stores it in
 
 ```sql
 CREATE TABLE IF NOT EXISTS clipboard_events (
-  id TEXT PRIMARY KEY,
+  content_hash TEXT PRIMARY KEY,
   event_data TEXT NOT NULL,
-  timestamp TEXT NOT NULL,
-  content_hash TEXT,
-  sort_order INTEGER NOT NULL DEFAULT 0
+  timestamp INTEGER NOT NULL
 );
 ```
 
 Columns:
 
-- `id`: UUID string generated on insert.
+- `content_hash`: normalized SHA-256 hash used as the stable row key and
+  deduplication key.
 - `event_data`: serialized `copy_event_listener::event::Event` JSON.
-- `timestamp`: RFC 3339 UTC timestamp.
-- `content_hash`: normalized hash used for deduplication.
-- `sort_order`: persisted ordering key.
+- `timestamp`: Unix timestamp in milliseconds. This is also the ordering key.
 
 Indexes:
 
 ```sql
-CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_events_content_hash
-ON clipboard_events(content_hash)
-WHERE content_hash IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_clipboard_events_sort_order
-ON clipboard_events(sort_order DESC, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_clipboard_events_timestamp
+ON clipboard_events(timestamp DESC);
 ```
 
 ### `settings`
@@ -74,33 +67,27 @@ Settings are stored as strings and parsed by helper methods.
 
 `initialize_schema()` runs on every startup. It:
 
-1. Creates `clipboard_events`.
-2. Adds `content_hash` if missing.
-3. Adds `sort_order` if missing.
-4. Creates indexes.
-5. Creates `settings`.
-6. Inserts default setting rows if they do not exist.
-7. Calls `rebuild_history_metadata()`.
+1. Creates `clipboard_events` with `content_hash` as the primary key for clean
+   databases.
+2. Migrates legacy `id`/`sort_order`/RFC3339 timestamp tables into the current
+   schema when needed.
+3. Creates indexes.
+4. Creates `settings`.
+5. Inserts default setting rows if they do not exist.
+6. Calls `rebuild_history_metadata()`.
 
 ## Metadata Rebuild
 
-`rebuild_history_metadata()` makes existing databases compatible with the
-current ordering and dedupe model.
-
-It chooses an order:
-
-- If any row already has `sort_order > 0`, it orders by
-  `sort_order DESC, timestamp DESC`.
-- Otherwise it orders by `timestamp DESC`.
+`rebuild_history_metadata()` keeps databases compatible with the current
+content-hash key and dedupe model.
 
 Then it:
 
 1. Reads all rows.
 2. Recomputes a content hash from `event_data`.
 3. Keeps the first row for each hash.
-4. Deletes later duplicates.
-5. Backfills `content_hash`.
-6. Backfills `sort_order` so the first visible row receives the highest order.
+4. Rewrites the table with `content_hash`, `event_data`, and integer
+   `timestamp`.
 
 This means opening an older database can delete duplicate rows that collapse to
 the same normalized content hash.
@@ -111,14 +98,14 @@ the same normalized content hash.
 
 1. Serializes the event to JSON.
 2. Computes a normalized content hash.
-3. Computes `next_sort_order()`.
-4. Checks whether a row with the same hash exists.
-5. If it exists, updates `event_data`, `timestamp`, and `sort_order` on that
-   row.
-6. If it does not exist, inserts a new UUID row.
-7. Runs `cleanup_old_events()` after new inserts.
+3. If a row with the same hash exists, updates `event_data` and preserves the
+   existing `timestamp`.
+4. If it does not exist, computes the next history timestamp in Unix
+   milliseconds and inserts a new row keyed by `content_hash`.
+5. Runs `cleanup_old_events()` after new inserts.
 
-Duplicate clipboard content moves to the top instead of creating another row.
+Duplicate clipboard content refreshes the stored payload without creating
+another row or changing list order.
 
 ## Content Hashing
 
@@ -146,16 +133,19 @@ fallback is the full serialized event JSON.
 
 ## Ordering
 
-`sort_order` is the primary ordering field. New or duplicate events receive:
+`timestamp` is the ordering field. New rows and explicit move-to-top updates use
+the greater of the current Unix millisecond timestamp and `MAX(timestamp) + 1`
+so history order remains stable even when events arrive in the same millisecond.
+Duplicate insert updates preserve the existing timestamp.
 
 ```sql
-SELECT COALESCE(MAX(sort_order), 0) + 1 FROM clipboard_events
+SELECT COALESCE(MAX(timestamp), 0) FROM clipboard_events
 ```
 
 History reads use:
 
 ```sql
-ORDER BY sort_order DESC, timestamp DESC
+ORDER BY timestamp DESC, content_hash ASC
 ```
 
 Restoring an item moves it to the top only when
@@ -168,9 +158,9 @@ listener echo and leaves ordering unchanged.
 from the bottom of history:
 
 ```sql
-DELETE FROM clipboard_events WHERE id IN (
-  SELECT id FROM clipboard_events
-  ORDER BY sort_order ASC, timestamp ASC
+DELETE FROM clipboard_events WHERE content_hash IN (
+  SELECT content_hash FROM clipboard_events
+  ORDER BY timestamp ASC, content_hash DESC
   LIMIT ?1
 )
 ```
@@ -183,7 +173,7 @@ Useful local commands:
 
 ```bash
 sqlite3 "$HOME/.copy_stack/copy_stack.db" ".schema"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT id, timestamp, sort_order, substr(content_hash, 1, 12) FROM clipboard_events ORDER BY sort_order DESC, timestamp DESC LIMIT 20;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), timestamp FROM clipboard_events ORDER BY timestamp DESC LIMIT 20;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings ORDER BY key;"
 ```
 

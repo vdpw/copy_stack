@@ -62,8 +62,8 @@ sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings WHERE
 When the setting is false, restore suppression should skip the listener echo
 for the matching content hash within five seconds.
 
-When the setting is true, restore actions intentionally update `sort_order` and
-`timestamp`.
+When the setting is true, restore actions intentionally update the Unix
+millisecond `timestamp`, which is the history ordering key.
 
 ## Tray Menu Is Stale
 

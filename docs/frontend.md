@@ -71,14 +71,15 @@ The frontend receives stored rows as:
 
 ```ts
 interface StoredEvent {
-  id: string;
+  content_hash: string;
   event_data: string;
-  timestamp: string;
+  timestamp: number;
 }
 ```
 
 `event_data` is a JSON string containing `copy_event_listener::event::Event`.
-The frontend only decodes enough of that payload to show a preview.
+`timestamp` is a Unix millisecond timestamp. The frontend only decodes enough of
+the payload to show a preview.
 
 Current preview interfaces:
 
