@@ -21,7 +21,7 @@ pub mod event;
 mod store;
 mod tray;
 
-use crate::event::ClipboardEvent;
+use crate::event::{filter_event_for_storage, ClipboardEvent};
 use crate::store::{AppSettings, Database, StoredEvent};
 use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
@@ -278,6 +278,11 @@ pub fn run(rx: Receiver<Event>) {
             std::thread::spawn(move || {
                 for event in rx {
                     debug_log!("[copy_stack] clipboard listener event received");
+                    let Some(event) = filter_event_for_storage(&event) else {
+                        debug_log!("[copy_stack] skipped clipboard event with no storable data");
+                        continue;
+                    };
+
                     let event_hash = {
                         let state = app_handle_clone.state::<AppState>();
                         let db = state.db.lock().unwrap();

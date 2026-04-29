@@ -40,7 +40,7 @@ The dedupe key is derived from clipboard content that is stable across copies.
 - Prefer plain-text clipboard representations such as UTF-8 and UTF-16 text.
 - Use decoded text content, normalized for whitespace, as the primary hash input.
 - Fall back to deterministic raw clipboard data only when no stable text-like representation exists.
-- Do not hash the entire serialized event payload because it can contain ancillary clipboard formats whose bytes vary even when the user-facing content is the same.
+- Do not hash the entire binary event payload because it can contain ancillary clipboard formats whose bytes vary even when the user-facing content is the same.
 
 This keeps duplicate detection focused on the meaningful clipboard content and avoids false misses caused by time-bearing metadata.
 

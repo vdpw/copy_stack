@@ -1,4 +1,4 @@
-use crate::event::{deserialize_event, serialize_event, ClipboardEvent};
+use crate::event::{decode_event_blob, encode_event_blob, event_from_legacy_json, ClipboardEvent};
 use chrono::Utc;
 use copy_event_listener::event::{Data, Event, Item};
 use rusqlite::{types::ValueRef, Connection, Result};
@@ -16,7 +16,7 @@ const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredEvent {
     pub content_hash: String,
-    pub event_data: String,
+    pub event_data: ClipboardEvent,
     pub timestamp: i64,
 }
 
@@ -28,7 +28,7 @@ pub struct AppSettings {
 }
 
 impl StoredEvent {
-    fn new(content_hash: String, event_data: String, timestamp: i64) -> Self {
+    fn new(content_hash: String, event_data: ClipboardEvent, timestamp: i64) -> Self {
         Self {
             content_hash,
             event_data,
@@ -39,7 +39,7 @@ impl StoredEvent {
 
 struct DbRow {
     content_hash: Option<String>,
-    event_data: String,
+    event_data: Vec<u8>,
     timestamp: i64,
 }
 
@@ -117,9 +117,13 @@ impl Database {
         let missing_required_columns = !columns.iter().any(|column| column == "content_hash")
             || !columns.iter().any(|column| column == "event_data")
             || !columns.iter().any(|column| column == "timestamp");
+        let event_data_is_blob = self
+            .column_declared_type("clipboard_events", "event_data")?
+            .is_some_and(|column_type| column_type.eq_ignore_ascii_case("BLOB"));
 
         if has_legacy_columns
             || missing_required_columns
+            || !event_data_is_blob
             || !self.primary_key_column_is("clipboard_events", "content_hash")?
         {
             self.rebuild_clipboard_events_table(&columns)?;
@@ -153,6 +157,21 @@ impl Database {
         Ok(columns)
     }
 
+    fn column_declared_type(&self, table: &str, expected_column: &str) -> Result<Option<String>> {
+        let pragma = format!("PRAGMA table_info({})", table);
+        let mut stmt = self.conn.prepare(&pragma)?;
+        let mut rows = stmt.query([])?;
+
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name == expected_column {
+                return Ok(Some(row.get(2)?));
+            }
+        }
+
+        Ok(None)
+    }
+
     fn primary_key_column_is(&self, table: &str, expected_column: &str) -> Result<bool> {
         let pragma = format!("PRAGMA table_info({})", table);
         let mut stmt = self.conn.prepare(&pragma)?;
@@ -174,7 +193,7 @@ impl Database {
             &format!(
                 "CREATE TABLE IF NOT EXISTS {} (
                     content_hash TEXT PRIMARY KEY,
-                    event_data TEXT NOT NULL,
+                    event_data BLOB NOT NULL,
                     timestamp INTEGER NOT NULL
                 )",
                 table
@@ -240,7 +259,7 @@ impl Database {
         let rows = stmt.query_map([], |row| {
             Ok(DbRow {
                 content_hash: row.get(0)?,
-                event_data: row.get(1)?,
+                event_data: Self::event_blob_from_row(row, 1)?,
                 timestamp: Self::timestamp_from_row(row, 2)?,
             })
         })?;
@@ -251,6 +270,26 @@ impl Database {
         }
 
         Ok(event_rows)
+    }
+
+    fn event_blob_from_row(row: &rusqlite::Row<'_>, index: usize) -> Result<Vec<u8>> {
+        match row.get_ref(index)? {
+            ValueRef::Blob(value) => Ok(value.to_vec()),
+            ValueRef::Text(value) => {
+                let text = std::str::from_utf8(value)
+                    .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
+                let event = event_from_legacy_json(text)
+                    .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
+                encode_event_blob(&event)
+                    .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))
+            }
+            ValueRef::Null => Err(rusqlite::Error::InvalidParameterName(
+                "event_data cannot be null".to_string(),
+            )),
+            ValueRef::Integer(_) | ValueRef::Real(_) => Err(rusqlite::Error::InvalidParameterName(
+                "event_data must be text or blob".to_string(),
+            )),
+        }
     }
 
     fn timestamp_from_row(row: &rusqlite::Row<'_>, index: usize) -> Result<i64> {
@@ -296,7 +335,7 @@ impl Database {
         let rows = stmt.query_map([], |row| {
             Ok(DbRow {
                 content_hash: row.get(0)?,
-                event_data: row.get(1)?,
+                event_data: Self::event_blob_from_row(row, 1)?,
                 timestamp: row.get(2)?,
             })
         })?;
@@ -393,8 +432,8 @@ impl Database {
     }
 
     pub fn insert_event(&self, event: &Event) -> Result<()> {
-        let event_data = serialize_event(event)
-            .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+        let event_data = encode_event_blob(event)
+            .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
         let content_hash = self.generate_content_hash(event)?;
 
         let updated = self.conn.execute(
@@ -448,12 +487,12 @@ impl Database {
         Utc::now().timestamp_millis()
     }
 
-    fn generate_content_hash_from_event_data(&self, event_data: &str) -> Result<String> {
-        match deserialize_event(event_data) {
+    fn generate_content_hash_from_event_data(&self, event_data: &[u8]) -> Result<String> {
+        match decode_event_blob(event_data) {
             Ok(event) => self.generate_content_hash(&event),
             Err(_) => {
                 let mut hasher = Sha256::new();
-                hasher.update(event_data.as_bytes());
+                hasher.update(event_data);
                 Ok(format!("{:x}", hasher.finalize()))
             }
         }
@@ -464,9 +503,9 @@ impl Database {
         let mut hasher = Sha256::new();
 
         if fragments.is_empty() {
-            let fallback = serialize_event(event)
-                .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
-            hasher.update(fallback.as_bytes());
+            let fallback = encode_event_blob(event)
+                .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
+            hasher.update(fallback);
         } else {
             for fragment in fragments {
                 hasher.update(fragment.data_type.as_bytes());
@@ -588,7 +627,8 @@ impl Database {
         )?;
 
         let event_iter = stmt.query_map([], |row| {
-            Ok(StoredEvent::new(row.get(0)?, row.get(1)?, row.get(2)?))
+            let event_data = Self::clipboard_event_from_blob(row.get(1)?)?;
+            Ok(StoredEvent::new(row.get(0)?, event_data, row.get(2)?))
         })?;
 
         let mut events = Vec::new();
@@ -605,9 +645,8 @@ impl Database {
 
         let mut rows = stmt.query([content_hash])?;
         if let Some(row) = rows.next()? {
-            let event_data: String = row.get(0)?;
-            let event = deserialize_event(&event_data)
-                .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+            let event_data: Vec<u8> = row.get(0)?;
+            let event = Self::event_from_blob(&event_data)?;
             Ok(Some(event))
         } else {
             Ok(None)
@@ -624,13 +663,20 @@ impl Database {
 
         let mut rows = stmt.query([content_hash])?;
         if let Some(row) = rows.next()? {
-            let event_data: String = row.get(0)?;
-            let event: ClipboardEvent = serde_json::from_str(&event_data)
-                .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
-            Ok(Some(event))
+            let event_data: Vec<u8> = row.get(0)?;
+            Ok(Some(Self::clipboard_event_from_blob(event_data)?))
         } else {
             Ok(None)
         }
+    }
+
+    fn event_from_blob(event_data: &[u8]) -> Result<Event> {
+        decode_event_blob(event_data)
+            .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))
+    }
+
+    fn clipboard_event_from_blob(event_data: Vec<u8>) -> Result<ClipboardEvent> {
+        Self::event_from_blob(&event_data).map(|event| ClipboardEvent::from(&event))
     }
 
     pub fn delete_event(&self, content_hash: &str) -> Result<()> {

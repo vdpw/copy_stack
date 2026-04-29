@@ -72,14 +72,15 @@ The frontend receives stored rows as:
 ```ts
 interface StoredEvent {
   content_hash: string;
-  event_data: string;
+  event_data: ClipboardEvent;
   timestamp: number;
 }
 ```
 
-`event_data` is a JSON string containing `copy_event_listener::event::Event`.
-`timestamp` is a Unix millisecond timestamp. The frontend only decodes enough of
-the payload to show a preview.
+`event_data` is a structured clipboard event payload returned by the backend.
+SQLite stores the source event as a binary blob; the Tauri command decodes it
+before sending history to React. `timestamp` is a Unix millisecond timestamp.
+The frontend only decodes enough of the payload to show a preview.
 
 Current preview interfaces:
 
@@ -98,12 +99,12 @@ interface ClipboardEvent {
 }
 ```
 
-Keep these interfaces aligned with Rust serialization and the upstream
-`copy_event_listener` event shape.
+Keep these interfaces aligned with the Rust `ClipboardEvent` API payload and
+the upstream `copy_event_listener` event shape.
 
 ## Clipboard Preview Decoding
 
-`getEventContent(eventData)` parses `event_data` and searches item data for:
+`getEventContent(event)` searches `event_data` item data for:
 
 - `public.utf8-plain-text`
 - `public.utf16-plain-text`

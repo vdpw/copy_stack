@@ -27,7 +27,7 @@ The `Database` struct wraps one `rusqlite::Connection`. Tauri stores it in
 ```sql
 CREATE TABLE IF NOT EXISTS clipboard_events (
   content_hash TEXT PRIMARY KEY,
-  event_data TEXT NOT NULL,
+  event_data BLOB NOT NULL,
   timestamp INTEGER NOT NULL
 );
 ```
@@ -36,7 +36,8 @@ Columns:
 
 - `content_hash`: normalized SHA-256 hash used as the stable row key and
   deduplication key.
-- `event_data`: serialized `copy_event_listener::event::Event` JSON.
+- `event_data`: compact binary clipboard event payload. The binary format stores
+  each item, data type, and raw `data` bytes directly.
 - `timestamp`: Unix timestamp in milliseconds. This is also the ordering key.
 
 Indexes:
@@ -69,8 +70,8 @@ Settings are stored as strings and parsed by helper methods.
 
 1. Creates `clipboard_events` with `content_hash` as the primary key for clean
    databases.
-2. Migrates legacy `id`/`sort_order`/RFC3339 timestamp tables into the current
-   schema when needed.
+2. Migrates legacy `id`/`sort_order`/RFC3339 timestamp/JSON payload tables into
+   the current schema when needed.
 3. Creates indexes.
 4. Creates `settings`.
 5. Inserts default setting rows if they do not exist.
@@ -86,7 +87,7 @@ Then it:
 1. Reads all rows.
 2. Recomputes a content hash from `event_data`.
 3. Keeps the first row for each hash.
-4. Rewrites the table with `content_hash`, `event_data`, and integer
+4. Rewrites the table with `content_hash`, binary `event_data`, and integer
    `timestamp`.
 
 This means opening an older database can delete duplicate rows that collapse to
@@ -96,7 +97,7 @@ the same normalized content hash.
 
 `insert_event(event)`:
 
-1. Serializes the event to JSON.
+1. Encodes the event to the binary clipboard payload format.
 2. Computes a normalized content hash.
 3. If a row with the same hash exists, updates `event_data` and preserves the
    existing `timestamp`.
@@ -109,8 +110,8 @@ another row or changing list order.
 
 ## Content Hashing
 
-Deduplication uses stable user-facing content rather than the full serialized
-event JSON.
+Deduplication uses stable user-facing content rather than the full binary event
+payload.
 
 For each item, the database prefers text-like types:
 
@@ -129,7 +130,7 @@ result is fed into SHA-256 with type separators.
 
 If no preferred text-like type exists for an item, the fallback is the
 lexicographically first data type and its raw bytes. If no fragments exist, the
-fallback is the full serialized event JSON.
+fallback is the binary event payload.
 
 ## Ordering
 
@@ -183,8 +184,8 @@ user data.
 ## Persistence Change Checklist
 
 - Test with an existing database, not only a clean database.
-- Preserve or deliberately migrate `event_data` JSON compatibility.
+- Preserve or deliberately migrate legacy `event_data` JSON compatibility.
 - Keep dedupe behavior aligned with `docs/design/copy-event-ordering.md`.
 - Keep tray and frontend refresh behavior aligned with persisted ordering.
 - Run `cargo check --manifest-path src-tauri/Cargo.toml`.
-- Run `pnpm type-check` if serialized shapes consumed by React changed.
+- Run `pnpm type-check` if API payload shapes consumed by React changed.
