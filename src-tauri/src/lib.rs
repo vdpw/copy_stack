@@ -53,11 +53,11 @@ async fn get_copy_events(state: State<'_, AppState>) -> Result<Vec<StoredEvent>,
 async fn delete_copy_event(
     app: AppHandle,
     state: State<'_, AppState>,
-    id: String,
+    content_hash: String,
 ) -> Result<(), String> {
     {
         let db = state.db.lock().unwrap();
-        db.delete_event(&id).map_err(|e| e.to_string())?;
+        db.delete_event(&content_hash).map_err(|e| e.to_string())?;
     }
     tray::sync(&app)
 }
@@ -75,49 +75,68 @@ async fn clear_all_events(app: AppHandle, state: State<'_, AppState>) -> Result<
 async fn copy_to_clipboard(
     app_handle: AppHandle,
     state: State<'_, AppState>,
-    id: String,
+    content_hash: String,
 ) -> Result<(), String> {
-    debug_log!("[copy_stack] copy_to_clipboard requested: id={}", id);
+    debug_log!(
+        "[copy_stack] copy_to_clipboard requested: content_hash={}",
+        content_hash
+    );
 
-    let (event, content_hash, move_restored_item_to_top) = {
+    let (event, restore_content_hash, move_restored_item_to_top) = {
         let db = state.db.lock().unwrap();
         let event = db
-            .get_event_by_id(&id)
+            .get_event_by_content_hash(&content_hash)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("Event not found: {}", id))?;
-        let content_hash = db.event_content_hash(&event).map_err(|e| e.to_string())?;
+            .ok_or_else(|| format!("Event not found: {}", content_hash))?;
+        let restore_content_hash = db.event_content_hash(&event).map_err(|e| e.to_string())?;
         let move_restored_item_to_top = db
             .get_move_restored_item_to_top()
             .map_err(|e| e.to_string())?;
-        (event, content_hash, move_restored_item_to_top)
+        (event, restore_content_hash, move_restored_item_to_top)
     };
-    debug_log!("[copy_stack] clipboard event loaded: id={}", id);
+    debug_log!(
+        "[copy_stack] clipboard event loaded: content_hash={}",
+        content_hash
+    );
 
     if !move_restored_item_to_top {
-        queue_restore_suppression(&state, content_hash.clone());
-        debug_log!("[copy_stack] restore will preserve list order: id={}", id);
+        queue_restore_suppression(&state, restore_content_hash.clone());
+        debug_log!(
+            "[copy_stack] restore will preserve list order: content_hash={}",
+            content_hash
+        );
     }
 
     if let Err(error) = restore_event_to_clipboard(event) {
-        clear_restore_suppression_if_matches(&state, &content_hash);
+        clear_restore_suppression_if_matches(&state, &restore_content_hash);
         return Err(error);
     }
     debug_log!(
-        "[copy_stack] clipboard event written to pasteboard: id={}",
-        id
+        "[copy_stack] clipboard event written to pasteboard: content_hash={}",
+        content_hash
     );
 
     if move_restored_item_to_top {
         let db = state.db.lock().unwrap();
-        db.move_event_to_top(&id).map_err(|e| e.to_string())?;
-        debug_log!("[copy_stack] clipboard event moved to top: id={}", id);
+        db.move_event_to_top(&content_hash)
+            .map_err(|e| e.to_string())?;
+        debug_log!(
+            "[copy_stack] clipboard event moved to top: content_hash={}",
+            content_hash
+        );
     } else {
-        debug_log!("[copy_stack] clipboard event order unchanged: id={}", id);
+        debug_log!(
+            "[copy_stack] clipboard event order unchanged: content_hash={}",
+            content_hash
+        );
     }
 
     tray::sync(&app_handle)?;
     tray::notify_history_changed(&app_handle)?;
-    debug_log!("[copy_stack] history/tray refresh notified: id={}", id);
+    debug_log!(
+        "[copy_stack] history/tray refresh notified: content_hash={}",
+        content_hash
+    );
 
     Ok(())
 }
@@ -167,12 +186,13 @@ fn should_skip_pending_restore_event(state: &AppState, content_hash: &str) -> bo
 }
 
 #[tauri::command]
-async fn get_event_by_id(
+async fn get_event_by_content_hash(
     state: State<'_, AppState>,
-    id: String,
+    content_hash: String,
 ) -> Result<Option<ClipboardEvent>, String> {
     let db = state.db.lock().unwrap();
-    db.get_clipboard_event_by_id(&id).map_err(|e| e.to_string())
+    db.get_clipboard_event_by_content_hash(&content_hash)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -303,7 +323,7 @@ pub fn run(rx: Receiver<Event>) {
             delete_copy_event,
             clear_all_events,
             copy_to_clipboard,
-            get_event_by_id,
+            get_event_by_content_hash,
             get_app_settings,
             set_max_items,
             set_show_in_menu_bar,

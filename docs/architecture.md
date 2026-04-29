@@ -81,7 +81,7 @@ Commands registered in `tauri::generate_handler!` are callable from React:
 - `delete_copy_event`
 - `clear_all_events`
 - `copy_to_clipboard`
-- `get_event_by_id`
+- `get_event_by_content_hash`
 - `get_app_settings`
 - `set_max_items`
 - `set_show_in_menu_bar`
@@ -105,7 +105,7 @@ Ordering is a backend and database concern. The UI renders rows in the order
 returned by `get_copy_events`. SQLite returns rows with:
 
 ```sql
-ORDER BY sort_order DESC, timestamp DESC
+ORDER BY timestamp DESC, content_hash ASC
 ```
 
 Do not implement a separate frontend-only ordering rule unless the database
@@ -120,7 +120,7 @@ listener event once. This preserves the item's current order while still writing
 the clipboard.
 
 When `move_restored_item_to_top` is true, restore operations update the row's
-`sort_order` and `timestamp`, sync the tray, and notify the UI.
+Unix millisecond `timestamp`, sync the tray, and notify the UI.
 
 ## Failure Boundaries
 

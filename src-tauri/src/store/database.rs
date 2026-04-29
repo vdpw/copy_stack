@@ -1,11 +1,10 @@
 use crate::event::{deserialize_event, serialize_event, ClipboardEvent};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use copy_event_listener::event::{Data, Event, Item};
-use rusqlite::{Connection, Result};
+use rusqlite::{types::ValueRef, Connection, Result};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tauri::AppHandle;
-use uuid::Uuid;
 
 const APP_DATA_DIR: &str = ".copy_stack";
 const DB_FILE_NAME: &str = "copy_stack.db";
@@ -16,9 +15,9 @@ const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredEvent {
-    pub id: String,
+    pub content_hash: String,
     pub event_data: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: i64,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -29,9 +28,9 @@ pub struct AppSettings {
 }
 
 impl StoredEvent {
-    fn new(id: String, event_data: String, timestamp: DateTime<Utc>) -> Self {
+    fn new(content_hash: String, event_data: String, timestamp: i64) -> Self {
         Self {
-            id,
+            content_hash,
             event_data,
             timestamp,
         }
@@ -39,8 +38,9 @@ impl StoredEvent {
 }
 
 struct DbRow {
-    id: String,
+    content_hash: Option<String>,
     event_data: String,
+    timestamp: i64,
 }
 
 struct HashFragment {
@@ -75,42 +75,7 @@ impl Database {
     }
 
     fn initialize_schema(&self) -> Result<()> {
-        self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS clipboard_events (
-                id TEXT PRIMARY KEY,
-                event_data TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                content_hash TEXT,
-                sort_order INTEGER NOT NULL DEFAULT 0
-            )",
-            [],
-        )?;
-
-        if !self.column_exists("clipboard_events", "content_hash")? {
-            self.conn.execute(
-                "ALTER TABLE clipboard_events ADD COLUMN content_hash TEXT",
-                [],
-            )?;
-        }
-
-        if !self.column_exists("clipboard_events", "sort_order")? {
-            self.conn.execute(
-                "ALTER TABLE clipboard_events ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
-                [],
-            )?;
-        }
-
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_events_content_hash
-             ON clipboard_events(content_hash)
-             WHERE content_hash IS NOT NULL",
-            [],
-        )?;
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_clipboard_events_sort_order
-             ON clipboard_events(sort_order DESC, timestamp DESC)",
-            [],
-        )?;
+        self.ensure_clipboard_events_schema()?;
 
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (
@@ -138,75 +103,244 @@ impl Database {
         Ok(())
     }
 
-    fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
+    fn ensure_clipboard_events_schema(&self) -> Result<()> {
+        if !self.table_exists("clipboard_events")? {
+            self.create_clipboard_events_table("clipboard_events")?;
+            self.create_clipboard_events_indexes()?;
+            return Ok(());
+        }
+
+        let columns = self.table_columns("clipboard_events")?;
+        let has_legacy_columns = columns
+            .iter()
+            .any(|column| column == "id" || column == "sort_order");
+        let missing_required_columns = !columns.iter().any(|column| column == "content_hash")
+            || !columns.iter().any(|column| column == "event_data")
+            || !columns.iter().any(|column| column == "timestamp");
+
+        if has_legacy_columns
+            || missing_required_columns
+            || !self.primary_key_column_is("clipboard_events", "content_hash")?
+        {
+            self.rebuild_clipboard_events_table(&columns)?;
+        } else {
+            self.drop_legacy_clipboard_events_indexes()?;
+            self.create_clipboard_events_indexes()?;
+        }
+
+        Ok(())
+    }
+
+    fn table_exists(&self, table: &str) -> Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1")?;
+        let mut rows = stmt.query([table])?;
+        Ok(rows.next()?.is_some())
+    }
+
+    fn table_columns(&self, table: &str) -> Result<Vec<String>> {
+        let pragma = format!("PRAGMA table_info({})", table);
+        let mut stmt = self.conn.prepare(&pragma)?;
+        let mut rows = stmt.query([])?;
+        let mut columns = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            columns.push(name);
+        }
+
+        Ok(columns)
+    }
+
+    fn primary_key_column_is(&self, table: &str, expected_column: &str) -> Result<bool> {
         let pragma = format!("PRAGMA table_info({})", table);
         let mut stmt = self.conn.prepare(&pragma)?;
         let mut rows = stmt.query([])?;
 
         while let Some(row) = rows.next()? {
             let name: String = row.get(1)?;
-            if name == column {
-                return Ok(true);
+            let primary_key_position: i64 = row.get(5)?;
+            if primary_key_position > 0 {
+                return Ok(name == expected_column);
             }
         }
 
         Ok(false)
     }
 
-    fn rebuild_history_metadata(&self) -> Result<()> {
-        let has_sort_order: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM clipboard_events WHERE sort_order > 0",
+    fn create_clipboard_events_table(&self, table: &str) -> Result<()> {
+        self.conn.execute(
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {} (
+                    content_hash TEXT PRIMARY KEY,
+                    event_data TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL
+                )",
+                table
+            ),
             [],
-            |row| row.get(0),
         )?;
-        let order_clause = if has_sort_order > 0 {
+        Ok(())
+    }
+
+    fn create_clipboard_events_indexes(&self) -> Result<()> {
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_clipboard_events_timestamp
+             ON clipboard_events(timestamp DESC)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn drop_legacy_clipboard_events_indexes(&self) -> Result<()> {
+        self.conn
+            .execute("DROP INDEX IF EXISTS idx_clipboard_events_content_hash", [])?;
+        self.conn
+            .execute("DROP INDEX IF EXISTS idx_clipboard_events_sort_order", [])?;
+        Ok(())
+    }
+
+    fn rebuild_clipboard_events_table(&self, columns: &[String]) -> Result<()> {
+        self.conn
+            .execute("DROP TABLE IF EXISTS clipboard_events_next", [])?;
+        self.create_clipboard_events_table("clipboard_events_next")?;
+
+        let rows = self.read_clipboard_event_rows(columns)?;
+        self.insert_deduped_rows("clipboard_events_next", rows)?;
+
+        self.drop_legacy_clipboard_events_indexes()?;
+        self.conn.execute("DROP TABLE clipboard_events", [])?;
+        self.conn.execute(
+            "ALTER TABLE clipboard_events_next RENAME TO clipboard_events",
+            [],
+        )?;
+        self.create_clipboard_events_indexes()?;
+
+        Ok(())
+    }
+
+    fn read_clipboard_event_rows(&self, columns: &[String]) -> Result<Vec<DbRow>> {
+        let select_content_hash = if columns.iter().any(|column| column == "content_hash") {
+            "content_hash"
+        } else {
+            "NULL AS content_hash"
+        };
+        let order_clause = if columns.iter().any(|column| column == "sort_order") {
             "ORDER BY sort_order DESC, timestamp DESC"
         } else {
             "ORDER BY timestamp DESC"
         };
-
         let query = format!(
-            "SELECT id, event_data FROM clipboard_events {}",
-            order_clause
+            "SELECT {}, event_data, timestamp FROM clipboard_events {}",
+            select_content_hash, order_clause
         );
+
         let mut stmt = self.conn.prepare(&query)?;
         let rows = stmt.query_map([], |row| {
             Ok(DbRow {
-                id: row.get(0)?,
+                content_hash: row.get(0)?,
                 event_data: row.get(1)?,
+                timestamp: Self::timestamp_from_row(row, 2)?,
             })
         })?;
 
-        let mut survivors: Vec<(String, String)> = Vec::new();
-        let mut seen_hashes = std::collections::HashSet::new();
-        let mut duplicate_ids = Vec::new();
+        let mut event_rows = Vec::new();
+        for row in rows {
+            event_rows.push(row?);
+        }
+
+        Ok(event_rows)
+    }
+
+    fn timestamp_from_row(row: &rusqlite::Row<'_>, index: usize) -> Result<i64> {
+        match row.get_ref(index)? {
+            ValueRef::Integer(value) => Ok(Self::normalize_unix_timestamp(value)),
+            ValueRef::Real(value) => Ok(Self::normalize_unix_timestamp(value as i64)),
+            ValueRef::Text(value) => {
+                let text = std::str::from_utf8(value)
+                    .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
+                Self::parse_timestamp(text)
+            }
+            ValueRef::Null => Ok(0),
+            ValueRef::Blob(_) => Err(rusqlite::Error::InvalidParameterName(
+                "timestamp must be text or integer".to_string(),
+            )),
+        }
+    }
+
+    fn parse_timestamp(value: &str) -> Result<i64> {
+        if let Ok(timestamp) = value.parse::<i64>() {
+            return Ok(Self::normalize_unix_timestamp(timestamp));
+        }
+
+        chrono::DateTime::parse_from_rfc3339(value)
+            .map(|timestamp| timestamp.timestamp_millis())
+            .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))
+    }
+
+    fn normalize_unix_timestamp(timestamp: i64) -> i64 {
+        if timestamp.abs() < 10_000_000_000 {
+            timestamp * 1000
+        } else {
+            timestamp
+        }
+    }
+
+    fn rebuild_history_metadata(&self) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "SELECT content_hash, event_data, timestamp
+             FROM clipboard_events
+             ORDER BY timestamp DESC, content_hash ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(DbRow {
+                content_hash: row.get(0)?,
+                event_data: row.get(1)?,
+                timestamp: row.get(2)?,
+            })
+        })?;
+
+        let mut event_rows = Vec::new();
 
         for row in rows {
-            let row = row?;
-            let content_hash = self.generate_content_hash_from_event_data(&row.event_data)?;
+            event_rows.push(row?);
+        }
+        drop(stmt);
 
-            if seen_hashes.insert(content_hash.clone()) {
-                survivors.push((row.id, content_hash));
-            } else {
-                duplicate_ids.push(row.id);
+        self.conn
+            .execute("DROP TABLE IF EXISTS clipboard_events_next", [])?;
+        self.create_clipboard_events_table("clipboard_events_next")?;
+        self.insert_deduped_rows("clipboard_events_next", event_rows)?;
+        self.conn.execute("DROP TABLE clipboard_events", [])?;
+        self.conn.execute(
+            "ALTER TABLE clipboard_events_next RENAME TO clipboard_events",
+            [],
+        )?;
+        self.create_clipboard_events_indexes()?;
+
+        Ok(())
+    }
+
+    fn insert_deduped_rows(&self, table: &str, rows: Vec<DbRow>) -> Result<()> {
+        let mut seen_hashes = std::collections::HashSet::new();
+
+        for row in rows {
+            let content_hash = match self.generate_content_hash_from_event_data(&row.event_data) {
+                Ok(content_hash) => content_hash,
+                Err(_) => row.content_hash.unwrap_or_default(),
+            };
+            if content_hash.is_empty() || !seen_hashes.insert(content_hash.clone()) {
+                continue;
             }
-        }
 
-        for duplicate_id in duplicate_ids {
             self.conn.execute(
-                "DELETE FROM clipboard_events WHERE id = ?1",
-                [&duplicate_id],
-            )?;
-        }
-
-        let total = survivors.len() as i64;
-        for (index, (id, content_hash)) in survivors.iter().enumerate() {
-            let sort_order = total - index as i64;
-            self.conn.execute(
-                "UPDATE clipboard_events
-                 SET content_hash = ?1, sort_order = ?2
-                 WHERE id = ?3",
-                (content_hash, sort_order, id),
+                &format!(
+                    "INSERT INTO {} (content_hash, event_data, timestamp)
+                     VALUES (?1, ?2, ?3)",
+                    table
+                ),
+                (content_hash, row.event_data, row.timestamp),
             )?;
         }
 
@@ -259,39 +393,26 @@ impl Database {
     }
 
     pub fn insert_event(&self, event: &Event) -> Result<()> {
-        let now = Utc::now();
         let event_data = serialize_event(event)
             .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
         let content_hash = self.generate_content_hash(event)?;
-        let next_sort_order = self.next_sort_order()?;
 
-        let existing_id = self.find_event_id_by_hash(&content_hash)?;
+        let updated = self.conn.execute(
+            "UPDATE clipboard_events
+             SET event_data = ?1
+             WHERE content_hash = ?2",
+            (&event_data, &content_hash),
+        )?;
 
-        if let Some(existing_id) = existing_id {
-            self.conn.execute(
-                "UPDATE clipboard_events
-                 SET event_data = ?1, timestamp = ?2, sort_order = ?3
-                 WHERE id = ?4",
-                (
-                    &event_data,
-                    &now.to_rfc3339(),
-                    next_sort_order,
-                    &existing_id,
-                ),
-            )?;
+        if updated > 0 {
             return Ok(());
         }
 
+        let timestamp = self.next_history_timestamp()?;
         self.conn.execute(
-            "INSERT INTO clipboard_events (id, event_data, timestamp, content_hash, sort_order)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            (
-                Uuid::new_v4().to_string(),
-                event_data,
-                now.to_rfc3339(),
-                content_hash,
-                next_sort_order,
-            ),
+            "INSERT INTO clipboard_events (content_hash, event_data, timestamp)
+             VALUES (?1, ?2, ?3)",
+            (content_hash, event_data, timestamp),
         )?;
 
         self.cleanup_old_events()?;
@@ -299,12 +420,12 @@ impl Database {
         Ok(())
     }
 
-    pub fn move_event_to_top(&self, id: &str) -> Result<()> {
+    pub fn move_event_to_top(&self, content_hash: &str) -> Result<()> {
         let updated = self.conn.execute(
             "UPDATE clipboard_events
-             SET sort_order = ?1, timestamp = ?2
-             WHERE id = ?3",
-            (self.next_sort_order()?, Utc::now().to_rfc3339(), id),
+             SET timestamp = ?1
+             WHERE content_hash = ?2",
+            (self.next_history_timestamp()?, content_hash),
         )?;
 
         if updated == 0 {
@@ -314,25 +435,17 @@ impl Database {
         Ok(())
     }
 
-    fn next_sort_order(&self) -> Result<i64> {
-        self.conn.query_row(
-            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM clipboard_events",
+    fn next_history_timestamp(&self) -> Result<i64> {
+        let max_timestamp: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(timestamp), 0) FROM clipboard_events",
             [],
             |row| row.get(0),
-        )
+        )?;
+        Ok(Self::current_unix_timestamp().max(max_timestamp + 1))
     }
 
-    fn find_event_id_by_hash(&self, content_hash: &str) -> Result<Option<String>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id FROM clipboard_events WHERE content_hash = ?1")?;
-        let mut rows = stmt.query([content_hash])?;
-
-        if let Some(row) = rows.next()? {
-            Ok(Some(row.get(0)?))
-        } else {
-            Ok(None)
-        }
+    fn current_unix_timestamp() -> i64 {
+        Utc::now().timestamp_millis()
     }
 
     fn generate_content_hash_from_event_data(&self, event_data: &str) -> Result<String> {
@@ -469,18 +582,13 @@ impl Database {
 
     pub fn get_all_events(&self) -> Result<Vec<StoredEvent>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, event_data, timestamp
+            "SELECT content_hash, event_data, timestamp
              FROM clipboard_events
-             ORDER BY sort_order DESC, timestamp DESC",
+             ORDER BY timestamp DESC, content_hash ASC",
         )?;
 
         let event_iter = stmt.query_map([], |row| {
-            let timestamp_str: String = row.get(2)?;
-            let timestamp = chrono::DateTime::parse_from_rfc3339(&timestamp_str)
-                .unwrap()
-                .with_timezone(&chrono::Utc);
-
-            Ok(StoredEvent::new(row.get(0)?, row.get(1)?, timestamp))
+            Ok(StoredEvent::new(row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
 
         let mut events = Vec::new();
@@ -490,12 +598,12 @@ impl Database {
         Ok(events)
     }
 
-    pub fn get_event_by_id(&self, id: &str) -> Result<Option<Event>> {
+    pub fn get_event_by_content_hash(&self, content_hash: &str) -> Result<Option<Event>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT event_data FROM clipboard_events WHERE id = ?1")?;
+            .prepare("SELECT event_data FROM clipboard_events WHERE content_hash = ?1")?;
 
-        let mut rows = stmt.query([id])?;
+        let mut rows = stmt.query([content_hash])?;
         if let Some(row) = rows.next()? {
             let event_data: String = row.get(0)?;
             let event = deserialize_event(&event_data)
@@ -506,12 +614,15 @@ impl Database {
         }
     }
 
-    pub fn get_clipboard_event_by_id(&self, id: &str) -> Result<Option<ClipboardEvent>> {
+    pub fn get_clipboard_event_by_content_hash(
+        &self,
+        content_hash: &str,
+    ) -> Result<Option<ClipboardEvent>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT event_data FROM clipboard_events WHERE id = ?1")?;
+            .prepare("SELECT event_data FROM clipboard_events WHERE content_hash = ?1")?;
 
-        let mut rows = stmt.query([id])?;
+        let mut rows = stmt.query([content_hash])?;
         if let Some(row) = rows.next()? {
             let event_data: String = row.get(0)?;
             let event: ClipboardEvent = serde_json::from_str(&event_data)
@@ -522,9 +633,11 @@ impl Database {
         }
     }
 
-    pub fn delete_event(&self, id: &str) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM clipboard_events WHERE id = ?1", [id])?;
+    pub fn delete_event(&self, content_hash: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM clipboard_events WHERE content_hash = ?1",
+            [content_hash],
+        )?;
         Ok(())
     }
 
@@ -544,9 +657,9 @@ impl Database {
         if count > max_items as i64 {
             let excess = count - max_items as i64;
             self.conn.execute(
-                "DELETE FROM clipboard_events WHERE id IN (
-                    SELECT id FROM clipboard_events
-                    ORDER BY sort_order ASC, timestamp ASC
+                "DELETE FROM clipboard_events WHERE content_hash IN (
+                    SELECT content_hash FROM clipboard_events
+                    ORDER BY timestamp ASC, content_hash DESC
                     LIMIT ?1
                 )",
                 [excess],

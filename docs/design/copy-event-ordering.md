@@ -2,23 +2,34 @@
 
 ## Context
 
-`Copy Stack` stores clipboard history in SQLite and renders the list in the Tauri UI. The current implementation sorts by `timestamp` and deduplicates by hashing the full serialized clipboard event. That behavior does not match the product rules:
+`Copy Stack` stores clipboard history in SQLite and renders the list in the Tauri UI. The history model must satisfy these product rules:
 
 1. A newly observed copy event must appear at the top of the event list.
-2. When a user copies an existing item from the event list, the persisted record must move to the top in SQLite, then the UI must refresh from SQLite.
-3. If copied content already exists in history, the existing record must move to the top instead of creating a duplicate.
+2. When a user restores an existing item from the event list, the persisted
+   record moves to the top only if restore ordering is enabled.
+3. If copied content already exists in history, the existing record must be
+   updated without creating a duplicate or changing its order.
 4. Duplicate detection must use stable key content because raw clipboard payloads may include volatile metadata such as time values.
 
 ## Design
 
-### Persisted ordering
+### Persisted identity and ordering
 
-The database keeps an explicit `sort_order` column on `clipboard_events`.
+The database uses the normalized `content_hash` as the primary key on
+`clipboard_events`, and uses an integer Unix millisecond `timestamp` as the
+ordering key.
 
-- The UI order is defined by `ORDER BY sort_order DESC, timestamp DESC`.
-- New records are inserted with the next highest `sort_order`.
-- Re-copying an existing record updates that record’s `sort_order` to the current maximum plus one.
-- Copying a duplicate from outside the app also updates the existing row’s `sort_order` instead of inserting a second row.
+- The UI order is defined by `ORDER BY timestamp DESC, content_hash ASC`.
+- New records are inserted with the current Unix millisecond timestamp.
+- Re-copying an existing record refreshes `event_data` but preserves that
+  record's timestamp.
+- Copying a duplicate from outside the app updates the existing row payload
+  instead of inserting a second row or moving it.
+- Restoring an item updates its timestamp only when `move_restored_item_to_top`
+  is enabled.
+- Timestamp writes use the greater of the current Unix millisecond timestamp and
+  `MAX(timestamp) + 1` to preserve stable order for events that arrive in the
+  same millisecond.
 
 This makes list order a database concern rather than a frontend-only effect.
 
@@ -47,8 +58,9 @@ This guarantees the visible order always matches the persisted order.
 
 Existing databases need a lightweight migration:
 
-- add `sort_order` if missing;
-- backfill `sort_order` from the current visible order;
+- rewrite legacy `id` and `sort_order` tables into the current
+  `content_hash`/`event_data`/`timestamp` schema;
+- convert formatted timestamps to Unix millisecond timestamps;
 - recompute normalized content hashes for existing rows;
 - remove older duplicates that collapse to the same normalized hash.
 

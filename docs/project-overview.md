@@ -42,7 +42,7 @@ and writes it back to the system clipboard.
 
 The user sets `max_items` in Settings. Lowering the limit asks for confirmation
 in the UI, then the backend trims the oldest rows according to persisted
-`sort_order`.
+Unix millisecond timestamps.
 
 ### Menu Bar Access
 
