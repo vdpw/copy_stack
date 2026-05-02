@@ -39,7 +39,7 @@ The dedupe key is derived from the highest-priority supported clipboard
 representation, and the same classifier also stores `data_type` and
 binary `display` preview bytes for the UI.
 
-- Prefer `public.rtf`, then `public.html`, then `public.png`.
+- Prefer `public.rtf`, then `public.png`, then `public.html`.
 - For a single local-image `public.file-url`, hash the file URL bytes and
   classify/display it by image extension, such as `png` or `heic`.
 - For a single `public.file-url`, hash the file URL bytes and classify the item

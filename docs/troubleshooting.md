@@ -42,7 +42,7 @@ listener capture, persistence, restore, and tray refresh.
 
 Deduplication uses the backend classifier, not the full binary event payload.
 The highest-priority supported type controls the hash: `public.rtf`,
-`public.html`, `public.png`, single local-image `public.file-url`, generic
+`public.png`, `public.html`, single local-image `public.file-url`, generic
 single `public.file-url` (`file` or `folder`), multi-item `public.file-url`
 (`files`, `folders`, or `files and folders`), then the exact one-item
 `public.utf8-plain-text` shape.
