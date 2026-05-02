@@ -62,7 +62,9 @@ frontend event emission.
 
 ### `get_copy_events`
 
-Returns all stored events ordered by `timestamp DESC, content_hash ASC`.
+Returns stored event metadata ordered by `timestamp DESC, content_hash ASC`.
+Rows include `content_hash`, backend-selected `data_type` and binary `display`,
+and `timestamp`; they do not include decoded `event_data`.
 
 ### `delete_copy_event`
 
@@ -107,7 +109,7 @@ Stores restore ordering behavior.
 The background consumer thread in `lib.rs` receives events from the channel.
 For each event:
 
-1. Compute its normalized content hash.
+1. Classify it into `content_hash`, `data_type`, and `display`.
 2. Compare it with pending restore suppression.
 3. Skip the event if it is the one app-initiated restore that should preserve
    order.
@@ -147,15 +149,10 @@ Tray menu item ids use stable prefixes:
 
 ## Tray Labels
 
-Tray labels are generated from stored event data:
-
-- Plain text types are decoded and whitespace-normalized.
-- Unsupported content falls back to a formatted data type label.
-- Labels are truncated to 72 characters.
-
-The tray preview logic is separate from the React preview logic. If supported
-clipboard types change, update both places or extract shared behavior where
-practical.
+Tray labels decode the stored `display` bytes from the database classifier and
+truncate the result to 72 characters. This keeps the tray and React history
+previews aligned for text displays while allowing binary thumbnails to be stored
+in the same column.
 
 ## Backend Change Checklist
 

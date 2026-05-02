@@ -72,50 +72,31 @@ The frontend receives stored rows as:
 ```ts
 interface StoredEvent {
   content_hash: string;
-  event_data: ClipboardEvent;
+  data_type: string;
+  display: number[];
   timestamp: number;
 }
 ```
 
-`event_data` is a structured clipboard event payload returned by the backend.
-SQLite stores the source event as a binary blob; the Tauri command decodes it
-before sending history to React. `timestamp` is a Unix millisecond timestamp.
-The frontend only decodes enough of the payload to show a preview.
+SQLite keeps the source event as a binary blob for restore operations, but
+`get_copy_events` does not return or decode `event_data`. `data_type` and
+`display` are selected by the backend classifier and should be used for
+user-facing previews. `display` is a byte array so text labels and future image
+thumbnail payloads can share the same field. `timestamp` is a Unix millisecond
+timestamp.
 
-Current preview interfaces:
+## Clipboard Preview Display
 
-```ts
-interface Data {
-  type: string;
-  data: number[];
-}
+The history list decodes `StoredEvent.display` as UTF-8 for current text labels
+and shows `StoredEvent.data_type` as the type badge. Keep preview selection in
+the backend classifier so the main window and tray menu use the same display
+value.
 
-interface Item {
-  data_list: Data[];
-}
+`truncateContent(...)` defensively normalizes whitespace and limits long
+previews to 160 characters.
 
-interface ClipboardEvent {
-  items: Item[];
-}
-```
-
-Keep these interfaces aligned with the Rust `ClipboardEvent` API payload and
-the upstream `copy_event_listener` event shape.
-
-## Clipboard Preview Decoding
-
-`getEventContent(event)` searches `event_data` item data for:
-
-- `public.utf8-plain-text`
-- `public.utf16-plain-text`
-- `NSStringPboardType`
-
-UTF-16 values are decoded with `TextDecoder("utf-16le")`; other text values use
-the default decoder. Empty or unsupported content falls back to a data type
-label such as `[public.file-url]`.
-
-`truncateContent(...)` normalizes whitespace and limits long previews to 160
-characters.
+TODO: render HTML previews in the UI for `data_type: "html"`.
+TODO: show PNG thumbnails in the UI for `data_type: "png"`.
 
 ## Settings Behavior
 

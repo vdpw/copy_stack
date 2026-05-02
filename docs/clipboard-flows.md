@@ -23,7 +23,7 @@ sequenceDiagram
 
   Clipboard->>Listener: clipboard content changes
   Listener->>Backend: send Event over mpsc channel
-  Backend->>DB: compute content hash
+  Backend->>DB: classify data and compute content hash
   Backend->>Backend: check restore suppression
   Backend->>DB: insert new row or refresh duplicate payload
   Backend->>Tray: rebuild menu
@@ -152,9 +152,10 @@ Stored payloads are binary-encoded Rust values:
 copy_event_listener::event::Event -> binary event blob -> clipboard_events.event_data
 ```
 
-The backend decodes `event_data` before returning history to React for preview
-rendering. Restore operations use the backend to decode and pass the original
-event back to `ClipboardListener::set_clipboard_event(...)`.
+The backend returns stored `data_type` and binary `display` preview metadata for
+history lists without decoding or sending `event_data` to React. Restore
+operations use the backend to decode and pass the original event back to
+`ClipboardListener::set_clipboard_event(...)`.
 
 ## Flow Change Checklist
 

@@ -1,4 +1,3 @@
-use crate::event::{ClipboardData, ClipboardEvent};
 use crate::store::StoredEvent;
 use crate::{
     clear_restore_suppression_if_matches, queue_restore_suppression, restore_event_to_clipboard,
@@ -206,65 +205,17 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
 }
 
 fn event_menu_label(event: &StoredEvent) -> String {
-    truncate_label(extract_preview(&event.event_data))
+    truncate_label(display_label(event))
 }
 
-fn extract_preview(event: &ClipboardEvent) -> String {
-    for item in &event.items {
-        for data in &item.data_list {
-            if is_plain_text(&data.r#type) {
-                let text = decode_text(data);
-                let normalized = normalize_whitespace(&text);
-                if !normalized.is_empty() {
-                    return normalized;
-                }
-            }
-        }
+fn display_label(event: &StoredEvent) -> String {
+    let label = String::from_utf8_lossy(&event.display);
+    let normalized = label.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() || label.contains('\u{fffd}') {
+        event.data_type.to_uppercase()
+    } else {
+        normalized
     }
-
-    event
-        .items
-        .iter()
-        .flat_map(|item| item.data_list.iter())
-        .map(|data| format!("[{}]", format_data_type(&data.r#type)))
-        .next()
-        .unwrap_or_else(|| "Empty clipboard".to_string())
-}
-
-fn is_plain_text(data_type: &str) -> bool {
-    matches!(
-        data_type,
-        "public.utf8-plain-text" | "public.utf16-plain-text" | "NSStringPboardType"
-    )
-}
-
-fn decode_text(data: &ClipboardData) -> String {
-    match data.r#type.as_str() {
-        "public.utf16-plain-text" => decode_utf16(&data.data)
-            .unwrap_or_else(|| String::from_utf8_lossy(&data.data).into_owned()),
-        _ => String::from_utf8_lossy(&data.data).into_owned(),
-    }
-}
-
-fn decode_utf16(bytes: &[u8]) -> Option<String> {
-    if bytes.len() < 2 || bytes.len() % 2 != 0 {
-        return None;
-    }
-
-    let mut units = bytes
-        .chunks_exact(2)
-        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-        .collect::<Vec<_>>();
-
-    if matches!(units.first(), Some(0xfeff)) {
-        units.remove(0);
-    }
-
-    String::from_utf16(&units).ok()
-}
-
-fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn truncate_label(value: String) -> String {
@@ -278,11 +229,4 @@ fn truncate_label(value: String) -> String {
     } else {
         truncated
     }
-}
-
-fn format_data_type(data_type: &str) -> String {
-    data_type
-        .trim_start_matches("public.")
-        .replace('.', " ")
-        .replace('-', " ")
 }

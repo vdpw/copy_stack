@@ -40,15 +40,17 @@ listener capture, persistence, restore, and tray refresh.
 
 ## Duplicate Items Behave Unexpectedly
 
-Deduplication uses normalized content fragments, not the full binary event
-payload.
-For text-like clipboard items, whitespace is normalized and null characters are
-removed before hashing.
+Deduplication uses the backend classifier, not the full binary event payload.
+The highest-priority supported type controls the hash: `public.rtf`,
+`public.html`, `public.png`, single local-image `public.file-url`, generic
+single `public.file-url` (`file` or `folder`), multi-item `public.file-url`
+(`files`, `folders`, or `files and folders`), then the exact one-item
+`public.utf8-plain-text` shape.
 
-If two payloads appear identical to the user but do not dedupe, inspect their
-data types and decoded fragments. If two different payloads dedupe
-unexpectedly, check whether the preferred text fragment is too coarse for that
-clipboard type.
+If two payloads appear identical to the user but do not dedupe, inspect
+`data_type`, `display`, and the raw data for the classified type. If a
+payload does not appear at all, it may be an unsupported clipboard shape that is
+no longer stored through the old arbitrary fallback.
 
 See `docs/persistence.md` and `docs/design/copy-event-ordering.md`.
 
@@ -109,14 +111,18 @@ sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT COUNT(*) FROM clipboard_events
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings WHERE key = 'max_items';"
 ```
 
-## Frontend Preview Shows `Error parsing content`
+## Frontend Preview Is Empty Or Incorrect
 
-The frontend could not read `event_data` in the expected clipboard event shape.
-Check whether the backend failed to decode the stored blob or whether the
-upstream `copy_event_listener` event shape changed.
+History previews come from stored `data_type` and `display`, not decoded
+frontend `event_data`. Check whether the row was classified during insert or
+metadata rebuild:
 
-If the shape changed, update the TypeScript interfaces and preview decoding in
-`src/App.tsx`.
+```bash
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT data_type, hex(substr(display, 1, 24)) FROM clipboard_events ORDER BY timestamp DESC LIMIT 5;"
+```
+
+If the classifier is wrong, update `src-tauri/src/store/database.rs` and the
+hashing rules in `docs/persistence.md`.
 
 ## `pnpm lint` Fails On Unused Values
 
