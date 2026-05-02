@@ -663,21 +663,8 @@ impl Database {
     fn extract_multi_file_urls(event: &Event) -> Option<Vec<&[u8]>> {
         let mut file_urls = Vec::with_capacity(event.items.len());
 
-        for (index, item) in event.items.iter().enumerate() {
+        for item in &event.items {
             let file_url = Self::find_data_in_item(item, "public.file-url")?;
-            let all_data_types_supported = item.data_list.iter().all(|data| {
-                data.r#type == "public.file-url"
-                    || (index == 0 && data.r#type == "public.utf8-plain-text")
-            });
-
-            if !all_data_types_supported {
-                return None;
-            }
-
-            if index > 0 && item.data_list.len() != 1 {
-                return None;
-            }
-
             file_urls.push(file_url.data.as_slice());
         }
 
@@ -1019,11 +1006,15 @@ mod tests {
                 Item {
                     data_list: vec![
                         data("public.utf8-plain-text", b"2 items"),
+                        data("public.url", b"file:///tmp/a.txt"),
                         data("public.file-url", b"file:///tmp/a.txt"),
                     ],
                 },
                 Item {
-                    data_list: vec![data("public.file-url", b"file:///tmp/b/")],
+                    data_list: vec![
+                        data("public.file-url", b"file:///tmp/b/"),
+                        data("public.url", b"file:///tmp/b/"),
+                    ],
                 },
             ],
         };

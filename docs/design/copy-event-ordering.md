@@ -44,10 +44,11 @@ binary `display` preview bytes for the UI.
   classify/display it by image extension, such as `png` or `heic`.
 - For a single `public.file-url`, hash the file URL bytes and classify the item
   as `folder` when the URL ends with `/`; otherwise classify it as `file`.
-- For multiple copied files/folders, concatenate all `public.file-url` bytes in
-  item order and hash the concatenation. Classify as `files`, `folders`, or
-  `files and folders` based on whether no URLs, all URLs, or some URLs end with
-  `/`.
+- For multiple copied files/folders, require every item to have
+  `public.file-url`, ignore other surviving data types, concatenate the file URL
+  bytes in item order, and hash the concatenation. Classify as `files`,
+  `folders`, or `files and folders` based on whether no URLs, all URLs, or some
+  URLs end with `/`.
 - For plain text copies, require one item with only `public.utf8-plain-text`,
   then hash the raw text bytes and use the decoded text for display.
 - Do not hash the entire binary event payload or arbitrary fallback data.

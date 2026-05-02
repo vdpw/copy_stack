@@ -139,12 +139,12 @@ priorities:
 5. One `items` element with `public.file-url`: hash the file URL `data`; use
    `public.utf8-plain-text` as `display` when present. A file URL ending
    with `/` is classified as `folder`; otherwise it is classified as `file`.
-6. Multiple `items` elements where every item has `public.file-url`, and every
-   item after the first has only that one data entry: concatenate all
-   `public.file-url` data values in item order and hash the concatenated bytes.
-   Use the first item's `public.utf8-plain-text` as `display`. Classify as
-   `files` when no file URL ends with `/`, `folders` when all file URLs end
-   with `/`, and `files and folders` when the event contains both.
+6. Multiple `items` elements where every item has `public.file-url`: ignore
+   other surviving data types, concatenate all `public.file-url` data values in
+   item order, and hash the concatenated bytes. Use the first item's
+   `public.utf8-plain-text` as `display`. Classify as `files` when no file URL
+   ends with `/`, `folders` when all file URLs end with `/`, and
+   `files and folders` when the event contains both.
 7. Plain text copies: when there is exactly one `items` element and its filtered
    `data_list` contains only `public.utf8-plain-text`, hash that raw `data`
    value and store the same bytes as `display`; classify as `text`.
