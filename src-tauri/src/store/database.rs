@@ -16,7 +16,8 @@ const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredEvent {
     pub content_hash: String,
-    pub event_data: ClipboardEvent,
+    pub data_type: String,
+    pub display: Vec<u8>,
     pub timestamp: i64,
 }
 
@@ -28,24 +29,25 @@ pub struct AppSettings {
 }
 
 impl StoredEvent {
-    fn new(content_hash: String, event_data: ClipboardEvent, timestamp: i64) -> Self {
+    fn new(content_hash: String, data_type: String, display: Vec<u8>, timestamp: i64) -> Self {
         Self {
             content_hash,
-            event_data,
+            data_type,
+            display,
             timestamp,
         }
     }
 }
 
 struct DbRow {
-    content_hash: Option<String>,
     event_data: Vec<u8>,
     timestamp: i64,
 }
 
-struct HashFragment {
+struct ClassifiedEvent {
+    content_hash: String,
     data_type: String,
-    value: Vec<u8>,
+    display: Vec<u8>,
 }
 
 pub struct Database {
@@ -116,6 +118,8 @@ impl Database {
             .any(|column| column == "id" || column == "sort_order");
         let missing_required_columns = !columns.iter().any(|column| column == "content_hash")
             || !columns.iter().any(|column| column == "event_data")
+            || !columns.iter().any(|column| column == "data_type")
+            || !columns.iter().any(|column| column == "display")
             || !columns.iter().any(|column| column == "timestamp");
         let event_data_is_blob = self
             .column_declared_type("clipboard_events", "event_data")?
@@ -194,6 +198,8 @@ impl Database {
                 "CREATE TABLE IF NOT EXISTS {} (
                     content_hash TEXT PRIMARY KEY,
                     event_data BLOB NOT NULL,
+                    data_type TEXT NOT NULL,
+                    display BLOB NOT NULL,
                     timestamp INTEGER NOT NULL
                 )",
                 table
@@ -240,27 +246,21 @@ impl Database {
     }
 
     fn read_clipboard_event_rows(&self, columns: &[String]) -> Result<Vec<DbRow>> {
-        let select_content_hash = if columns.iter().any(|column| column == "content_hash") {
-            "content_hash"
-        } else {
-            "NULL AS content_hash"
-        };
         let order_clause = if columns.iter().any(|column| column == "sort_order") {
             "ORDER BY sort_order DESC, timestamp DESC"
         } else {
             "ORDER BY timestamp DESC"
         };
         let query = format!(
-            "SELECT {}, event_data, timestamp FROM clipboard_events {}",
-            select_content_hash, order_clause
+            "SELECT event_data, timestamp FROM clipboard_events {}",
+            order_clause
         );
 
         let mut stmt = self.conn.prepare(&query)?;
         let rows = stmt.query_map([], |row| {
             Ok(DbRow {
-                content_hash: row.get(0)?,
-                event_data: Self::event_blob_from_row(row, 1)?,
-                timestamp: Self::timestamp_from_row(row, 2)?,
+                event_data: Self::event_blob_from_row(row, 0)?,
+                timestamp: Self::timestamp_from_row(row, 1)?,
             })
         })?;
 
@@ -328,15 +328,14 @@ impl Database {
 
     fn rebuild_history_metadata(&self) -> Result<()> {
         let mut stmt = self.conn.prepare(
-            "SELECT content_hash, event_data, timestamp
+            "SELECT event_data, timestamp
              FROM clipboard_events
              ORDER BY timestamp DESC, content_hash ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(DbRow {
-                content_hash: row.get(0)?,
-                event_data: Self::event_blob_from_row(row, 1)?,
-                timestamp: row.get(2)?,
+                event_data: Self::event_blob_from_row(row, 0)?,
+                timestamp: row.get(1)?,
             })
         })?;
 
@@ -365,21 +364,29 @@ impl Database {
         let mut seen_hashes = std::collections::HashSet::new();
 
         for row in rows {
-            let content_hash = match self.generate_content_hash_from_event_data(&row.event_data) {
-                Ok(content_hash) => content_hash,
-                Err(_) => row.content_hash.unwrap_or_default(),
+            let classified = match Self::classify_event_from_event_data(&row.event_data) {
+                Ok(classified) => classified,
+                Err(_) => continue,
             };
-            if content_hash.is_empty() || !seen_hashes.insert(content_hash.clone()) {
+            if classified.content_hash.is_empty()
+                || !seen_hashes.insert(classified.content_hash.clone())
+            {
                 continue;
             }
 
             self.conn.execute(
                 &format!(
-                    "INSERT INTO {} (content_hash, event_data, timestamp)
-                     VALUES (?1, ?2, ?3)",
+                    "INSERT INTO {} (content_hash, event_data, data_type, display, timestamp)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
                     table
                 ),
-                (content_hash, row.event_data, row.timestamp),
+                (
+                    classified.content_hash,
+                    row.event_data,
+                    classified.data_type,
+                    classified.display,
+                    row.timestamp,
+                ),
             )?;
         }
 
@@ -434,13 +441,18 @@ impl Database {
     pub fn insert_event(&self, event: &Event) -> Result<()> {
         let event_data = encode_event_blob(event)
             .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
-        let content_hash = self.generate_content_hash(event)?;
+        let classified = Self::classify_event(event)?;
 
         let updated = self.conn.execute(
             "UPDATE clipboard_events
-             SET event_data = ?1
-             WHERE content_hash = ?2",
-            (&event_data, &content_hash),
+             SET event_data = ?1, data_type = ?2, display = ?3
+             WHERE content_hash = ?4",
+            (
+                &event_data,
+                &classified.data_type,
+                &classified.display,
+                &classified.content_hash,
+            ),
         )?;
 
         if updated > 0 {
@@ -449,9 +461,15 @@ impl Database {
 
         let timestamp = self.next_history_timestamp()?;
         self.conn.execute(
-            "INSERT INTO clipboard_events (content_hash, event_data, timestamp)
-             VALUES (?1, ?2, ?3)",
-            (content_hash, event_data, timestamp),
+            "INSERT INTO clipboard_events (content_hash, event_data, data_type, display, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            (
+                classified.content_hash,
+                event_data,
+                classified.data_type,
+                classified.display,
+                timestamp,
+            ),
         )?;
 
         self.cleanup_old_events()?;
@@ -487,126 +505,251 @@ impl Database {
         Utc::now().timestamp_millis()
     }
 
-    fn generate_content_hash_from_event_data(&self, event_data: &[u8]) -> Result<String> {
-        match decode_event_blob(event_data) {
-            Ok(event) => self.generate_content_hash(&event),
-            Err(_) => {
-                let mut hasher = Sha256::new();
-                hasher.update(event_data);
-                Ok(format!("{:x}", hasher.finalize()))
-            }
-        }
-    }
-
-    fn generate_content_hash(&self, event: &Event) -> Result<String> {
-        let fragments = self.extract_hash_fragments(event);
-        let mut hasher = Sha256::new();
-
-        if fragments.is_empty() {
-            let fallback = encode_event_blob(event)
-                .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
-            hasher.update(fallback);
-        } else {
-            for fragment in fragments {
-                hasher.update(fragment.data_type.as_bytes());
-                hasher.update([0]);
-                hasher.update(fragment.value);
-                hasher.update([0xff]);
-            }
-        }
-
-        Ok(format!("{:x}", hasher.finalize()))
-    }
-
     pub fn event_content_hash(&self, event: &Event) -> Result<String> {
-        self.generate_content_hash(event)
+        Ok(Self::classify_event(event)?.content_hash)
     }
 
-    fn extract_hash_fragments(&self, event: &Event) -> Vec<HashFragment> {
-        let mut fragments = Vec::new();
+    fn classify_event_from_event_data(event_data: &[u8]) -> Result<ClassifiedEvent> {
+        let event = decode_event_blob(event_data)
+            .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
+        Self::classify_event(&event)
+    }
 
-        for item in &event.items {
-            if let Some(fragment) = Self::extract_preferred_fragment(item) {
-                fragments.push(fragment);
-                continue;
-            }
+    fn classify_event(event: &Event) -> Result<ClassifiedEvent> {
+        Self::classify_special_event(event).ok_or_else(|| {
+            rusqlite::Error::InvalidParameterName(
+                "unsupported clipboard event data types".to_string(),
+            )
+        })
+    }
 
-            if let Some(fragment) = Self::extract_fallback_fragment(item) {
-                fragments.push(fragment);
+    fn classify_special_event(event: &Event) -> Option<ClassifiedEvent> {
+        if let Some(data) = Self::find_data(event, "public.rtf") {
+            return Some(Self::classified_from_single_data(
+                "rtf",
+                &data.data,
+                Self::display_bytes(
+                    Self::find_utf8_display(event).unwrap_or_else(|| "RTF".to_string()),
+                ),
+            ));
+        }
+
+        if let Some(data) = Self::find_data(event, "public.html") {
+            return Some(Self::classified_from_single_data(
+                "html",
+                &data.data,
+                Self::display_bytes(
+                    Self::find_utf8_display(event).unwrap_or_else(|| "HTML".to_string()),
+                ),
+            ));
+        }
+
+        if let Some(data) = Self::find_data(event, "public.png") {
+            return Some(Self::classified_from_single_data(
+                "png",
+                &data.data,
+                b"PNG".to_vec(),
+            ));
+        }
+
+        if event.items.len() > 1 {
+            if let Some(file_urls) = Self::extract_multi_file_urls(event) {
+                let data_type = Self::multi_file_url_data_type(&file_urls);
+                let mut hasher = Sha256::new();
+                for file_url in &file_urls {
+                    hasher.update(file_url);
+                }
+
+                return Some(ClassifiedEvent {
+                    content_hash: format!("{:x}", hasher.finalize()),
+                    data_type: data_type.to_string(),
+                    display: Self::find_utf8_display_in_item(&event.items[0])
+                        .unwrap_or_else(|| Self::label_for_data_type(data_type))
+                        .into_bytes(),
+                });
             }
         }
 
-        fragments
+        if event.items.len() == 1 {
+            if let Some(data) = Self::find_data_in_item(&event.items[0], "public.file-url") {
+                if let Some(image_type) = Self::image_file_url_type(&event.items[0], data) {
+                    return Some(Self::classified_from_single_data(
+                        &image_type,
+                        &data.data,
+                        image_type.to_uppercase().into_bytes(),
+                    ));
+                }
+
+                let file_url = String::from_utf8_lossy(&data.data);
+                let data_type = if file_url.ends_with('/') {
+                    "folder"
+                } else {
+                    "file"
+                };
+
+                return Some(Self::classified_from_single_data(
+                    data_type,
+                    &data.data,
+                    Self::display_bytes(
+                        Self::find_utf8_display(event).unwrap_or_else(|| file_url.into_owned()),
+                    ),
+                ));
+            }
+        }
+
+        Self::classify_plain_utf8_text(event)
     }
 
-    fn extract_preferred_fragment(item: &Item) -> Option<HashFragment> {
-        const PREFERRED_TYPES: &[&str] = &[
-            "public.utf8-plain-text",
-            "public.utf16-plain-text",
-            "public.plain-text",
-            "public.text",
-            "text/plain",
-            "NSStringPboardType",
-            "public.url",
-            "public.file-url",
-            "text/uri-list",
-        ];
+    fn classify_plain_utf8_text(event: &Event) -> Option<ClassifiedEvent> {
+        if event.items.len() != 1 || event.items[0].data_list.len() != 1 {
+            return None;
+        }
 
-        for preferred_type in PREFERRED_TYPES {
-            for data in &item.data_list {
-                if data.r#type == *preferred_type {
-                    if let Some(text) = Self::decode_text(data) {
-                        return Some(HashFragment {
-                            data_type: data.r#type.clone(),
-                            value: Self::normalize_text(&text).into_bytes(),
-                        });
-                    }
-                }
-            }
+        let data = &event.items[0].data_list[0];
+        if data.r#type != "public.utf8-plain-text" {
+            return None;
+        }
+
+        Some(ClassifiedEvent {
+            content_hash: Self::hash_bytes(&data.data),
+            data_type: "text".to_string(),
+            display: data.data.clone(),
+        })
+    }
+
+    fn image_file_url_type(item: &Item, file_url_data: &Data) -> Option<String> {
+        let file_url = String::from_utf8_lossy(&file_url_data.data);
+        if file_url.ends_with('/') {
+            return None;
+        }
+
+        let extension = Self::file_url_extension(&file_url);
+        if extension
+            .as_deref()
+            .is_some_and(Self::is_supported_image_extension)
+        {
+            return extension;
+        }
+
+        if Self::find_data_in_item(item, "public.tiff").is_some() {
+            return Some("tiff".to_string());
         }
 
         None
     }
 
-    fn extract_fallback_fragment(item: &Item) -> Option<HashFragment> {
-        item.data_list
+    fn file_url_extension(file_url: &str) -> Option<String> {
+        let path = file_url
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(file_url)
+            .trim_end_matches('/');
+        let file_name = path.rsplit('/').next()?;
+        let (_, extension) = file_name.rsplit_once('.')?;
+        if extension.is_empty() {
+            None
+        } else {
+            Some(extension.to_ascii_lowercase())
+        }
+    }
+
+    fn is_supported_image_extension(extension: &str) -> bool {
+        matches!(
+            extension,
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "tiff" | "tif" | "bmp" | "heic" | "heif"
+        )
+    }
+
+    fn extract_multi_file_urls(event: &Event) -> Option<Vec<&[u8]>> {
+        let mut file_urls = Vec::with_capacity(event.items.len());
+
+        for (index, item) in event.items.iter().enumerate() {
+            let file_url = Self::find_data_in_item(item, "public.file-url")?;
+            let all_data_types_supported = item.data_list.iter().all(|data| {
+                data.r#type == "public.file-url"
+                    || (index == 0 && data.r#type == "public.utf8-plain-text")
+            });
+
+            if !all_data_types_supported {
+                return None;
+            }
+
+            if index > 0 && item.data_list.len() != 1 {
+                return None;
+            }
+
+            file_urls.push(file_url.data.as_slice());
+        }
+
+        Some(file_urls)
+    }
+
+    fn multi_file_url_data_type(file_urls: &[&[u8]]) -> &'static str {
+        let folder_count = file_urls
             .iter()
-            .min_by(|left, right| left.r#type.cmp(&right.r#type))
-            .map(|data| HashFragment {
-                data_type: data.r#type.clone(),
-                value: data.data.clone(),
-            })
-    }
+            .filter(|file_url| String::from_utf8_lossy(file_url).ends_with('/'))
+            .count();
 
-    fn decode_text(data: &Data) -> Option<String> {
-        match data.r#type.as_str() {
-            "public.utf16-plain-text" => Self::decode_utf16(&data.data),
-            _ => Some(String::from_utf8_lossy(&data.data).into_owned()),
+        if folder_count == 0 {
+            "files"
+        } else if folder_count == file_urls.len() {
+            "folders"
+        } else {
+            "files and folders"
         }
     }
 
-    fn decode_utf16(bytes: &[u8]) -> Option<String> {
-        if bytes.len() % 2 != 0 {
-            return None;
+    fn label_for_data_type(data_type: &str) -> String {
+        match data_type {
+            "files" => "Files".to_string(),
+            "folders" => "Folders".to_string(),
+            "files and folders" => "Files and folders".to_string(),
+            _ => data_type.to_string(),
         }
+    }
 
-        let (is_big_endian, offset) = match bytes {
-            [0xfe, 0xff, ..] => (true, 2),
-            [0xff, 0xfe, ..] => (false, 2),
-            _ => (false, 0),
-        };
+    fn display_bytes(display: String) -> Vec<u8> {
+        Self::normalize_text(&display).into_bytes()
+    }
 
-        let mut units = Vec::with_capacity((bytes.len() - offset) / 2);
-        for chunk in bytes[offset..].chunks_exact(2) {
-            let unit = if is_big_endian {
-                u16::from_be_bytes([chunk[0], chunk[1]])
-            } else {
-                u16::from_le_bytes([chunk[0], chunk[1]])
-            };
-            units.push(unit);
+    fn classified_from_single_data(
+        data_type: &str,
+        hash_value: &[u8],
+        display: Vec<u8>,
+    ) -> ClassifiedEvent {
+        ClassifiedEvent {
+            content_hash: Self::hash_bytes(hash_value),
+            data_type: data_type.to_string(),
+            display,
         }
+    }
 
-        Some(String::from_utf16_lossy(&units))
+    fn hash_bytes(value: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(value);
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn find_data<'event>(event: &'event Event, data_type: &str) -> Option<&'event Data> {
+        event
+            .items
+            .iter()
+            .find_map(|item| Self::find_data_in_item(item, data_type))
+    }
+
+    fn find_data_in_item<'item>(item: &'item Item, data_type: &str) -> Option<&'item Data> {
+        item.data_list.iter().find(|data| data.r#type == data_type)
+    }
+
+    fn find_utf8_display(event: &Event) -> Option<String> {
+        event.items.iter().find_map(Self::find_utf8_display_in_item)
+    }
+
+    fn find_utf8_display_in_item(item: &Item) -> Option<String> {
+        Self::find_data_in_item(item, "public.utf8-plain-text")
+            .map(|data| String::from_utf8_lossy(&data.data).into_owned())
+            .map(|text| Self::normalize_text(&text))
+            .filter(|text| !text.is_empty())
     }
 
     fn normalize_text(input: &str) -> String {
@@ -621,14 +764,18 @@ impl Database {
 
     pub fn get_all_events(&self) -> Result<Vec<StoredEvent>> {
         let mut stmt = self.conn.prepare(
-            "SELECT content_hash, event_data, timestamp
+            "SELECT content_hash, data_type, display, timestamp
              FROM clipboard_events
              ORDER BY timestamp DESC, content_hash ASC",
         )?;
 
         let event_iter = stmt.query_map([], |row| {
-            let event_data = Self::clipboard_event_from_blob(row.get(1)?)?;
-            Ok(StoredEvent::new(row.get(0)?, event_data, row.get(2)?))
+            Ok(StoredEvent::new(
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+            ))
         })?;
 
         let mut events = Vec::new();
@@ -755,5 +902,197 @@ impl Database {
             [key, value],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn data(data_type: &str, value: &[u8]) -> Data {
+        Data {
+            r#type: data_type.to_string(),
+            data: value.to_vec(),
+        }
+    }
+
+    fn event(data_list: Vec<Data>) -> Event {
+        Event {
+            items: vec![Item { data_list }],
+        }
+    }
+
+    fn display_string(classified: &ClassifiedEvent) -> String {
+        String::from_utf8_lossy(&classified.display).into_owned()
+    }
+
+    #[test]
+    fn classification_prefers_rtf_hash_and_utf8_display() {
+        let event = event(vec![
+            data("public.utf8-plain-text", b"Visible text"),
+            data("public.rtf", b"{\\rtf1 Visible text}"),
+        ]);
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "rtf");
+        assert_eq!(display_string(&classified), "Visible text");
+        assert_eq!(
+            classified.content_hash,
+            Database::hash_bytes(b"{\\rtf1 Visible text}")
+        );
+    }
+
+    #[test]
+    fn classification_prefers_html_over_png() {
+        let event = event(vec![
+            data("public.utf8-plain-text", b"Visible text"),
+            data("public.html", b"<p>Visible text</p>"),
+            data("public.png", &[0, 1, 2]),
+        ]);
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "html");
+        assert_eq!(display_string(&classified), "Visible text");
+        assert_eq!(
+            classified.content_hash,
+            Database::hash_bytes(b"<p>Visible text</p>")
+        );
+    }
+
+    #[test]
+    fn classification_marks_single_file_url_folder() {
+        let event = event(vec![
+            data("public.utf8-plain-text", b"/Users/example/Documents"),
+            data("public.file-url", b"file:///Users/example/Documents/"),
+        ]);
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "folder");
+        assert_eq!(display_string(&classified), "/Users/example/Documents");
+        assert_eq!(
+            classified.content_hash,
+            Database::hash_bytes(b"file:///Users/example/Documents/")
+        );
+    }
+
+    #[test]
+    fn classification_hashes_single_file_url_image_by_extension() {
+        let event = event(vec![
+            data("public.file-url", b"file:///Users/example/tmp/abc.png"),
+            data("public.tiff", &[0, 1, 2, 3]),
+        ]);
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "png");
+        assert_eq!(display_string(&classified), "PNG");
+        assert_eq!(
+            classified.content_hash,
+            Database::hash_bytes(b"file:///Users/example/tmp/abc.png")
+        );
+    }
+
+    #[test]
+    fn classification_hashes_single_file_url_image_without_tiff() {
+        let event = event(vec![data(
+            "public.file-url",
+            b"file:///Users/example/tmp/photo.HEIC",
+        )]);
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "heic");
+        assert_eq!(display_string(&classified), "HEIC");
+        assert_eq!(
+            classified.content_hash,
+            Database::hash_bytes(b"file:///Users/example/tmp/photo.HEIC")
+        );
+    }
+
+    #[test]
+    fn classification_hashes_mixed_file_urls_in_order() {
+        let event = Event {
+            items: vec![
+                Item {
+                    data_list: vec![
+                        data("public.utf8-plain-text", b"2 items"),
+                        data("public.file-url", b"file:///tmp/a.txt"),
+                    ],
+                },
+                Item {
+                    data_list: vec![data("public.file-url", b"file:///tmp/b/")],
+                },
+            ],
+        };
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+        let mut hasher = Sha256::new();
+        hasher.update(b"file:///tmp/a.txt");
+        hasher.update(b"file:///tmp/b/");
+
+        assert_eq!(classified.data_type, "files and folders");
+        assert_eq!(display_string(&classified), "2 items");
+        assert_eq!(classified.content_hash, format!("{:x}", hasher.finalize()));
+    }
+
+    #[test]
+    fn classification_marks_multiple_file_urls_as_files() {
+        let event = Event {
+            items: vec![
+                Item {
+                    data_list: vec![
+                        data("public.utf8-plain-text", b"2 files"),
+                        data("public.file-url", b"file:///.file/id=6571367.66560150"),
+                    ],
+                },
+                Item {
+                    data_list: vec![data("public.file-url", b"file:///tmp/b.txt")],
+                },
+            ],
+        };
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "files");
+        assert_eq!(display_string(&classified), "2 files");
+    }
+
+    #[test]
+    fn classification_marks_multiple_file_urls_as_folders() {
+        let event = Event {
+            items: vec![
+                Item {
+                    data_list: vec![
+                        data("public.utf8-plain-text", b"2 folders"),
+                        data("public.file-url", b"file:///.file/id=6571367.673004/"),
+                    ],
+                },
+                Item {
+                    data_list: vec![data("public.file-url", b"file:///tmp/b/")],
+                },
+            ],
+        };
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "folders");
+        assert_eq!(display_string(&classified), "2 folders");
+    }
+
+    #[test]
+    fn classification_hashes_single_utf8_plain_text_data() {
+        let event = event(vec![data("public.utf8-plain-text", b"hello\nworld")]);
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "text");
+        assert_eq!(display_string(&classified), "hello\nworld");
+        assert_eq!(
+            classified.content_hash,
+            Database::hash_bytes(b"hello\nworld")
+        );
     }
 }

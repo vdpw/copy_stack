@@ -35,12 +35,22 @@ This makes list order a database concern rather than a frontend-only effect.
 
 ### Stable content hash
 
-The dedupe key is derived from clipboard content that is stable across copies.
+The dedupe key is derived from the highest-priority supported clipboard
+representation, and the same classifier also stores `data_type` and
+binary `display` preview bytes for the UI.
 
-- Prefer plain-text clipboard representations such as UTF-8 and UTF-16 text.
-- Use decoded text content, normalized for whitespace, as the primary hash input.
-- Fall back to deterministic raw clipboard data only when no stable text-like representation exists.
-- Do not hash the entire binary event payload because it can contain ancillary clipboard formats whose bytes vary even when the user-facing content is the same.
+- Prefer `public.rtf`, then `public.html`, then `public.png`.
+- For a single local-image `public.file-url`, hash the file URL bytes and
+  classify/display it by image extension, such as `png` or `heic`.
+- For a single `public.file-url`, hash the file URL bytes and classify the item
+  as `folder` when the URL ends with `/`; otherwise classify it as `file`.
+- For multiple copied files/folders, concatenate all `public.file-url` bytes in
+  item order and hash the concatenation. Classify as `files`, `folders`, or
+  `files and folders` based on whether no URLs, all URLs, or some URLs end with
+  `/`.
+- For plain text copies, require one item with only `public.utf8-plain-text`,
+  then hash the raw text bytes and use the decoded text for display.
+- Do not hash the entire binary event payload or arbitrary fallback data.
 
 This keeps duplicate detection focused on the meaningful clipboard content and avoids false misses caused by time-bearing metadata.
 
@@ -59,9 +69,10 @@ This guarantees the visible order always matches the persisted order.
 Existing databases need a lightweight migration:
 
 - rewrite legacy `id` and `sort_order` tables into the current
-  `content_hash`/`event_data`/`timestamp` schema;
+  `content_hash`/`event_data`/`data_type`/`display`/`timestamp` schema;
 - convert formatted timestamps to Unix millisecond timestamps;
-- recompute normalized content hashes for existing rows;
+- recompute normalized content hashes and display metadata for existing rows;
 - remove older duplicates that collapse to the same normalized hash.
+- remove unsupported rows that only survived through an old fallback pick.
 
 After migration, all future ordering and deduplication operations follow the persisted rules above.

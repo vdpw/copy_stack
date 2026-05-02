@@ -16,22 +16,10 @@ import "./App.css";
 
 type View = "history" | "settings";
 
-interface Data {
-  type: string;
-  data: number[];
-}
-
-interface Item {
-  data_list: Data[];
-}
-
-interface ClipboardEvent {
-  items: Item[];
-}
-
 interface StoredEvent {
   content_hash: string;
-  event_data: ClipboardEvent;
+  data_type: string;
+  display: number[];
   timestamp: number;
 }
 
@@ -239,50 +227,20 @@ function App() {
     return new Date(timestamp).toLocaleString();
   };
 
-  const getEventContent = (event: ClipboardEvent): string => {
-    try {
-      if (event.items.length === 0) {
-        return "Empty clipboard";
-      }
-
-      for (const item of event.items) {
-        for (const data of item.data_list) {
-          if (
-            data.type === "public.utf8-plain-text" ||
-            data.type === "public.utf16-plain-text" ||
-            data.type === "NSStringPboardType"
-          ) {
-            const decoder =
-              data.type === "public.utf16-plain-text"
-                ? new TextDecoder("utf-16le")
-                : new TextDecoder();
-            const text = decoder.decode(new Uint8Array(data.data));
-            if (text.trim().length > 0) {
-              return text;
-            }
-          }
-        }
-      }
-
-      if (event.items[0]?.data_list[0]) {
-        return `[${event.items[0].data_list[0].type}]`;
-      }
-
-      return "Unknown content type";
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        console.error("Failed to read clipboard payload", error);
-      }
-      return "Error parsing content";
-    }
-  };
-
   const truncateContent = (content: string, maxLength = 160) => {
     const flattened = content.replace(/\s+/g, " ").trim();
     if (flattened.length <= maxLength) {
       return flattened;
     }
     return `${flattened.slice(0, maxLength)}...`;
+  };
+
+  const getDisplayText = (event: StoredEvent) => {
+    const text = new TextDecoder().decode(new Uint8Array(event.display));
+    if (text.includes("\uFFFD")) {
+      return event.data_type.toUpperCase();
+    }
+    return text;
   };
 
   return (
@@ -389,12 +347,14 @@ function App() {
               ) : (
                 <div className="events-list">
                   {copyEvents.map(event => {
-                    const content = getEventContent(event.event_data);
                     return (
                       <article key={event.content_hash} className="event-card">
                         <div className="event-content">
+                          <p className="event-meta">
+                            <span>{event.data_type}</span>
+                          </p>
                           <p className="event-text">
-                            {truncateContent(content)}
+                            {truncateContent(getDisplayText(event))}
                           </p>
                           <p className="event-timestamp">
                             {formatTimestamp(event.timestamp)}

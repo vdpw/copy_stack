@@ -28,6 +28,8 @@ The `Database` struct wraps one `rusqlite::Connection`. Tauri stores it in
 CREATE TABLE IF NOT EXISTS clipboard_events (
   content_hash TEXT PRIMARY KEY,
   event_data BLOB NOT NULL,
+  data_type TEXT NOT NULL,
+  display BLOB NOT NULL,
   timestamp INTEGER NOT NULL
 );
 ```
@@ -38,6 +40,11 @@ Columns:
   deduplication key.
 - `event_data`: compact binary clipboard event payload. The binary format stores
   each item, data type, and raw `data` bytes directly.
+- `data_type`: backend classification used by the UI and tray, currently
+  `rtf`, `html`, image extensions, `file`, `folder`, `files`, `folders`,
+  `files and folders`, or `text`.
+- `display`: backend-selected preview bytes. Current text labels are stored as
+  UTF-8 bytes; image thumbnail bytes can also be stored here.
 - `timestamp`: Unix timestamp in milliseconds. This is also the ordering key.
 
 Indexes:
@@ -87,20 +94,22 @@ Then it:
 1. Reads all rows.
 2. Recomputes a content hash from `event_data`.
 3. Keeps the first row for each hash.
-4. Rewrites the table with `content_hash`, binary `event_data`, and integer
-   `timestamp`.
+4. Rewrites the table with `content_hash`, binary `event_data`, `data_type`,
+   binary `display`, and integer `timestamp`.
 
 This means opening an older database can delete duplicate rows that collapse to
-the same normalized content hash.
+the same normalized content hash. Rows that cannot be classified by the current
+supported clipboard rules are also dropped instead of being kept through the old
+raw-payload fallback.
 
 ## Event Insertion
 
 `insert_event(event)`:
 
 1. Encodes the event to the binary clipboard payload format.
-2. Computes a normalized content hash.
-3. If a row with the same hash exists, updates `event_data` and preserves the
-   existing `timestamp`.
+2. Classifies the event into `content_hash`, `data_type`, and `display`.
+3. If a row with the same hash exists, updates `event_data`, `data_type`, and
+   `display` while preserving the existing `timestamp`.
 4. If it does not exist, computes the next history timestamp in Unix
    milliseconds and inserts a new row keyed by `content_hash`.
 5. Runs `cleanup_old_events()` after new inserts.
@@ -110,27 +119,38 @@ another row or changing list order.
 
 ## Content Hashing
 
-Deduplication uses stable user-facing content rather than the full binary event
-payload.
+Deduplication uses a backend classifier instead of hashing the full binary event
+payload or picking arbitrary fallback data. The classifier applies these
+priorities:
 
-For each item, the database prefers text-like types:
+1. `public.rtf`: hash that `data` value; use `public.utf8-plain-text` as
+   `display` when present; classify as `rtf`.
+2. `public.html`: hash that `data` value; use `public.utf8-plain-text` as
+   `display` when present; classify as `html`.
+   TODO: render HTML previews in the UI.
+3. `public.png`: hash that `data` value; use `PNG` as `display`; classify
+   as `png`.
+   TODO: show PNG thumbnails in the UI.
+4. One `items` element with `public.file-url` for a local image path: hash the
+   file URL `data`; classify with the lowercased file extension such as `png`,
+   `jpg`, `tiff`, or `heic`; use the uppercased extension as `display`.
+   This covers local-app image copies that expose `public.file-url` and may also
+   include `public.tiff`.
+5. One `items` element with `public.file-url`: hash the file URL `data`; use
+   `public.utf8-plain-text` as `display` when present. A file URL ending
+   with `/` is classified as `folder`; otherwise it is classified as `file`.
+6. Multiple `items` elements where every item has `public.file-url`, and every
+   item after the first has only that one data entry: concatenate all
+   `public.file-url` data values in item order and hash the concatenated bytes.
+   Use the first item's `public.utf8-plain-text` as `display`. Classify as
+   `files` when no file URL ends with `/`, `folders` when all file URLs end
+   with `/`, and `files and folders` when the event contains both.
+7. Plain text copies: when there is exactly one `items` element and its filtered
+   `data_list` contains only `public.utf8-plain-text`, hash that raw `data`
+   value and store the same bytes as `display`; classify as `text`.
 
-- `public.utf8-plain-text`
-- `public.utf16-plain-text`
-- `public.plain-text`
-- `public.text`
-- `text/plain`
-- `NSStringPboardType`
-- `public.url`
-- `public.file-url`
-- `text/uri-list`
-
-Text is decoded, null characters are removed, whitespace is normalized, and the
-result is fed into SHA-256 with type separators.
-
-If no preferred text-like type exists for an item, the fallback is the
-lexicographically first data type and its raw bytes. If no fragments exist, the
-fallback is the binary event payload.
+Unsupported payloads are not stored. Legacy rows that only survived because of
+the old arbitrary fallback are removed during metadata rebuild.
 
 ## Ordering
 
@@ -174,7 +194,7 @@ Useful local commands:
 
 ```bash
 sqlite3 "$HOME/.copy_stack/copy_stack.db" ".schema"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), timestamp FROM clipboard_events ORDER BY timestamp DESC LIMIT 20;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, hex(substr(display, 1, 24)), timestamp FROM clipboard_events ORDER BY timestamp DESC LIMIT 20;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings ORDER BY key;"
 ```
 
