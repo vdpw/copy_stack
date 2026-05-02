@@ -534,6 +534,14 @@ impl Database {
             ));
         }
 
+        if let Some(data) = Self::find_data(event, "public.png") {
+            return Some(Self::classified_from_single_data(
+                "png",
+                &data.data,
+                b"PNG".to_vec(),
+            ));
+        }
+
         if let Some(data) = Self::find_data(event, "public.html") {
             return Some(Self::classified_from_single_data(
                 "html",
@@ -541,14 +549,6 @@ impl Database {
                 Self::display_bytes(
                     Self::find_utf8_display(event).unwrap_or_else(|| "HTML".to_string()),
                 ),
-            ));
-        }
-
-        if let Some(data) = Self::find_data(event, "public.png") {
-            return Some(Self::classified_from_single_data(
-                "png",
-                &data.data,
-                b"PNG".to_vec(),
             ));
         }
 
@@ -931,21 +931,20 @@ mod tests {
     }
 
     #[test]
-    fn classification_prefers_html_over_png() {
+    fn classification_prefers_png_over_html_for_chrome_image_copy() {
         let event = event(vec![
-            data("public.utf8-plain-text", b"Visible text"),
-            data("public.html", b"<p>Visible text</p>"),
             data("public.png", &[0, 1, 2]),
+            data(
+                "public.html",
+                br#"<meta charset='utf-8'><img src="https://example.test/avatar.avif"/>"#,
+            ),
         ]);
 
         let classified = Database::classify_event(&event).expect("event should classify");
 
-        assert_eq!(classified.data_type, "html");
-        assert_eq!(display_string(&classified), "Visible text");
-        assert_eq!(
-            classified.content_hash,
-            Database::hash_bytes(b"<p>Visible text</p>")
-        );
+        assert_eq!(classified.data_type, "png");
+        assert_eq!(display_string(&classified), "PNG");
+        assert_eq!(classified.content_hash, Database::hash_bytes(&[0, 1, 2]));
     }
 
     #[test]

@@ -125,12 +125,12 @@ priorities:
 
 1. `public.rtf`: hash that `data` value; use `public.utf8-plain-text` as
    `display` when present; classify as `rtf`.
-2. `public.html`: hash that `data` value; use `public.utf8-plain-text` as
-   `display` when present; classify as `html`.
-   TODO: render HTML previews in the UI.
-3. `public.png`: hash that `data` value; use `PNG` as `display`; classify
+2. `public.png`: hash that `data` value; use `PNG` as `display`; classify
    as `png`.
    TODO: show PNG thumbnails in the UI.
+3. `public.html`: hash that `data` value; use `public.utf8-plain-text` as
+   `display` when present; classify as `html`.
+   TODO: render HTML previews in the UI.
 4. One `items` element with `public.file-url` for a local image path: hash the
    file URL `data`; classify with the lowercased file extension such as `png`,
    `jpg`, `tiff`, or `heic`; use the uppercased extension as `display`.

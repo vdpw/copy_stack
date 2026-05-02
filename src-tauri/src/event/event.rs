@@ -4,7 +4,7 @@ use copy_event_listener::event::{
 use serde::{Deserialize, Serialize};
 
 const EVENT_BLOB_MAGIC: &[u8; 4] = b"CSB1";
-const FILTERED_DATA_TYPE_PREFIXES: &[&str] = &["dyn.", "org.chromium.", "com.apple."];
+const FILTERED_DATA_TYPE_PREFIXES: &[&str] = &["dyn.", "org.chromium", "com.apple."];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClipboardEvent {
@@ -242,6 +242,7 @@ mod tests {
             items: vec![ListenerItem {
                 data_list: vec![
                     listener_data("dyn.agk8"),
+                    listener_data("org.chromium.internal.source-rfh-token"),
                     listener_data("org.chromium.source-url"),
                     listener_data("com.apple.webarchive"),
                     listener_data("public.utf8-plain-text"),
