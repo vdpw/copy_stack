@@ -28,9 +28,14 @@ use copy_event_listener::event::Event;
 use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::menu::{
+    AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID,
+    WINDOW_SUBMENU_ID,
+};
+use tauri::{AppHandle, Manager, Runtime, State, WindowEvent};
 
 const RESTORE_SUPPRESSION_TTL: Duration = Duration::from_secs(5);
+const OPEN_APP_SETTINGS_ID: &str = "app-menu::open-settings";
 
 // State to hold the database
 pub struct AppState {
@@ -185,6 +190,108 @@ fn should_skip_pending_restore_event(state: &AppState, content_hash: &str) -> bo
     true
 }
 
+fn build_app_menu<R: Runtime>(app_handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        return Menu::default(app_handle);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let pkg_info = app_handle.package_info();
+        let config = app_handle.config();
+        let about_metadata = AboutMetadata {
+            name: Some(pkg_info.name.clone()),
+            version: Some(pkg_info.version.to_string()),
+            copyright: config.bundle.copyright.clone(),
+            authors: config
+                .bundle
+                .publisher
+                .clone()
+                .map(|publisher| vec![publisher]),
+            ..Default::default()
+        };
+
+        let settings = MenuItemBuilder::with_id(OPEN_APP_SETTINGS_ID, "Settings...")
+            .accelerator("CmdOrCtrl+,")
+            .build(app_handle)?;
+
+        let window_menu = Submenu::with_id_and_items(
+            app_handle,
+            WINDOW_SUBMENU_ID,
+            "Window",
+            true,
+            &[
+                &PredefinedMenuItem::minimize(app_handle, None)?,
+                &PredefinedMenuItem::maximize(app_handle, None)?,
+                &PredefinedMenuItem::separator(app_handle)?,
+                &PredefinedMenuItem::close_window(app_handle, None)?,
+            ],
+        )?;
+
+        let help_menu = Submenu::with_id_and_items(app_handle, HELP_SUBMENU_ID, "Help", true, &[])?;
+
+        Menu::with_items(
+            app_handle,
+            &[
+                &Submenu::with_items(
+                    app_handle,
+                    pkg_info.name.clone(),
+                    true,
+                    &[
+                        &PredefinedMenuItem::about(app_handle, None, Some(about_metadata))?,
+                        &PredefinedMenuItem::separator(app_handle)?,
+                        &settings,
+                        &PredefinedMenuItem::separator(app_handle)?,
+                        &PredefinedMenuItem::services(app_handle, None)?,
+                        &PredefinedMenuItem::separator(app_handle)?,
+                        &PredefinedMenuItem::hide(app_handle, None)?,
+                        &PredefinedMenuItem::hide_others(app_handle, None)?,
+                        &PredefinedMenuItem::separator(app_handle)?,
+                        &PredefinedMenuItem::quit(app_handle, None)?,
+                    ],
+                )?,
+                &Submenu::with_items(
+                    app_handle,
+                    "File",
+                    true,
+                    &[&PredefinedMenuItem::close_window(app_handle, None)?],
+                )?,
+                &Submenu::with_items(
+                    app_handle,
+                    "Edit",
+                    true,
+                    &[
+                        &PredefinedMenuItem::undo(app_handle, None)?,
+                        &PredefinedMenuItem::redo(app_handle, None)?,
+                        &PredefinedMenuItem::separator(app_handle)?,
+                        &PredefinedMenuItem::cut(app_handle, None)?,
+                        &PredefinedMenuItem::copy(app_handle, None)?,
+                        &PredefinedMenuItem::paste(app_handle, None)?,
+                        &PredefinedMenuItem::select_all(app_handle, None)?,
+                    ],
+                )?,
+                &Submenu::with_items(
+                    app_handle,
+                    "View",
+                    true,
+                    &[&PredefinedMenuItem::fullscreen(app_handle, None)?],
+                )?,
+                &window_menu,
+                &help_menu,
+            ],
+        )
+    }
+}
+
+fn handle_app_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
+    if menu_id == OPEN_APP_SETTINGS_ID {
+        if let Err(_error) = tray::show_settings_window(app) {
+            debug_error!("app menu action failed: {}", _error);
+        }
+    }
+}
+
 #[tauri::command]
 async fn get_event_by_content_hash(
     state: State<'_, AppState>,
@@ -212,7 +319,8 @@ async fn set_max_items(
         db.set_max_items(max_items).map_err(|e| e.to_string())?;
         db.cleanup_old_events().map_err(|e| e.to_string())?;
     }
-    tray::sync(&app)
+    tray::sync(&app)?;
+    tray::notify_history_changed(&app)
 }
 
 #[tauri::command]
@@ -243,6 +351,10 @@ async fn set_move_restored_item_to_top(
 pub fn run(rx: Receiver<Event>) {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .menu(build_app_menu)
+        .on_menu_event(|app, event| {
+            handle_app_menu_event(app, event.id().as_ref());
+        })
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;

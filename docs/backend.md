@@ -94,7 +94,8 @@ Returns `max_items`, `show_in_menu_bar`, and `move_restored_item_to_top`.
 
 ### `set_max_items`
 
-Stores the new limit, trims old events, and syncs the tray.
+Stores the new limit, trims old events, syncs the tray, and notifies frontend
+windows to reload history.
 
 ### `set_show_in_menu_bar`
 

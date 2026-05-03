@@ -1,20 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
   ArrowUpDown,
-  Archive,
   Copy,
   Eye,
   EyeOff,
   RefreshCw,
-  Settings2,
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 
-type View = "history" | "settings";
+const currentWindowLabel = getCurrentWindow().label;
+const isSettingsWindow = currentWindowLabel === "settings";
 
 interface StoredEvent {
   content_hash: string;
@@ -30,7 +30,6 @@ interface AppSettings {
 }
 
 function App() {
-  const [activeView, setActiveView] = useState<View>("history");
   const [copyEvents, setCopyEvents] = useState<StoredEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -74,14 +73,10 @@ function App() {
     void loadSettings();
 
     let unlistenHistory: (() => void) | undefined;
-    let unlistenNavigation: (() => void) | undefined;
 
     const registerListeners = async () => {
       unlistenHistory = await listen("clipboard-history-updated", () => {
         void loadEvents();
-      });
-      unlistenNavigation = await listen<string>("app:navigate", event => {
-        setActiveView(event.payload === "settings" ? "settings" : "history");
       });
     };
 
@@ -89,7 +84,6 @@ function App() {
 
     return () => {
       unlistenHistory?.();
-      unlistenNavigation?.();
     };
   }, [loadEvents, loadSettings]);
 
@@ -244,343 +238,184 @@ function App() {
   };
 
   return (
-    <div className="app-shell">
-      <header className="hero">
-        <div className="hero-copy">
-          <p className="eyebrow">macOS clipboard stack</p>
-          <h1>Copy Stack</h1>
-          <p className="hero-description">
-            Run in the menu bar, browse recent clipboard events, and keep local
-            history trimmed to the size you want.
-          </p>
-        </div>
+    <div className={`app-shell ${isSettingsWindow ? "settings-shell" : ""}`}>
+      {isSettingsWindow ? (
+        <main className="preferences-panel">
+          <header className="preferences-header">
+            <h1>Settings</h1>
+          </header>
 
-        <div className="hero-stats">
-          <div className="stat-card">
-            <span className="stat-label">Stored items</span>
-            <strong>{copyEvents.length}</strong>
-            <span className="stat-detail">Up to {maxItems} saved locally</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-label">Menu bar</span>
-            <strong>{menuBarVisible ? "Visible" : "Hidden"}</strong>
-            <span className="stat-detail">
-              {menuBarVisible
-                ? "Recent clips are available from the tray menu."
-                : "Turn it back on from Settings when needed."}
-            </span>
-          </div>
-        </div>
-      </header>
-
-      <div className="workspace">
-        <aside className="side-nav">
-          <button
-            className={`nav-button ${
-              activeView === "history" ? "is-active" : ""
-            }`}
-            onClick={() => setActiveView("history")}
-          >
-            <Archive size={18} />
-            History
-          </button>
-          <button
-            className={`nav-button ${
-              activeView === "settings" ? "is-active" : ""
-            }`}
-            onClick={() => setActiveView("settings")}
-          >
-            <Settings2 size={18} />
-            Settings
-          </button>
-
-          <div className="side-note">
-            Every stored clip is mirrored into the menu bar as a direct action,
-            so selecting a tray item restores it back to the clipboard.
-          </div>
-        </aside>
-
-        <main className="content-panel">
-          {activeView === "history" ? (
-            <>
-              <section className="panel-header">
-                <div>
-                  <p className="section-kicker">Clipboard history</p>
-                  <h2>Recent events</h2>
-                  <p className="section-description">
-                    Refresh the list, restore an item, or clear the local stack.
-                  </p>
-                </div>
-
-                <div className="panel-actions">
-                  <button
-                    onClick={() => void loadEvents()}
-                    disabled={loading}
-                    className="btn btn-secondary"
-                  >
-                    <RefreshCw size={16} />
-                    Refresh
-                  </button>
-                  <button
-                    onClick={() => void clearAllEvents()}
-                    className="btn btn-danger"
-                    disabled={copyEvents.length === 0}
-                  >
-                    <Trash2 size={16} />
-                    Clear all
-                  </button>
-                </div>
-              </section>
-
-              {loading ? (
-                <div className="placeholder-card">
-                  Loading clipboard history...
-                </div>
-              ) : copyEvents.length === 0 ? (
-                <div className="empty-state">
-                  <h3>No clipboard events yet</h3>
-                  <p>
-                    Start copying text or files and they will appear here and in
-                    the menu bar menu.
-                  </p>
-                </div>
-              ) : (
-                <div className="events-list">
-                  {copyEvents.map(event => {
-                    return (
-                      <article key={event.content_hash} className="event-card">
-                        <div className="event-content">
-                          <p className="event-meta">
-                            <span>{event.data_type}</span>
-                          </p>
-                          <p className="event-text">
-                            {truncateContent(getDisplayText(event))}
-                          </p>
-                          <p className="event-timestamp">
-                            {formatTimestamp(event.timestamp)}
-                          </p>
-                        </div>
-
-                        <div className="event-actions">
-                          <button
-                            onClick={() =>
-                              void copyToClipboard(event.content_hash)
-                            }
-                            className="btn btn-primary"
-                            title="Restore to clipboard"
-                          >
-                            <Copy size={16} />
-                          </button>
-                          <button
-                            onClick={() => void deleteEvent(event.content_hash)}
-                            className="btn btn-danger"
-                            title="Delete item"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              <section className="panel-header">
-                <div>
-                  <p className="section-kicker">Configuration</p>
-                  <h2>Settings</h2>
-                  <p className="section-description">
-                    Control how much history stays on device and whether the app
-                    is shown in the macOS menu bar.
-                  </p>
-                </div>
-              </section>
-
-              <div className="settings-grid">
-                <article className="settings-card">
-                  <div className="settings-card-header">
-                    <div>
-                      <p className="settings-label">Local retention</p>
-                      <h3>Stored event limit</h3>
-                    </div>
-                  </div>
-
-                  <p className="settings-description">
-                    Reduce or expand the number of clipboard events kept in the
-                    local SQLite store. Lowering the limit immediately removes
-                    the oldest items after confirmation.
-                  </p>
-
-                  <div className="storage-control">
-                    <label htmlFor="max-items-input">
-                      Maximum saved events
-                    </label>
-                    <div className="storage-input-row">
-                      <input
-                        id="max-items-input"
-                        type="number"
-                        min="1"
-                        max="1000"
-                        value={pendingMaxItemsInput}
-                        onChange={event =>
-                          setPendingMaxItemsInput(event.target.value)
-                        }
-                        disabled={settingsLoading}
-                        className="storage-input"
-                      />
-                      <button
-                        className="btn btn-primary"
-                        onClick={() => void handleApplyStorageLimit()}
-                        disabled={
-                          settingsLoading ||
-                          !isPendingMaxItemsValid ||
-                          !isStorageLimitDirty
-                        }
-                      >
-                        Apply
-                      </button>
-                    </div>
-
-                    <p className="settings-helper">
-                      Currently storing {copyEvents.length} of {maxItems}{" "}
-                      events.
-                    </p>
-                    {!isPendingMaxItemsValid && (
-                      <p className="settings-error">
-                        Enter a whole number between 1 and 1000.
-                      </p>
-                    )}
-                  </div>
-                </article>
-
-                <article className="settings-card">
-                  <div className="settings-card-header">
-                    <div>
-                      <p className="settings-label">List order</p>
-                      <h3>Restore ordering</h3>
-                    </div>
-                  </div>
-
-                  <p className="settings-description">
-                    Choose whether restoring a stored clipboard item keeps its
-                    current position or moves it back to the top of history.
-                  </p>
-
-                  <button
-                    className={`toggle-button ${
-                      moveRestoredItemToTop ? "is-on" : "is-off"
-                    }`}
-                    onClick={() =>
-                      void updateRestoreOrdering(!moveRestoredItemToTop)
-                    }
-                    disabled={settingsLoading}
-                    role="switch"
-                    aria-checked={moveRestoredItemToTop}
-                  >
-                    <span className="toggle-track">
-                      <span className="toggle-thumb" />
-                    </span>
-                    <span className="toggle-copy">
-                      <strong>
-                        {moveRestoredItemToTop
-                          ? "Move restored items to top"
-                          : "Keep restored items in place"}
-                      </strong>
-                      <span>
-                        <ArrowUpDown size={14} />
-                        {moveRestoredItemToTop
-                          ? "Copy actions refresh list order."
-                          : "Copy actions preserve list order."}
-                      </span>
-                    </span>
-                  </button>
-                </article>
-
-                <article className="settings-card">
-                  <div className="settings-card-header">
-                    <div>
-                      <p className="settings-label">Menu bar</p>
-                      <h3>Tray visibility</h3>
-                    </div>
-                  </div>
-
-                  <p className="settings-description">
-                    Hide or show Copy Stack in the macOS menu bar. When it is
-                    visible, each recent clipboard event appears as its own tray
-                    menu item.
-                  </p>
-
-                  <button
-                    className={`toggle-button ${
-                      menuBarVisible ? "is-on" : "is-off"
-                    }`}
-                    onClick={() =>
-                      void updateMenuBarVisibility(!menuBarVisible)
-                    }
-                    disabled={settingsLoading}
-                    role="switch"
-                    aria-checked={menuBarVisible}
-                  >
-                    <span className="toggle-track">
-                      <span className="toggle-thumb" />
-                    </span>
-                    <span className="toggle-copy">
-                      <strong>
-                        {menuBarVisible
-                          ? "Shown in the menu bar"
-                          : "Hidden from the menu bar"}
-                      </strong>
-                      <span>
-                        {menuBarVisible ? (
-                          <>
-                            <Eye size={14} />
-                            Tray menu is active.
-                          </>
-                        ) : (
-                          <>
-                            <EyeOff size={14} />
-                            Re-open the window from the Dock to turn it back on.
-                          </>
-                        )}
-                      </span>
-                    </span>
-                  </button>
-                </article>
-
-                <article className="settings-card settings-card-accent">
-                  <div className="settings-card-header">
-                    <div>
-                      <p className="settings-label">Current status</p>
-                      <h3>What changes immediately</h3>
-                    </div>
-                  </div>
-
-                  <ul className="status-list">
-                    <li>
-                      New clipboard events update the app window and tray menu
-                      automatically.
-                    </li>
-                    <li>
-                      Clearing or deleting history refreshes the menu-bar list
-                      right away.
-                    </li>
-                    <li>
-                      Restoring an item keeps or updates its position based on
-                      the restore ordering setting.
-                    </li>
-                    <li>
-                      Closing the main window keeps the app running so the menu
-                      bar entry can stay available.
-                    </li>
-                  </ul>
-                </article>
+          <section className="preference-group">
+            <div className="preference-row preference-row-stacked">
+              <div className="preference-copy">
+                <label htmlFor="max-items-input">Stored items</label>
+                <p>
+                  Keep the newest {maxItems} clips. Currently storing{" "}
+                  {copyEvents.length}.
+                </p>
               </div>
-            </>
-          )}
+              <div className="preference-control storage-input-row">
+                <input
+                  id="max-items-input"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  value={pendingMaxItemsInput}
+                  onChange={event =>
+                    setPendingMaxItemsInput(event.target.value)
+                  }
+                  disabled={settingsLoading}
+                  className="storage-input"
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={() => void handleApplyStorageLimit()}
+                  disabled={
+                    settingsLoading ||
+                    !isPendingMaxItemsValid ||
+                    !isStorageLimitDirty
+                  }
+                >
+                  Apply
+                </button>
+              </div>
+              {!isPendingMaxItemsValid && (
+                <p className="settings-error">
+                  Enter a whole number between 1 and 1000.
+                </p>
+              )}
+            </div>
+
+            <label className="preference-row">
+              <span className="preference-copy">
+                <span className="preference-title">Move restored items to top</span>
+                <span className="preference-description">
+                  <ArrowUpDown size={13} />
+                  {moveRestoredItemToTop
+                    ? "Restored clips refresh history order."
+                    : "Restored clips keep their current order."}
+                </span>
+              </span>
+              <span className="mac-switch">
+                <input
+                  type="checkbox"
+                  checked={moveRestoredItemToTop}
+                  onChange={event =>
+                    void updateRestoreOrdering(event.target.checked)
+                  }
+                  disabled={settingsLoading}
+                />
+                <span className="mac-switch-track" />
+              </span>
+            </label>
+
+            <label className="preference-row">
+              <span className="preference-copy">
+                <span className="preference-title">Show in menu bar</span>
+                <span className="preference-description">
+                  {menuBarVisible ? <Eye size={13} /> : <EyeOff size={13} />}
+                  {menuBarVisible
+                    ? "Recent clips are available from the tray menu."
+                    : "The tray menu is hidden."}
+                </span>
+              </span>
+              <span className="mac-switch">
+                <input
+                  type="checkbox"
+                  checked={menuBarVisible}
+                  onChange={event =>
+                    void updateMenuBarVisibility(event.target.checked)
+                  }
+                  disabled={settingsLoading}
+                />
+                <span className="mac-switch-track" />
+              </span>
+            </label>
+          </section>
         </main>
-      </div>
+      ) : (
+        <div className="workspace">
+          <main className="content-panel">
+            <section className="panel-header">
+              <div>
+                <p className="section-kicker">Clipboard history</p>
+                <h2>Recent events</h2>
+                <p className="section-description">
+                  Refresh the list, restore an item, or clear the local stack.
+                </p>
+              </div>
+
+              <div className="panel-actions">
+                <button
+                  onClick={() => void loadEvents()}
+                  disabled={loading}
+                  className="btn btn-secondary"
+                >
+                  <RefreshCw size={16} />
+                  Refresh
+                </button>
+                <button
+                  onClick={() => void clearAllEvents()}
+                  className="btn btn-danger"
+                  disabled={copyEvents.length === 0}
+                >
+                  <Trash2 size={16} />
+                  Clear all
+                </button>
+              </div>
+            </section>
+
+            {loading ? (
+              <div className="placeholder-card">Loading clipboard history...</div>
+            ) : copyEvents.length === 0 ? (
+              <div className="empty-state">
+                <h3>No clipboard events yet</h3>
+                <p>
+                  Start copying text or files and they will appear here and in
+                  the menu bar menu.
+                </p>
+              </div>
+            ) : (
+              <div className="events-list">
+                {copyEvents.map(event => {
+                  return (
+                    <article key={event.content_hash} className="event-card">
+                      <div className="event-content">
+                        <p className="event-meta">
+                          <span>{event.data_type}</span>
+                        </p>
+                        <p className="event-text">
+                          {truncateContent(getDisplayText(event))}
+                        </p>
+                        <p className="event-timestamp">
+                          {formatTimestamp(event.timestamp)}
+                        </p>
+                      </div>
+
+                      <div className="event-actions">
+                        <button
+                          onClick={() => void copyToClipboard(event.content_hash)}
+                          className="btn btn-primary"
+                          title="Restore to clipboard"
+                        >
+                          <Copy size={16} />
+                        </button>
+                        <button
+                          onClick={() => void deleteEvent(event.content_hash)}
+                          className="btn btn-danger"
+                          title="Delete item"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </main>
+        </div>
+      )}
 
       {showConfirmDialog && (
         <div className="modal-overlay">
