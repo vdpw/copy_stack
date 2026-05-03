@@ -5,9 +5,10 @@ use crate::{
 };
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 const TRAY_ID: &str = "main";
+const SETTINGS_WINDOW_LABEL: &str = "settings";
 const EVENT_ITEM_PREFIX: &str = "event::";
 const OPEN_HISTORY_ID: &str = "action::open-history";
 const OPEN_SETTINGS_ID: &str = "action::open-settings";
@@ -20,7 +21,6 @@ const MAX_MENU_LABEL_LENGTH: usize = 72;
 pub const HISTORY_UPDATED_EVENT: &str = "clipboard-history-updated";
 pub const NAVIGATE_EVENT: &str = "app:navigate";
 pub const HISTORY_PAGE: &str = "history";
-pub const SETTINGS_PAGE: &str = "settings";
 
 pub fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let menu = build_menu(app)?;
@@ -76,6 +76,28 @@ pub fn show_page<R: Runtime>(app: &AppHandle<R>, page: &str) -> Result<(), Strin
         .map_err(|error| error.to_string())
 }
 
+pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
+        window.show().map_err(|error| error.to_string())?;
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(app, SETTINGS_WINDOW_LABEL, WebviewUrl::default())
+        .title("Settings")
+        .inner_size(520.0, 330.0)
+        .min_inner_size(520.0, 330.0)
+        .max_inner_size(520.0, 330.0)
+        .resizable(false)
+        .maximizable(false)
+        .center()
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
 pub fn notify_history_changed<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     app.emit(HISTORY_UPDATED_EVENT, ())
         .map_err(|error| error.to_string())
@@ -84,7 +106,7 @@ pub fn notify_history_changed<R: Runtime>(app: &AppHandle<R>) -> Result<(), Stri
 fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) -> Result<(), String> {
     match menu_id {
         OPEN_HISTORY_ID => show_page(app, HISTORY_PAGE),
-        OPEN_SETTINGS_ID => show_page(app, SETTINGS_PAGE),
+        OPEN_SETTINGS_ID => show_settings_window(app),
         CLEAR_HISTORY_ID => {
             {
                 let state = app.state::<AppState>();
