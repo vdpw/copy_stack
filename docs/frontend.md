@@ -94,9 +94,15 @@ plain text labels. File and folder events store JSON with format
 preview selection in the backend classifier so the main window and tray menu use
 the same display value.
 
-`truncateContent(...)` defensively normalizes whitespace and limits long
+History cards are folded by default. The collapsed preview uses
+`truncateContent(...)`, which defensively normalizes whitespace and limits long
 previews to 40 display-width characters, counting CJK/full-width characters as
-2 columns and ASCII characters as 1. Overflow uses `...`.
+2 columns and ASCII characters as 1. Overflow uses `...`. Clicking a history
+card expands it in place and shows the full decoded display content while the
+restore and delete buttons keep their own actions. File and folder payloads are
+also folded: the collapsed state shows one item with a remaining-count suffix,
+and the expanded state shows the full item list. History card text is not
+selectable, so repeated clicks only toggle expansion.
 
 TODO: render HTML previews in the UI for `data_type: "html"`.
 TODO: show PNG thumbnails in the UI for `data_type: "png"`.

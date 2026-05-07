@@ -150,9 +150,11 @@ Tray menu item ids use stable prefixes:
 
 ## Tray Labels
 
-Tray labels decode the stored `display` bytes from the database classifier and
-truncate the result to 40 display-width characters, counting CJK/full-width
-characters as 2 columns and ASCII characters as 1. Overflow uses `...`. Plain
+Tray labels decode the stored `display` bytes from the database classifier. The
+top-level menu label truncates long results to 40 display-width characters,
+counting CJK/full-width characters as 2 columns and ASCII characters as 1.
+Overflow uses `...`. If truncation is needed, the event is rendered as a submenu
+whose child item shows the full label and restores the clip when selected. Plain
 text displays are normalized as one label. File and folder displays parse the
 `copy_stack.file-items.v1` JSON payload and prefix each item name with a file or
 folder marker. File item names come from the raw `public.utf8-plain-text`

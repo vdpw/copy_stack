@@ -3,13 +3,14 @@ use crate::{
     clear_restore_suppression_if_matches, queue_restore_suppression, restore_event_to_clipboard,
     AppState,
 };
-use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 const TRAY_ID: &str = "main";
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 const EVENT_ITEM_PREFIX: &str = "event::";
+const EVENT_PREVIEW_PREFIX: &str = "preview::";
 const OPEN_HISTORY_ID: &str = "action::open-history";
 const OPEN_SETTINGS_ID: &str = "action::open-settings";
 const CLEAR_HISTORY_ID: &str = "action::clear-history";
@@ -206,13 +207,29 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
         builder = builder.item(&empty_state);
     } else {
         for event in &events {
-            let item = MenuItemBuilder::with_id(
-                format!("{}{}", EVENT_ITEM_PREFIX, event.content_hash.as_str()),
-                event_menu_label(event),
-            )
-            .build(app)
-            .map_err(|error| error.to_string())?;
-            builder = builder.item(&item);
+            let menu_label = event_menu_label(event);
+            let full_label = event_menu_full_label(event);
+            let event_item_id = format!("{}{}", EVENT_ITEM_PREFIX, event.content_hash.as_str());
+
+            if menu_label == full_label {
+                let item = MenuItemBuilder::with_id(event_item_id, menu_label)
+                    .build(app)
+                    .map_err(|error| error.to_string())?;
+                builder = builder.item(&item);
+            } else {
+                let full_item = MenuItemBuilder::with_id(event_item_id, full_label)
+                    .build(app)
+                    .map_err(|error| error.to_string())?;
+                let preview_menu = SubmenuBuilder::with_id(
+                    app,
+                    format!("{}{}", EVENT_PREVIEW_PREFIX, event.content_hash.as_str()),
+                    menu_label,
+                )
+                .item(&full_item)
+                .build()
+                .map_err(|error| error.to_string())?;
+                builder = builder.item(&preview_menu);
+            }
         }
     }
 
@@ -228,23 +245,25 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
 }
 
 fn event_menu_label(event: &StoredEvent) -> String {
+    truncate_label(event_menu_full_label(event))
+}
+
+fn event_menu_full_label(event: &StoredEvent) -> String {
     if let Some(file_display) = Database::parse_file_display(&event.display) {
-        return truncate_label(
-            file_display
-                .items
-                .iter()
-                .map(file_menu_item_label)
-                .collect::<Vec<_>>()
-                .join("  "),
-        );
+        return file_display
+            .items
+            .iter()
+            .map(file_menu_item_label)
+            .collect::<Vec<_>>()
+            .join("  ");
     }
 
     let label = display_label(event);
-    truncate_label(match event.data_type.as_str() {
+    match event.data_type.as_str() {
         "file" | "files" => format!("📄 {}", label),
         "folder" | "folders" => format!("📁 {}", label),
         _ => label,
-    })
+    }
 }
 
 fn file_menu_item_label(item: &FileDisplayItem) -> String {
