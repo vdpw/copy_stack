@@ -140,14 +140,18 @@ priorities:
    include `public.tiff`.
 5. One `items` element with `public.file-url`: hash the file URL `data`; store
    a structured file display payload with the item `type` (`file` or `folder`)
-   and display `name`. A file URL ending with `/` is classified as `folder`;
+   and display `name`. The name comes from raw `public.utf8-plain-text` split on
+   carriage returns when possible, then a safe basename fallback, then `File N`
+   or `Folder N`; Finder reference ids such as `id=...` are never used as
+   display names. A file URL ending with `/` is classified as `folder`;
    otherwise it is classified as `file`.
 6. Multiple `items` elements where every item has `public.file-url`: ignore
    other surviving data types, concatenate all `public.file-url` data values in
    item order, and hash the concatenated bytes. Store a structured file display
-   payload with one `{type, name}` entry per item. Classify as `files` when no
-   file URL ends with `/`, `folders` when all file URLs end with `/`, and `files
-   and folders` when the event contains both.
+   payload with one `{type, name}` entry per item using the same safe display
+   name rules as single file URLs. Classify as `files` when no file URL ends
+   with `/`, `folders` when all file URLs end with `/`, and `files and folders`
+   when the event contains both.
 7. Plain text copies: when there is exactly one `items` element and its filtered
    `data_list` contains only `public.utf8-plain-text`, hash that raw `data`
    value and store the same bytes as `display`; classify as `text`.

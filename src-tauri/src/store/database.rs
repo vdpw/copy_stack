@@ -575,10 +575,14 @@ impl Database {
         if event.items.len() > 1 {
             if let Some(file_urls) = Self::extract_multi_file_urls(event) {
                 let data_type = Self::multi_file_url_data_type(&file_urls);
+                let display_names = Self::file_display_names(event);
                 let display_items = event
                     .items
                     .iter()
-                    .filter_map(Self::file_display_item)
+                    .enumerate()
+                    .filter_map(|(index, item)| {
+                        Self::file_display_item(item, index, display_names.get(index).cloned())
+                    })
                     .collect::<Vec<_>>();
                 let mut hasher = Sha256::new();
                 for file_url in &file_urls {
@@ -609,14 +613,16 @@ impl Database {
                 } else {
                     "file"
                 };
+                let display_name = Self::file_display_names(event).into_iter().next();
 
                 return Some(Self::classified_from_single_data(
                     data_type,
                     &data.data,
                     Self::file_display_bytes(vec![Self::file_display_item_for_url(
                         data_type,
-                        &event.items[0],
                         &file_url,
+                        0,
+                        display_name,
                     )]),
                 ));
             }
@@ -719,7 +725,11 @@ impl Database {
         .unwrap_or_else(|_| Self::label_for_data_type("files").into_bytes())
     }
 
-    fn file_display_item(item: &Item) -> Option<FileDisplayItem> {
+    fn file_display_item(
+        item: &Item,
+        index: usize,
+        display_name: Option<String>,
+    ) -> Option<FileDisplayItem> {
         let file_url = Self::find_data_in_item(item, "public.file-url")?;
         let file_url = String::from_utf8_lossy(&file_url.data);
         let item_type = if file_url.ends_with('/') {
@@ -728,21 +738,52 @@ impl Database {
             "file"
         };
 
-        Some(Self::file_display_item_for_url(item_type, item, &file_url))
+        Some(Self::file_display_item_for_url(
+            item_type,
+            &file_url,
+            index,
+            display_name.or_else(|| Self::file_display_name_in_item(item)),
+        ))
     }
 
-    fn file_display_item_for_url(item_type: &str, item: &Item, file_url: &str) -> FileDisplayItem {
-        let name = Self::file_url_display_name(file_url)
+    fn file_display_item_for_url(
+        item_type: &str,
+        file_url: &str,
+        index: usize,
+        display_name: Option<String>,
+    ) -> FileDisplayItem {
+        let name = display_name
             .or_else(|| {
-                Self::find_utf8_display_in_item(item)
-                    .map(|display| Self::path_display_name(&display).unwrap_or(display))
+                Self::file_url_display_name(file_url)
+                    .filter(|name| !Self::is_file_reference_display_name(name))
             })
-            .unwrap_or_else(|| file_url.to_string());
+            .unwrap_or_else(|| Self::generic_file_display_name(item_type, index));
 
         FileDisplayItem {
             item_type: item_type.to_string(),
             name,
         }
+    }
+
+    fn file_display_names(event: &Event) -> Vec<String> {
+        event
+            .items
+            .iter()
+            .find_map(Self::find_raw_utf8_display_in_item)
+            .map(|display| Self::split_file_display_names(&display))
+            .unwrap_or_default()
+    }
+
+    fn file_display_name_in_item(item: &Item) -> Option<String> {
+        Self::find_raw_utf8_display_in_item(item)
+            .and_then(|display| Self::split_file_display_names(&display).into_iter().next())
+    }
+
+    fn split_file_display_names(display: &str) -> Vec<String> {
+        display
+            .split('\r')
+            .filter_map(Self::safe_text_file_display_name)
+            .collect()
     }
 
     fn file_url_display_name(file_url: &str) -> Option<String> {
@@ -753,6 +794,48 @@ impl Database {
             .trim_end_matches('/');
         let path = path.strip_prefix("file://").unwrap_or(path);
         Self::path_display_name(path)
+    }
+
+    fn safe_text_file_display_name(display: &str) -> Option<String> {
+        let display = display
+            .trim_matches(|ch: char| ch == '\0' || ch.is_whitespace())
+            .to_string();
+        if display.is_empty() || Self::is_aggregate_file_label(&display) {
+            return None;
+        }
+
+        let display_name = Self::path_display_name(&display).unwrap_or(display);
+        if Self::is_file_reference_display_name(&display_name) {
+            None
+        } else {
+            Some(display_name)
+        }
+    }
+
+    fn is_aggregate_file_label(display: &str) -> bool {
+        let normalized = display.split_whitespace().collect::<Vec<_>>().join(" ");
+        let Some((count, kind)) = normalized.split_once(' ') else {
+            return false;
+        };
+
+        count.parse::<usize>().is_ok()
+            && matches!(
+                kind.to_ascii_lowercase().as_str(),
+                "file" | "files" | "folder" | "folders" | "item" | "items"
+            )
+    }
+
+    fn is_file_reference_display_name(display_name: &str) -> bool {
+        display_name == ".file" || display_name.starts_with("id=")
+    }
+
+    fn generic_file_display_name(item_type: &str, index: usize) -> String {
+        let label = if item_type == "folder" {
+            "Folder"
+        } else {
+            "File"
+        };
+        format!("{} {}", label, index + 1)
     }
 
     fn path_display_name(path: &str) -> Option<String> {
@@ -805,6 +888,11 @@ impl Database {
 
     fn find_utf8_display(event: &Event) -> Option<String> {
         event.items.iter().find_map(Self::find_utf8_display_in_item)
+    }
+
+    fn find_raw_utf8_display_in_item(item: &Item) -> Option<String> {
+        Self::find_data_in_item(item, "public.utf8-plain-text")
+            .map(|data| String::from_utf8_lossy(&data.data).into_owned())
     }
 
     fn find_utf8_display_in_item(item: &Item) -> Option<String> {
@@ -1052,6 +1140,35 @@ mod tests {
     }
 
     #[test]
+    fn classification_marks_single_file_url_file_with_basename() {
+        let event = event(vec![
+            data(
+                "public.utf8-plain-text",
+                b"/Users/example/Documents/report.pdf",
+            ),
+            data(
+                "public.file-url",
+                b"file:///Users/example/Documents/report.pdf",
+            ),
+        ]);
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "file");
+        assert_eq!(
+            display_file_items(&classified),
+            vec![FileDisplayItem {
+                item_type: "file".to_string(),
+                name: "report.pdf".to_string(),
+            }]
+        );
+        assert_eq!(
+            classified.content_hash,
+            Database::hash_bytes(b"file:///Users/example/Documents/report.pdf")
+        );
+    }
+
+    #[test]
     fn classification_hashes_single_file_url_image_by_extension() {
         let event = event(vec![
             data("public.file-url", b"file:///Users/example/tmp/abc.png"),
@@ -1091,7 +1208,7 @@ mod tests {
             items: vec![
                 Item {
                     data_list: vec![
-                        data("public.utf8-plain-text", b"2 items"),
+                        data("public.utf8-plain-text", b"a.txt\rb"),
                         data("public.url", b"file:///tmp/a.txt"),
                         data("public.file-url", b"file:///tmp/a.txt"),
                     ],
@@ -1128,13 +1245,81 @@ mod tests {
     }
 
     #[test]
+    fn classification_uses_carriage_return_file_names_from_utf8_display() {
+        let display = "claude-code-sourcemap-main.zip\rsqls\rssl\rtemp\r王德培-应聘登记表.doc";
+        let event = Event {
+            items: vec![
+                Item {
+                    data_list: vec![
+                        data("public.utf8-plain-text", display.as_bytes()),
+                        data("public.file-url", b"file:///.file/id=999999999.999999991"),
+                    ],
+                },
+                Item {
+                    data_list: vec![data(
+                        "public.file-url",
+                        b"file:///.file/id=999999999.999999992/",
+                    )],
+                },
+                Item {
+                    data_list: vec![data(
+                        "public.file-url",
+                        b"file:///.file/id=999999999.999999993/",
+                    )],
+                },
+                Item {
+                    data_list: vec![data(
+                        "public.file-url",
+                        b"file:///.file/id=999999999.999999994/",
+                    )],
+                },
+                Item {
+                    data_list: vec![data(
+                        "public.file-url",
+                        b"file:///.file/id=999999999.999999995",
+                    )],
+                },
+            ],
+        };
+
+        let classified = Database::classify_event(&event).expect("event should classify");
+
+        assert_eq!(classified.data_type, "files and folders");
+        assert_eq!(
+            display_file_items(&classified),
+            vec![
+                FileDisplayItem {
+                    item_type: "file".to_string(),
+                    name: "claude-code-sourcemap-main.zip".to_string(),
+                },
+                FileDisplayItem {
+                    item_type: "folder".to_string(),
+                    name: "sqls".to_string(),
+                },
+                FileDisplayItem {
+                    item_type: "folder".to_string(),
+                    name: "ssl".to_string(),
+                },
+                FileDisplayItem {
+                    item_type: "folder".to_string(),
+                    name: "temp".to_string(),
+                },
+                FileDisplayItem {
+                    item_type: "file".to_string(),
+                    name: "王德培-应聘登记表.doc".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn classification_marks_multiple_file_urls_as_files() {
         let event = Event {
             items: vec![
                 Item {
                     data_list: vec![
                         data("public.utf8-plain-text", b"2 files"),
-                        data("public.file-url", b"file:///.file/id=6571367.66560150"),
+                        data("public.file-url", b"file:///.file/id=999999999.999999999"),
                     ],
                 },
                 Item {
@@ -1147,11 +1332,17 @@ mod tests {
 
         assert_eq!(classified.data_type, "files");
         assert_eq!(
-            display_file_items(&classified)
-                .iter()
-                .map(|item| item.item_type.as_str())
-                .collect::<Vec<_>>(),
-            vec!["file", "file"]
+            display_file_items(&classified),
+            vec![
+                FileDisplayItem {
+                    item_type: "file".to_string(),
+                    name: "File 1".to_string(),
+                },
+                FileDisplayItem {
+                    item_type: "file".to_string(),
+                    name: "b.txt".to_string(),
+                },
+            ]
         );
     }
 
@@ -1162,7 +1353,7 @@ mod tests {
                 Item {
                     data_list: vec![
                         data("public.utf8-plain-text", b"2 folders"),
-                        data("public.file-url", b"file:///.file/id=6571367.673004/"),
+                        data("public.file-url", b"file:///.file/id=999999999.999999998/"),
                     ],
                 },
                 Item {
@@ -1175,11 +1366,17 @@ mod tests {
 
         assert_eq!(classified.data_type, "folders");
         assert_eq!(
-            display_file_items(&classified)
-                .iter()
-                .map(|item| item.item_type.as_str())
-                .collect::<Vec<_>>(),
-            vec!["folder", "folder"]
+            display_file_items(&classified),
+            vec![
+                FileDisplayItem {
+                    item_type: "folder".to_string(),
+                    name: "Folder 1".to_string(),
+                },
+                FileDisplayItem {
+                    item_type: "folder".to_string(),
+                    name: "b".to_string(),
+                },
+            ]
         );
     }
 
