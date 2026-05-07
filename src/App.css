@@ -204,12 +204,23 @@ button {
     transform 180ms ease,
     box-shadow 180ms ease,
     border-color 180ms ease;
+  cursor: pointer;
+  user-select: none;
 }
 
 .event-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 26px 60px rgba(20, 33, 61, 0.12);
   border-color: rgba(20, 33, 61, 0.14);
+}
+
+.event-card:focus-visible {
+  outline: 3px solid rgba(249, 115, 22, 0.28);
+  outline-offset: 3px;
+}
+
+.event-card-expanded {
+  border-color: rgba(20, 33, 61, 0.16);
 }
 
 .event-content {
@@ -265,7 +276,6 @@ button {
   font-size: 0.98rem;
   min-width: 0;
   word-break: break-word;
-  user-select: text;
 }
 
 .event-text {
@@ -273,7 +283,10 @@ button {
   line-height: 1.65;
   font-size: 0.98rem;
   word-break: break-word;
-  user-select: text;
+}
+
+.event-card-expanded .event-text {
+  white-space: pre-wrap;
 }
 
 .event-actions .btn {

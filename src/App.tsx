@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import type { KeyboardEvent } from "react";
 import "./App.css";
 
 const currentWindowLabel = getCurrentWindow().label;
@@ -60,12 +61,24 @@ function App() {
   const [moveRestoredItemToTop, setMoveRestoredItemToTop] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [eventsToDelete, setEventsToDelete] = useState(0);
+  const [expandedEventHashes, setExpandedEventHashes] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const loadEvents = useCallback(async () => {
     setLoading(true);
     try {
       const events = await invoke<StoredEvent[]>("get_copy_events");
       setCopyEvents(events);
+      setExpandedEventHashes(current => {
+        const currentHashes = new Set(events.map(event => event.content_hash));
+        const next = new Set(
+          Array.from(current).filter(contentHash =>
+            currentHashes.has(contentHash),
+          ),
+        );
+        return next.size === current.size ? current : next;
+      });
     } catch (error) {
       if (import.meta.env.DEV) {
         console.error("Failed to load clipboard history", error);
@@ -236,6 +249,30 @@ function App() {
         console.error("Failed to clear clipboard history", error);
       }
     }
+  };
+
+  const toggleEventExpansion = (contentHash: string) => {
+    setExpandedEventHashes(current => {
+      const next = new Set(current);
+      if (next.has(contentHash)) {
+        next.delete(contentHash);
+      } else {
+        next.add(contentHash);
+      }
+      return next;
+    });
+  };
+
+  const handleEventCardKeyDown = (
+    event: KeyboardEvent<HTMLElement>,
+    contentHash: string,
+  ) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    toggleEventExpansion(contentHash);
   };
 
   const formatTimestamp = (timestamp: number) => {
@@ -497,29 +534,78 @@ function App() {
               <div className="events-list">
                 {copyEvents.map(event => {
                   const preview = getDisplayPreview(event);
+                  const isExpanded = expandedEventHashes.has(event.content_hash);
+                  const visibleFileItems =
+                    preview.fileItems && !isExpanded
+                      ? preview.fileItems.slice(0, 1)
+                      : preview.fileItems;
                   return (
-                    <article key={event.content_hash} className="event-card">
+                    <article
+                      key={event.content_hash}
+                      className={`event-card ${
+                        isExpanded ? "event-card-expanded" : ""
+                      }`}
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={isExpanded}
+                      onClick={() => toggleEventExpansion(event.content_hash)}
+                      onKeyDown={keyboardEvent =>
+                        handleEventCardKeyDown(
+                          keyboardEvent,
+                          event.content_hash,
+                        )
+                      }
+                    >
                       <div className="event-content">
                         <p className="event-meta">
                           <span>{event.data_type}</span>
                         </p>
-                        {preview.fileItems ? (
+                        {visibleFileItems ? (
                           <ul className="event-file-items">
-                            {preview.fileItems.map((item, index) => (
-                              <li
-                                className="event-file-item"
-                                key={`${item.type}-${item.name}-${index}`}
-                              >
-                                {renderFileItemIcon(item.type)}
-                                <span>{truncateContent(item.name)}</span>
-                              </li>
-                            ))}
+                            {visibleFileItems.map((item, index) => {
+                              const hiddenItemCount =
+                                preview.fileItems && !isExpanded
+                                  ? preview.fileItems.length -
+                                    visibleFileItems.length
+                                  : 0;
+                              const collapsedSuffix =
+                                hiddenItemCount > 0
+                                  ? ` + ${hiddenItemCount} more`
+                                  : "";
+                              const collapsedFileLabel =
+                                hiddenItemCount > 0
+                                  ? `${truncateContent(
+                                      item.name,
+                                      Math.max(
+                                        0,
+                                        displayMaxWidth -
+                                          getDisplayWidth(collapsedSuffix),
+                                      ),
+                                    )}${collapsedSuffix}`
+                                  : truncateContent(item.name);
+
+                              return (
+                                <li
+                                  className="event-file-item"
+                                  key={`${item.type}-${item.name}-${index}`}
+                                >
+                                  {renderFileItemIcon(item.type)}
+                                  <span>
+                                    {isExpanded
+                                      ? item.name
+                                      : collapsedFileLabel}
+                                  </span>
+                                </li>
+                              );
+                            })}
                           </ul>
                         ) : (
                           <div className="event-preview">
                             {renderEventTypeIcon(event.data_type)}
                             <p className="event-text">
-                              {truncateContent(preview.text)}
+                              {isExpanded
+                                ? preview.text
+                                : truncateContent(preview.text)}
                             </p>
                           </div>
                         )}
@@ -530,14 +616,20 @@ function App() {
 
                       <div className="event-actions">
                         <button
-                          onClick={() => void copyToClipboard(event.content_hash)}
+                          onClick={clickEvent => {
+                            clickEvent.stopPropagation();
+                            void copyToClipboard(event.content_hash);
+                          }}
                           className="btn btn-primary"
                           title="Restore to clipboard"
                         >
                           <Copy size={16} />
                         </button>
                         <button
-                          onClick={() => void deleteEvent(event.content_hash)}
+                          onClick={clickEvent => {
+                            clickEvent.stopPropagation();
+                            void deleteEvent(event.content_hash);
+                          }}
                           className="btn btn-danger"
                           title="Delete item"
                         >
