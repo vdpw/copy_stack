@@ -81,16 +81,18 @@ interface StoredEvent {
 SQLite keeps the source event as a binary blob for restore operations, but
 `get_copy_events` does not return or decode `event_data`. `data_type` and
 `display` are selected by the backend classifier and should be used for
-user-facing previews. `display` is a byte array so text labels and future image
-thumbnail payloads can share the same field. `timestamp` is a Unix millisecond
-timestamp.
+user-facing previews. `display` is a byte array so text labels, structured
+file/folder item metadata, and future image thumbnail payloads can share the
+same field. `timestamp` is a Unix millisecond timestamp.
 
 ## Clipboard Preview Display
 
-The history list decodes `StoredEvent.display` as UTF-8 for current text labels
-and shows `StoredEvent.data_type` as the type badge. Keep preview selection in
-the backend classifier so the main window and tray menu use the same display
-value.
+The history list decodes `StoredEvent.display` as UTF-8. Most data types store
+plain text labels. File and folder events store JSON with format
+`copy_stack.file-items.v1` and an `items` array whose entries contain `type`
+(`file` or `folder`) and `name`; render one file/folder icon per item. Keep
+preview selection in the backend classifier so the main window and tray menu use
+the same display value.
 
 `truncateContent(...)` defensively normalizes whitespace and limits long
 previews to 160 characters.

@@ -151,9 +151,14 @@ Tray menu item ids use stable prefixes:
 ## Tray Labels
 
 Tray labels decode the stored `display` bytes from the database classifier and
-truncate the result to 72 characters. This keeps the tray and React history
-previews aligned for text displays while allowing binary thumbnails to be stored
-in the same column.
+truncate the result to 72 characters. Plain text displays are normalized as one
+label. File and folder displays parse the `copy_stack.file-items.v1` JSON
+payload and prefix each item name with a file or folder marker. File item names
+come from the raw `public.utf8-plain-text` filename list split on carriage
+returns, with generic `File N` / `Folder N` fallbacks. Finder reference ids such
+as `id=...` are never used as display names. This keeps the tray and React
+history previews aligned while allowing binary thumbnails to be stored in the
+same column later.
 
 ## Backend Change Checklist
 

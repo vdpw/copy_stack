@@ -1,4 +1,4 @@
-use crate::store::StoredEvent;
+use crate::store::{Database, FileDisplayItem, StoredEvent};
 use crate::{
     clear_restore_suppression_if_matches, queue_restore_suppression, restore_event_to_clipboard,
     AppState,
@@ -227,7 +227,31 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
 }
 
 fn event_menu_label(event: &StoredEvent) -> String {
-    truncate_label(display_label(event))
+    if let Some(file_display) = Database::parse_file_display(&event.display) {
+        return truncate_label(
+            file_display
+                .items
+                .iter()
+                .map(file_menu_item_label)
+                .collect::<Vec<_>>()
+                .join("  "),
+        );
+    }
+
+    let label = truncate_label(display_label(event));
+    match event.data_type.as_str() {
+        "file" | "files" => format!("📄 {}", label),
+        "folder" | "folders" => format!("📁 {}", label),
+        _ => label,
+    }
+}
+
+fn file_menu_item_label(item: &FileDisplayItem) -> String {
+    let icon = match item.item_type.as_str() {
+        "folder" => "📁",
+        _ => "📄",
+    };
+    format!("{} {}", icon, item.name)
 }
 
 fn display_label(event: &StoredEvent) -> String {
