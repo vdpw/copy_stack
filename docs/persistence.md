@@ -44,7 +44,9 @@ Columns:
   `rtf`, `html`, image extensions, `file`, `folder`, `files`, `folders`,
   `files and folders`, or `text`.
 - `display`: backend-selected preview bytes. Current text labels are stored as
-  UTF-8 bytes; image thumbnail bytes can also be stored here.
+  UTF-8 bytes. File and folder events store UTF-8 JSON with format
+  `copy_stack.file-items.v1` and one `{type, name}` entry per copied item.
+  Image thumbnail bytes can also be stored here later.
 - `timestamp`: Unix timestamp in milliseconds. This is also the ordering key.
 
 Indexes:
@@ -136,15 +138,16 @@ priorities:
    `jpg`, `tiff`, or `heic`; use the uppercased extension as `display`.
    This covers local-app image copies that expose `public.file-url` and may also
    include `public.tiff`.
-5. One `items` element with `public.file-url`: hash the file URL `data`; use
-   `public.utf8-plain-text` as `display` when present. A file URL ending
-   with `/` is classified as `folder`; otherwise it is classified as `file`.
+5. One `items` element with `public.file-url`: hash the file URL `data`; store
+   a structured file display payload with the item `type` (`file` or `folder`)
+   and display `name`. A file URL ending with `/` is classified as `folder`;
+   otherwise it is classified as `file`.
 6. Multiple `items` elements where every item has `public.file-url`: ignore
    other surviving data types, concatenate all `public.file-url` data values in
-   item order, and hash the concatenated bytes. Use the first item's
-   `public.utf8-plain-text` as `display`. Classify as `files` when no file URL
-   ends with `/`, `folders` when all file URLs end with `/`, and
-   `files and folders` when the event contains both.
+   item order, and hash the concatenated bytes. Store a structured file display
+   payload with one `{type, name}` entry per item. Classify as `files` when no
+   file URL ends with `/`, `folders` when all file URLs end with `/`, and `files
+   and folders` when the event contains both.
 7. Plain text copies: when there is exactly one `items` element and its filtered
    `data_list` contains only `public.utf8-plain-text`, hash that raw `data`
    value and store the same bytes as `display`; classify as `text`.

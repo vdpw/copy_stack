@@ -235,13 +235,45 @@ button {
   text-transform: uppercase;
 }
 
+.event-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.event-type-icon {
+  flex: 0 0 auto;
+  margin-top: 4px;
+  color: #0f6175;
+}
+
+.event-file-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin-bottom: 8px;
+}
+
+.event-file-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #14213d;
+  line-height: 1.55;
+  font-size: 0.98rem;
+  min-width: 0;
+  word-break: break-word;
+  user-select: text;
+}
+
 .event-text {
   color: #14213d;
   line-height: 1.65;
   font-size: 0.98rem;
   word-break: break-word;
   user-select: text;
-  margin-bottom: 8px;
 }
 
 .event-actions .btn {

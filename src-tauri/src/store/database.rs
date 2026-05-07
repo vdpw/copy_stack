@@ -12,6 +12,7 @@ const DEFAULT_MAX_ITEMS: u32 = 100;
 const MAX_ITEMS_KEY: &str = "max_items";
 const SHOW_IN_MENU_BAR_KEY: &str = "show_in_menu_bar";
 const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
+const FILE_DISPLAY_FORMAT: &str = "copy_stack.file-items.v1";
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredEvent {
@@ -26,6 +27,19 @@ pub struct AppSettings {
     pub max_items: u32,
     pub show_in_menu_bar: bool,
     pub move_restored_item_to_top: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FileDisplay {
+    pub format: String,
+    pub items: Vec<FileDisplayItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FileDisplayItem {
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub name: String,
 }
 
 impl StoredEvent {
@@ -523,6 +537,12 @@ impl Database {
         })
     }
 
+    pub fn parse_file_display(display: &[u8]) -> Option<FileDisplay> {
+        serde_json::from_slice::<FileDisplay>(display)
+            .ok()
+            .filter(|display| display.format == FILE_DISPLAY_FORMAT)
+    }
+
     fn classify_special_event(event: &Event) -> Option<ClassifiedEvent> {
         if let Some(data) = Self::find_data(event, "public.rtf") {
             return Some(Self::classified_from_single_data(
@@ -555,6 +575,11 @@ impl Database {
         if event.items.len() > 1 {
             if let Some(file_urls) = Self::extract_multi_file_urls(event) {
                 let data_type = Self::multi_file_url_data_type(&file_urls);
+                let display_items = event
+                    .items
+                    .iter()
+                    .filter_map(Self::file_display_item)
+                    .collect::<Vec<_>>();
                 let mut hasher = Sha256::new();
                 for file_url in &file_urls {
                     hasher.update(file_url);
@@ -563,9 +588,7 @@ impl Database {
                 return Some(ClassifiedEvent {
                     content_hash: format!("{:x}", hasher.finalize()),
                     data_type: data_type.to_string(),
-                    display: Self::find_utf8_display_in_item(&event.items[0])
-                        .unwrap_or_else(|| Self::label_for_data_type(data_type))
-                        .into_bytes(),
+                    display: Self::file_display_bytes(display_items),
                 });
             }
         }
@@ -590,9 +613,11 @@ impl Database {
                 return Some(Self::classified_from_single_data(
                     data_type,
                     &data.data,
-                    Self::display_bytes(
-                        Self::find_utf8_display(event).unwrap_or_else(|| file_url.into_owned()),
-                    ),
+                    Self::file_display_bytes(vec![Self::file_display_item_for_url(
+                        data_type,
+                        &event.items[0],
+                        &file_url,
+                    )]),
                 ));
             }
         }
@@ -684,6 +709,56 @@ impl Database {
         } else {
             "files and folders"
         }
+    }
+
+    fn file_display_bytes(items: Vec<FileDisplayItem>) -> Vec<u8> {
+        serde_json::to_vec(&FileDisplay {
+            format: FILE_DISPLAY_FORMAT.to_string(),
+            items,
+        })
+        .unwrap_or_else(|_| Self::label_for_data_type("files").into_bytes())
+    }
+
+    fn file_display_item(item: &Item) -> Option<FileDisplayItem> {
+        let file_url = Self::find_data_in_item(item, "public.file-url")?;
+        let file_url = String::from_utf8_lossy(&file_url.data);
+        let item_type = if file_url.ends_with('/') {
+            "folder"
+        } else {
+            "file"
+        };
+
+        Some(Self::file_display_item_for_url(item_type, item, &file_url))
+    }
+
+    fn file_display_item_for_url(item_type: &str, item: &Item, file_url: &str) -> FileDisplayItem {
+        let name = Self::file_url_display_name(file_url)
+            .or_else(|| {
+                Self::find_utf8_display_in_item(item)
+                    .map(|display| Self::path_display_name(&display).unwrap_or(display))
+            })
+            .unwrap_or_else(|| file_url.to_string());
+
+        FileDisplayItem {
+            item_type: item_type.to_string(),
+            name,
+        }
+    }
+
+    fn file_url_display_name(file_url: &str) -> Option<String> {
+        let path = file_url
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(file_url)
+            .trim_end_matches('/');
+        let path = path.strip_prefix("file://").unwrap_or(path);
+        Self::path_display_name(path)
+    }
+
+    fn path_display_name(path: &str) -> Option<String> {
+        path.rsplit('/')
+            .find(|part| !part.is_empty())
+            .map(str::to_string)
     }
 
     fn label_for_data_type(data_type: &str) -> String {
@@ -913,6 +988,12 @@ mod tests {
         String::from_utf8_lossy(&classified.display).into_owned()
     }
 
+    fn display_file_items(classified: &ClassifiedEvent) -> Vec<FileDisplayItem> {
+        Database::parse_file_display(&classified.display)
+            .expect("display should be a file display payload")
+            .items
+    }
+
     #[test]
     fn classification_prefers_rtf_hash_and_utf8_display() {
         let event = event(vec![
@@ -957,7 +1038,13 @@ mod tests {
         let classified = Database::classify_event(&event).expect("event should classify");
 
         assert_eq!(classified.data_type, "folder");
-        assert_eq!(display_string(&classified), "/Users/example/Documents");
+        assert_eq!(
+            display_file_items(&classified),
+            vec![FileDisplayItem {
+                item_type: "folder".to_string(),
+                name: "Documents".to_string(),
+            }]
+        );
         assert_eq!(
             classified.content_hash,
             Database::hash_bytes(b"file:///Users/example/Documents/")
@@ -1024,7 +1111,19 @@ mod tests {
         hasher.update(b"file:///tmp/b/");
 
         assert_eq!(classified.data_type, "files and folders");
-        assert_eq!(display_string(&classified), "2 items");
+        assert_eq!(
+            display_file_items(&classified),
+            vec![
+                FileDisplayItem {
+                    item_type: "file".to_string(),
+                    name: "a.txt".to_string(),
+                },
+                FileDisplayItem {
+                    item_type: "folder".to_string(),
+                    name: "b".to_string(),
+                },
+            ]
+        );
         assert_eq!(classified.content_hash, format!("{:x}", hasher.finalize()));
     }
 
@@ -1047,7 +1146,13 @@ mod tests {
         let classified = Database::classify_event(&event).expect("event should classify");
 
         assert_eq!(classified.data_type, "files");
-        assert_eq!(display_string(&classified), "2 files");
+        assert_eq!(
+            display_file_items(&classified)
+                .iter()
+                .map(|item| item.item_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["file", "file"]
+        );
     }
 
     #[test]
@@ -1069,7 +1174,13 @@ mod tests {
         let classified = Database::classify_event(&event).expect("event should classify");
 
         assert_eq!(classified.data_type, "folders");
-        assert_eq!(display_string(&classified), "2 folders");
+        assert_eq!(
+            display_file_items(&classified)
+                .iter()
+                .map(|item| item.item_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["folder", "folder"]
+        );
     }
 
     #[test]

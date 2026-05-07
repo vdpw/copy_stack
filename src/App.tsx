@@ -7,6 +7,9 @@ import {
   Copy,
   Eye,
   EyeOff,
+  File,
+  Files,
+  Folder,
   RefreshCw,
   Trash2,
 } from "lucide-react";
@@ -15,6 +18,9 @@ import "./App.css";
 
 const currentWindowLabel = getCurrentWindow().label;
 const isSettingsWindow = currentWindowLabel === "settings";
+const fileDisplayFormat = "copy_stack.file-items.v1";
+const displayMaxWidth = 40;
+const truncationSuffix = "...";
 
 interface StoredEvent {
   content_hash: string;
@@ -27,6 +33,21 @@ interface AppSettings {
   max_items: number;
   show_in_menu_bar: boolean;
   move_restored_item_to_top: boolean;
+}
+
+interface FileDisplayItem {
+  type: string;
+  name: string;
+}
+
+interface FileDisplayPayload {
+  format: string;
+  items: FileDisplayItem[];
+}
+
+interface DisplayPreview {
+  text: string;
+  fileItems: FileDisplayItem[] | null;
 }
 
 function App() {
@@ -221,20 +242,117 @@ function App() {
     return new Date(timestamp).toLocaleString();
   };
 
-  const truncateContent = (content: string, maxLength = 160) => {
-    const flattened = content.replace(/\s+/g, " ").trim();
-    if (flattened.length <= maxLength) {
-      return flattened;
+  const getCharacterDisplayWidth = (character: string) => {
+    if (
+      /[\u1100-\u115F\u2329\u232A\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6\u{1F300}-\u{1FAFF}]/u.test(
+        character,
+      )
+    ) {
+      return 2;
     }
-    return `${flattened.slice(0, maxLength)}...`;
+
+    return 1;
   };
 
-  const getDisplayText = (event: StoredEvent) => {
+  const getDisplayWidth = (content: string) => {
+    return Array.from(content).reduce(
+      (width, character) => width + getCharacterDisplayWidth(character),
+      0,
+    );
+  };
+
+  const truncateContent = (content: string, maxWidth = displayMaxWidth) => {
+    const flattened = content.replace(/\s+/g, " ").trim();
+    if (getDisplayWidth(flattened) <= maxWidth) {
+      return flattened;
+    }
+
+    const suffixWidth = getDisplayWidth(truncationSuffix);
+    const availableWidth = Math.max(0, maxWidth - suffixWidth);
+    let truncated = "";
+    let currentWidth = 0;
+
+    for (const character of Array.from(flattened)) {
+      const characterWidth = getCharacterDisplayWidth(character);
+      if (currentWidth + characterWidth > availableWidth) {
+        break;
+      }
+
+      truncated += character;
+      currentWidth += characterWidth;
+    }
+
+    return `${truncated}${truncationSuffix}`;
+  };
+
+  const decodeDisplayText = (event: StoredEvent) => {
     const text = new TextDecoder().decode(new Uint8Array(event.display));
     if (text.includes("\uFFFD")) {
       return event.data_type.toUpperCase();
     }
     return text;
+  };
+
+  const parseFileDisplay = (text: string) => {
+    try {
+      const parsed = JSON.parse(text) as Partial<FileDisplayPayload>;
+      if (
+        parsed.format !== fileDisplayFormat ||
+        !Array.isArray(parsed.items)
+      ) {
+        return null;
+      }
+
+      const items = parsed.items.filter(
+        (item): item is FileDisplayItem => {
+          const candidate = item as Partial<FileDisplayItem> | null;
+          return (
+            typeof candidate?.type === "string" &&
+            typeof candidate?.name === "string"
+          );
+        },
+      );
+      return items.length > 0 ? items : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const getDisplayPreview = (event: StoredEvent): DisplayPreview => {
+    const text = decodeDisplayText(event);
+    const fileItems = parseFileDisplay(text);
+    return {
+      text,
+      fileItems,
+    };
+  };
+
+  const renderFileItemIcon = (itemType: string) => {
+    if (itemType === "folder") {
+      return <Folder aria-hidden="true" className="event-type-icon" size={18} />;
+    }
+
+    return <File aria-hidden="true" className="event-type-icon" size={18} />;
+  };
+
+  const renderEventTypeIcon = (dataType: string) => {
+    switch (dataType) {
+      case "file":
+        return <File aria-hidden="true" className="event-type-icon" size={18} />;
+      case "folder":
+        return (
+          <Folder aria-hidden="true" className="event-type-icon" size={18} />
+        );
+      case "files":
+      case "files and folders":
+        return <Files aria-hidden="true" className="event-type-icon" size={18} />;
+      case "folders":
+        return (
+          <Folder aria-hidden="true" className="event-type-icon" size={18} />
+        );
+      default:
+        return null;
+    }
   };
 
   return (
@@ -378,15 +496,33 @@ function App() {
             ) : (
               <div className="events-list">
                 {copyEvents.map(event => {
+                  const preview = getDisplayPreview(event);
                   return (
                     <article key={event.content_hash} className="event-card">
                       <div className="event-content">
                         <p className="event-meta">
                           <span>{event.data_type}</span>
                         </p>
-                        <p className="event-text">
-                          {truncateContent(getDisplayText(event))}
-                        </p>
+                        {preview.fileItems ? (
+                          <ul className="event-file-items">
+                            {preview.fileItems.map((item, index) => (
+                              <li
+                                className="event-file-item"
+                                key={`${item.type}-${item.name}-${index}`}
+                              >
+                                {renderFileItemIcon(item.type)}
+                                <span>{truncateContent(item.name)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="event-preview">
+                            {renderEventTypeIcon(event.data_type)}
+                            <p className="event-text">
+                              {truncateContent(preview.text)}
+                            </p>
+                          </div>
+                        )}
                         <p className="event-timestamp">
                           {formatTimestamp(event.timestamp)}
                         </p>

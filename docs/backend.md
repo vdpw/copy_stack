@@ -151,9 +151,12 @@ Tray menu item ids use stable prefixes:
 ## Tray Labels
 
 Tray labels decode the stored `display` bytes from the database classifier and
-truncate the result to 72 characters. This keeps the tray and React history
-previews aligned for text displays while allowing binary thumbnails to be stored
-in the same column.
+truncate the result to 40 display-width characters, counting CJK/full-width
+characters as 2 columns and ASCII characters as 1. Overflow uses `...`. Plain
+text displays are normalized as one label. File and folder displays parse the
+`copy_stack.file-items.v1` JSON payload and prefix each item name with a file or
+folder marker. This keeps the tray and React history previews aligned while
+allowing binary thumbnails to be stored in the same column later.
 
 ## Backend Change Checklist
 
