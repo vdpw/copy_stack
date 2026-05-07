@@ -16,7 +16,8 @@ const CLEAR_HISTORY_ID: &str = "action::clear-history";
 const QUIT_ID: &str = "action::quit";
 const HEADER_ID: &str = "label::recent-items";
 const EMPTY_STATE_ID: &str = "label::empty";
-const MAX_MENU_LABEL_LENGTH: usize = 72;
+const MAX_MENU_LABEL_WIDTH: usize = 40;
+const TRUNCATION_SUFFIX: &str = "...";
 
 pub const HISTORY_UPDATED_EVENT: &str = "clipboard-history-updated";
 pub const NAVIGATE_EVENT: &str = "app:navigate";
@@ -238,12 +239,12 @@ fn event_menu_label(event: &StoredEvent) -> String {
         );
     }
 
-    let label = truncate_label(display_label(event));
-    match event.data_type.as_str() {
+    let label = display_label(event);
+    truncate_label(match event.data_type.as_str() {
         "file" | "files" => format!("📄 {}", label),
         "folder" | "folders" => format!("📁 {}", label),
         _ => label,
-    }
+    })
 }
 
 fn file_menu_item_label(item: &FileDisplayItem) -> String {
@@ -265,14 +266,69 @@ fn display_label(event: &StoredEvent) -> String {
 }
 
 fn truncate_label(value: String) -> String {
-    let mut chars = value.chars();
-    let truncated = chars
-        .by_ref()
-        .take(MAX_MENU_LABEL_LENGTH)
-        .collect::<String>();
-    if chars.next().is_some() {
-        format!("{}…", truncated)
-    } else {
-        truncated
+    if display_width(&value) <= MAX_MENU_LABEL_WIDTH {
+        return value;
+    }
+
+    let suffix_width = display_width(TRUNCATION_SUFFIX);
+    let available_width = MAX_MENU_LABEL_WIDTH.saturating_sub(suffix_width);
+    let mut truncated = String::new();
+    let mut current_width = 0;
+
+    for character in value.chars() {
+        let character_width = character_display_width(character);
+        if current_width + character_width > available_width {
+            break;
+        }
+
+        truncated.push(character);
+        current_width += character_width;
+    }
+
+    format!("{}{}", truncated, TRUNCATION_SUFFIX)
+}
+
+fn display_width(value: &str) -> usize {
+    value.chars().map(character_display_width).sum()
+}
+
+fn character_display_width(character: char) -> usize {
+    if matches!(
+        character,
+        '\u{1100}'..='\u{115F}'
+            | '\u{2329}'..='\u{232A}'
+            | '\u{2E80}'..='\u{A4CF}'
+            | '\u{AC00}'..='\u{D7A3}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{FE10}'..='\u{FE19}'
+            | '\u{FE30}'..='\u{FE6F}'
+            | '\u{FF00}'..='\u{FF60}'
+            | '\u{FFE0}'..='\u{FFE6}'
+            | '\u{1F300}'..='\u{1FAFF}'
+    ) {
+        return 2;
+    }
+
+    1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_label_caps_ascii_width() {
+        let label = truncate_label("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO".to_string());
+
+        assert_eq!(display_width(&label), 40);
+        assert!(label.ends_with(TRUNCATION_SUFFIX));
+    }
+
+    #[test]
+    fn truncate_label_caps_cjk_width() {
+        let label = truncate_label("复制历史文件夹名称非常非常非常长而且还要继续显示".to_string());
+
+        assert!(display_width(&label) <= 40);
+        assert!(label.ends_with(TRUNCATION_SUFFIX));
     }
 }

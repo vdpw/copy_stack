@@ -95,7 +95,8 @@ preview selection in the backend classifier so the main window and tray menu use
 the same display value.
 
 `truncateContent(...)` defensively normalizes whitespace and limits long
-previews to 160 characters.
+previews to 40 display-width characters, counting CJK/full-width characters as
+2 columns and ASCII characters as 1. Overflow uses `...`.
 
 TODO: render HTML previews in the UI for `data_type: "html"`.
 TODO: show PNG thumbnails in the UI for `data_type: "png"`.
