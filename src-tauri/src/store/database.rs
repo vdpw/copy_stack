@@ -138,10 +138,14 @@ impl Database {
         let event_data_is_blob = self
             .column_declared_type("clipboard_events", "event_data")?
             .is_some_and(|column_type| column_type.eq_ignore_ascii_case("BLOB"));
+        let display_is_blob = self
+            .column_declared_type("clipboard_events", "display")?
+            .is_some_and(|column_type| column_type.eq_ignore_ascii_case("BLOB"));
 
         if has_legacy_columns
             || missing_required_columns
             || !event_data_is_blob
+            || !display_is_blob
             || !self.primary_key_column_is("clipboard_events", "content_hash")?
         {
             self.rebuild_clipboard_events_table(&columns)?;
@@ -558,7 +562,7 @@ impl Database {
             return Some(Self::classified_from_single_data(
                 "png",
                 &data.data,
-                b"PNG".to_vec(),
+                data.data.clone(),
             ));
         }
 
@@ -1082,6 +1086,11 @@ mod tests {
             .items
     }
 
+    fn assert_png_display(classified: &ClassifiedEvent, expected: &[u8]) {
+        assert_eq!(classified.data_type, "png");
+        assert_eq!(classified.display, expected);
+    }
+
     #[test]
     fn classification_prefers_rtf_hash_and_utf8_display() {
         let event = event(vec![
@@ -1111,8 +1120,7 @@ mod tests {
 
         let classified = Database::classify_event(&event).expect("event should classify");
 
-        assert_eq!(classified.data_type, "png");
-        assert_eq!(display_string(&classified), "PNG");
+        assert_png_display(&classified, &[0, 1, 2]);
         assert_eq!(classified.content_hash, Database::hash_bytes(&[0, 1, 2]));
     }
 

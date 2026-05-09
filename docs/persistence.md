@@ -46,7 +46,7 @@ Columns:
 - `display`: backend-selected preview bytes. Current text labels are stored as
   UTF-8 bytes. File and folder events store UTF-8 JSON with format
   `copy_stack.file-items.v1` and one `{type, name}` entry per copied item.
-  Image thumbnail bytes can also be stored here later.
+  PNG image events store the PNG bytes used by the frontend thumbnail preview.
 - `timestamp`: Unix timestamp in milliseconds. This is also the ordering key.
 
 Indexes:
@@ -127,9 +127,8 @@ priorities:
 
 1. `public.rtf`: hash that `data` value; use `public.utf8-plain-text` as
    `display` when present; classify as `rtf`.
-2. `public.png`: hash that `data` value; use `PNG` as `display`; classify
-   as `png`.
-   TODO: show PNG thumbnails in the UI.
+2. `public.png`: hash that `data` value; use the PNG bytes as `display`;
+   classify as `png`.
 3. `public.html`: hash that `data` value; use `public.utf8-plain-text` as
    `display` when present; classify as `html`.
    TODO: render HTML previews in the UI.

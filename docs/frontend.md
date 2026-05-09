@@ -82,8 +82,8 @@ SQLite keeps the source event as a binary blob for restore operations, but
 `get_copy_events` does not return or decode `event_data`. `data_type` and
 `display` are selected by the backend classifier and should be used for
 user-facing previews. `display` is a byte array so text labels, structured
-file/folder item metadata, and future image thumbnail payloads can share the
-same field. `timestamp` is a Unix millisecond timestamp.
+file/folder item metadata, and image thumbnail bytes can share the same field.
+`timestamp` is a Unix millisecond timestamp.
 
 ## Clipboard Preview Display
 
@@ -94,7 +94,9 @@ plain text labels. File and folder events store JSON with format
 preview selection in the backend classifier so the main window and tray menu use
 the same display value.
 
-History cards are folded by default. The collapsed preview uses
+History cards are folded by default. PNG image events whose `display` starts
+with a PNG signature render a constrained thumbnail from a browser object URL;
+the component revokes the URL on cleanup. The collapsed preview uses
 `truncateContent(...)`, which defensively normalizes whitespace and limits long
 previews to 40 display-width characters, counting CJK/full-width characters as
 2 columns and ASCII characters as 1. Overflow uses `...`. Clicking a history
@@ -105,7 +107,6 @@ and the expanded state shows the full item list. History card text is not
 selectable, so repeated clicks only toggle expansion.
 
 TODO: render HTML previews in the UI for `data_type: "html"`.
-TODO: show PNG thumbnails in the UI for `data_type: "png"`.
 
 ## Settings Behavior
 

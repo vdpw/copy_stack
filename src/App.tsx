@@ -10,6 +10,7 @@ import {
   File,
   Files,
   Folder,
+  Image as ImageIcon,
   RefreshCw,
   Trash2,
 } from "lucide-react";
@@ -22,6 +23,7 @@ const isSettingsWindow = currentWindowLabel === "settings";
 const fileDisplayFormat = "copy_stack.file-items.v1";
 const displayMaxWidth = 40;
 const truncationSuffix = "...";
+const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 interface StoredEvent {
   content_hash: string;
@@ -49,6 +51,40 @@ interface FileDisplayPayload {
 interface DisplayPreview {
   text: string;
   fileItems: FileDisplayItem[] | null;
+  image: ImageDisplay | null;
+}
+
+interface ImageDisplay {
+  bytes: Uint8Array;
+  mediaType: string;
+  label: string;
+}
+
+function ImageThumbnail({ bytes, label, mediaType }: ImageDisplay) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const blob = new window.Blob([bytes], { type: mediaType });
+    const nextImageUrl = window.URL.createObjectURL(blob);
+    setImageUrl(nextImageUrl);
+
+    return () => {
+      window.URL.revokeObjectURL(nextImageUrl);
+    };
+  }, [bytes, mediaType]);
+
+  if (!imageUrl) {
+    return <div aria-hidden="true" className="event-image-placeholder" />;
+  }
+
+  return (
+    <img
+      alt={`${label} thumbnail`}
+      className="event-image-thumbnail"
+      draggable={false}
+      src={imageUrl}
+    />
+  );
 }
 
 function App() {
@@ -355,12 +391,30 @@ function App() {
     }
   };
 
+  const isPngDisplay = (display: number[]) => {
+    return pngSignature.every((byte, index) => display[index] === byte);
+  };
+
+  const parseImageDisplay = (event: StoredEvent): ImageDisplay | null => {
+    if (event.data_type !== "png" || !isPngDisplay(event.display)) {
+      return null;
+    }
+
+    return {
+      bytes: new Uint8Array(event.display),
+      mediaType: "image/png",
+      label: "PNG image",
+    };
+  };
+
   const getDisplayPreview = (event: StoredEvent): DisplayPreview => {
+    const image = parseImageDisplay(event);
     const text = decodeDisplayText(event);
     const fileItems = parseFileDisplay(text);
     return {
-      text,
+      text: image ? image.label : text,
       fileItems,
+      image,
     };
   };
 
@@ -379,6 +433,19 @@ function App() {
       case "folder":
         return (
           <Folder aria-hidden="true" className="event-type-icon" size={18} />
+        );
+      case "png":
+      case "jpg":
+      case "jpeg":
+      case "gif":
+      case "webp":
+      case "tiff":
+      case "tif":
+      case "bmp":
+      case "heic":
+      case "heif":
+        return (
+          <ImageIcon aria-hidden="true" className="event-type-icon" size={18} />
         );
       case "files":
       case "files and folders":
@@ -560,7 +627,12 @@ function App() {
                         <p className="event-meta">
                           <span>{event.data_type}</span>
                         </p>
-                        {visibleFileItems ? (
+                        {preview.image ? (
+                          <div className="event-image-preview">
+                            <ImageThumbnail {...preview.image} />
+                            <p className="event-text">{preview.image.label}</p>
+                          </div>
+                        ) : visibleFileItems ? (
                           <ul className="event-file-items">
                             {visibleFileItems.map((item, index) => {
                               const hiddenItemCount =
