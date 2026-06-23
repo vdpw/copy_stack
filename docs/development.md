@@ -40,6 +40,26 @@ pnpm desktop:dev
 `desktop:dev` runs Tauri, which starts Vite through the Tauri config. Vite uses
 port `5173` with `strictPort: true`.
 
+Optional history JSONL mirror flags are parsed by the app binary:
+
+```bash
+--copy-stack-history-jsonl /tmp/copy_stack_history.jsonl
+--copy-stack-history-jsonl-max-data-bytes 4096
+```
+
+With `desktop:dev`, pass a second `--` through to Tauri so the flags reach the
+app instead of being treated as Tauri runner arguments:
+
+```bash
+pnpm desktop:dev -- \
+  -- \
+  --copy-stack-history-jsonl /tmp/copy_stack_history.jsonl \
+  --copy-stack-history-jsonl-max-data-bytes 4096
+```
+
+The JSONL file is rewritten as a snapshot after startup cleanup and after
+history mutations.
+
 ## Build
 
 Web build:
@@ -135,8 +155,8 @@ sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), d
 ```
 
 Clipboard history can contain sensitive data. Do not commit copied databases or
-paste payloads into issues, logs, docs, or test fixtures unless they are
-sanitized.
+JSONL mirrors, or paste payloads into issues, logs, docs, or test fixtures
+unless they are sanitized.
 
 ## Generated And Local Files
 
@@ -149,6 +169,7 @@ Do not commit:
 - `src-tauri/gen/`
 - SQLite database files
 - local logs
+- history JSONL mirrors
 
 ## Common Change Patterns
 

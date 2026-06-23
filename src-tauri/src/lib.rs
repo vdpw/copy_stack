@@ -18,11 +18,14 @@ macro_rules! debug_error {
 }
 
 pub mod event;
+mod startup;
 mod store;
 mod tray;
 
-use crate::event::{filter_event_for_storage, ClipboardEvent};
-use crate::store::{AppSettings, Database, StoredEvent};
+pub use startup::StartupOptions;
+
+use crate::event::ClipboardEvent;
+use crate::store::{AppSettings, Database, HistoryJsonlConfig, StoredEvent};
 use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
 use std::sync::mpsc::Receiver;
@@ -41,6 +44,7 @@ const OPEN_APP_SETTINGS_ID: &str = "app-menu::open-settings";
 pub struct AppState {
     pub(crate) db: Mutex<Database>,
     pub(crate) pending_restore_suppression: Mutex<Option<PendingRestoreSuppression>>,
+    pub(crate) history_jsonl: Option<HistoryJsonlConfig>,
 }
 
 pub(crate) struct PendingRestoreSuppression {
@@ -63,6 +67,7 @@ async fn delete_copy_event(
     {
         let db = state.db.lock().unwrap();
         db.delete_event(&content_hash).map_err(|e| e.to_string())?;
+        write_history_jsonl_if_enabled(&db, state.history_jsonl.as_ref(), "delete_copy_event");
     }
     tray::sync(&app)
 }
@@ -72,6 +77,7 @@ async fn clear_all_events(app: AppHandle, state: State<'_, AppState>) -> Result<
     {
         let db = state.db.lock().unwrap();
         db.clear_all_events().map_err(|e| e.to_string())?;
+        write_history_jsonl_if_enabled(&db, state.history_jsonl.as_ref(), "clear_all_events");
     }
     tray::sync(&app)
 }
@@ -125,6 +131,7 @@ async fn copy_to_clipboard(
         let db = state.db.lock().unwrap();
         db.move_event_to_top(&content_hash)
             .map_err(|e| e.to_string())?;
+        write_history_jsonl_if_enabled(&db, state.history_jsonl.as_ref(), "copy_to_clipboard");
         debug_log!(
             "[copy_stack] clipboard event moved to top: content_hash={}",
             content_hash
@@ -188,6 +195,34 @@ fn should_skip_pending_restore_event(state: &AppState, content_hash: &str) -> bo
 
     *pending = None;
     true
+}
+
+pub(crate) fn write_history_jsonl_if_enabled(
+    db: &Database,
+    config: Option<&HistoryJsonlConfig>,
+    context: &str,
+) {
+    let Some(config) = config else {
+        return;
+    };
+
+    match db.write_history_jsonl(config) {
+        Ok(()) => {
+            debug_log!(
+                "[copy_stack] history JSONL written after {}: {}",
+                context,
+                config.path.display()
+            );
+        }
+        Err(_error) => {
+            debug_error!(
+                "failed to write history JSONL after {} to {}: {}",
+                context,
+                config.path.display(),
+                _error
+            );
+        }
+    }
 }
 
 fn build_app_menu<R: Runtime>(app_handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -318,6 +353,7 @@ async fn set_max_items(
         let db = state.db.lock().unwrap();
         db.set_max_items(max_items).map_err(|e| e.to_string())?;
         db.cleanup_old_events().map_err(|e| e.to_string())?;
+        write_history_jsonl_if_enabled(&db, state.history_jsonl.as_ref(), "set_max_items");
     }
     tray::sync(&app)?;
     tray::notify_history_changed(&app)
@@ -348,7 +384,7 @@ async fn set_move_restored_item_to_top(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run(rx: Receiver<Event>) {
+pub fn run(rx: Receiver<Event>, startup_options: StartupOptions) {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .menu(build_app_menu)
@@ -365,7 +401,7 @@ pub fn run(rx: Receiver<Event>) {
                 let _ = window.hide();
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
             debug_log!("[copy_stack] Tauri setup started");
             let app_handle = app.handle();
             let db = Database::new(&app_handle).expect("Failed to initialize database");
@@ -375,11 +411,17 @@ pub fn run(rx: Receiver<Event>) {
             app.manage(AppState {
                 db: Mutex::new(db),
                 pending_restore_suppression: Mutex::new(None),
+                history_jsonl: startup_options.history_jsonl.clone(),
             });
 
             // Clean up old events on startup to respect max_items limit
             if let Ok(db) = app.state::<AppState>().db.lock() {
                 let _ = db.cleanup_old_events();
+                write_history_jsonl_if_enabled(
+                    &db,
+                    startup_options.history_jsonl.as_ref(),
+                    "startup",
+                );
             }
 
             tray::setup(&app_handle).expect("Failed to initialize tray");
@@ -390,10 +432,10 @@ pub fn run(rx: Receiver<Event>) {
             std::thread::spawn(move || {
                 for event in rx {
                     debug_log!("[copy_stack] clipboard listener event received");
-                    let Some(event) = filter_event_for_storage(&event) else {
-                        debug_log!("[copy_stack] skipped clipboard event with no storable data");
+                    if !event.items.iter().any(|item| !item.data_list.is_empty()) {
+                        debug_log!("[copy_stack] skipped clipboard event with no data");
                         continue;
-                    };
+                    }
 
                     let event_hash = {
                         let state = app_handle_clone.state::<AppState>();
@@ -416,7 +458,15 @@ pub fn run(rx: Receiver<Event>) {
                     let insert_result = {
                         let state = app_handle_clone.state::<AppState>();
                         let db = state.db.lock().unwrap();
-                        db.insert_event(&event).map_err(|error| error.to_string())
+                        let result = db.insert_event(&event).map_err(|error| error.to_string());
+                        if result.is_ok() {
+                            write_history_jsonl_if_enabled(
+                                &db,
+                                state.history_jsonl.as_ref(),
+                                "clipboard insert",
+                            );
+                        }
+                        result
                     };
 
                     if let Err(_error) = insert_result {

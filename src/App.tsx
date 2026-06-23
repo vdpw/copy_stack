@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -13,6 +13,7 @@ import {
   Image as ImageIcon,
   RefreshCw,
   Trash2,
+  Video,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { KeyboardEvent } from "react";
@@ -29,6 +30,7 @@ interface StoredEvent {
   content_hash: string;
   data_type: string;
   display: number[];
+  rich_preview: RichPreviewSegment[];
   timestamp: number;
 }
 
@@ -52,12 +54,37 @@ interface DisplayPreview {
   text: string;
   fileItems: FileDisplayItem[] | null;
   image: ImageDisplay | null;
+  richSegments: RichPreviewSegment[];
 }
 
 interface ImageDisplay {
   bytes: Uint8Array;
   mediaType: string;
   label: string;
+}
+
+type RichPreviewSegment =
+  | RichPreviewTextSegment
+  | RichPreviewImageSegment
+  | RichPreviewVideoSegment;
+
+interface RichPreviewTextSegment {
+  type: "text";
+  text: string;
+}
+
+interface RichPreviewImageSegment {
+  type: "image";
+  label: string;
+  media_type: string;
+  data: number[];
+}
+
+interface RichPreviewVideoSegment {
+  type: "video";
+  label: string;
+  media_type: string;
+  path: string;
 }
 
 function ImageThumbnail({ bytes, label, mediaType }: ImageDisplay) {
@@ -87,6 +114,90 @@ function ImageThumbnail({ bytes, label, mediaType }: ImageDisplay) {
   );
 }
 
+function VideoThumbnail({ label, path }: RichPreviewVideoSegment) {
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const video = window.document.createElement("video");
+
+    const captureFrame = () => {
+      if (cancelled || video.videoWidth === 0 || video.videoHeight === 0) {
+        return;
+      }
+
+      try {
+        const canvas = window.document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          return;
+        }
+
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        setCoverUrl(canvas.toDataURL("image/jpeg", 0.82));
+      } catch {
+        setCoverUrl(null);
+      }
+    };
+
+    const seekToCoverFrame = () => {
+      if (!Number.isFinite(video.duration) || video.duration <= 0.05) {
+        captureFrame();
+        return;
+      }
+
+      video.currentTime = Math.min(1, video.duration / 4);
+    };
+
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.addEventListener("loadedmetadata", seekToCoverFrame);
+    video.addEventListener("seeked", captureFrame);
+    video.addEventListener("loadeddata", captureFrame, { once: true });
+    video.addEventListener("error", () => setCoverUrl(null), { once: true });
+    video.src = `${convertFileSrc(path)}#t=1`;
+    video.load();
+
+    return () => {
+      cancelled = true;
+      video.removeEventListener("loadedmetadata", seekToCoverFrame);
+      video.removeEventListener("seeked", captureFrame);
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [path]);
+
+  return (
+    <div
+      className="event-video-preview"
+      onClick={event => event.stopPropagation()}
+    >
+      <div className="event-video-frame">
+        {coverUrl ? (
+          <img
+            alt={`${label} video cover`}
+            className="event-video-cover"
+            draggable={false}
+            src={coverUrl}
+          />
+        ) : (
+          <div
+            aria-label={`${label} video cover`}
+            className="event-video-cover event-video-cover-placeholder"
+          />
+        )}
+        <span className="event-video-icon" aria-hidden="true">
+          <Video size={22} />
+        </span>
+      </div>
+      <p className="event-text event-video-label">{label}</p>
+    </div>
+  );
+}
+
 function App() {
   const [copyEvents, setCopyEvents] = useState<StoredEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -98,7 +209,7 @@ function App() {
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [eventsToDelete, setEventsToDelete] = useState(0);
   const [expandedEventHashes, setExpandedEventHashes] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set()
   );
 
   const loadEvents = useCallback(async () => {
@@ -110,8 +221,8 @@ function App() {
         const currentHashes = new Set(events.map(event => event.content_hash));
         const next = new Set(
           Array.from(current).filter(contentHash =>
-            currentHashes.has(contentHash),
-          ),
+            currentHashes.has(contentHash)
+          )
         );
         return next.size === current.size ? current : next;
       });
@@ -301,7 +412,7 @@ function App() {
 
   const handleEventCardKeyDown = (
     event: KeyboardEvent<HTMLElement>,
-    contentHash: string,
+    contentHash: string
   ) => {
     if (event.key !== "Enter" && event.key !== " ") {
       return;
@@ -318,7 +429,7 @@ function App() {
   const getCharacterDisplayWidth = (character: string) => {
     if (
       /[\u1100-\u115F\u2329\u232A\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6\u{1F300}-\u{1FAFF}]/u.test(
-        character,
+        character
       )
     ) {
       return 2;
@@ -330,7 +441,7 @@ function App() {
   const getDisplayWidth = (content: string) => {
     return Array.from(content).reduce(
       (width, character) => width + getCharacterDisplayWidth(character),
-      0,
+      0
     );
   };
 
@@ -369,22 +480,17 @@ function App() {
   const parseFileDisplay = (text: string) => {
     try {
       const parsed = JSON.parse(text) as Partial<FileDisplayPayload>;
-      if (
-        parsed.format !== fileDisplayFormat ||
-        !Array.isArray(parsed.items)
-      ) {
+      if (parsed.format !== fileDisplayFormat || !Array.isArray(parsed.items)) {
         return null;
       }
 
-      const items = parsed.items.filter(
-        (item): item is FileDisplayItem => {
-          const candidate = item as Partial<FileDisplayItem> | null;
-          return (
-            typeof candidate?.type === "string" &&
-            typeof candidate?.name === "string"
-          );
-        },
-      );
+      const items = parsed.items.filter((item): item is FileDisplayItem => {
+        const candidate = item as Partial<FileDisplayItem> | null;
+        return (
+          typeof candidate?.type === "string" &&
+          typeof candidate?.name === "string"
+        );
+      });
       return items.length > 0 ? items : null;
     } catch {
       return null;
@@ -415,12 +521,72 @@ function App() {
       text: image ? image.label : text,
       fileItems,
       image,
+      richSegments: Array.isArray(event.rich_preview) ? event.rich_preview : [],
     };
+  };
+
+  const getEventTypeLabel = (event: StoredEvent, preview: DisplayPreview) => {
+    if (preview.richSegments.length > 0) {
+      const hasText = preview.richSegments.some(
+        segment => segment.type === "text"
+      );
+      const hasImage = preview.richSegments.some(
+        segment => segment.type === "image"
+      );
+      const hasVideo = preview.richSegments.some(
+        segment => segment.type === "video"
+      );
+
+      if (hasText && hasImage) {
+        return "Text + image";
+      }
+      if (hasVideo) {
+        return "Video";
+      }
+      if (hasImage) {
+        return "Image";
+      }
+      if (hasText) {
+        return "Text";
+      }
+    }
+
+    return event.data_type;
+  };
+
+  const renderRichPreviewSegment = (
+    segment: RichPreviewSegment,
+    index: number,
+    isExpanded: boolean
+  ) => {
+    if (segment.type === "text") {
+      return (
+        <p className="event-text event-rich-text" key={`text-${index}`}>
+          {isExpanded ? segment.text : truncateContent(segment.text, 96)}
+        </p>
+      );
+    }
+
+    if (segment.type === "video") {
+      return <VideoThumbnail key={`video-${index}`} {...segment} />;
+    }
+
+    return (
+      <div className="event-rich-image" key={`image-${index}`}>
+        <ImageThumbnail
+          bytes={new Uint8Array(segment.data)}
+          label={segment.label}
+          mediaType={segment.media_type}
+        />
+      </div>
+    );
   };
 
   const renderFileItemIcon = (itemType: string) => {
     if (itemType === "folder") {
-      return <Folder aria-hidden="true" className="event-type-icon" size={18} />;
+      return (
+        <Folder aria-hidden="true" className="event-type-icon" size={18} />
+      );
     }
 
     return <File aria-hidden="true" className="event-type-icon" size={18} />;
@@ -429,10 +595,24 @@ function App() {
   const renderEventTypeIcon = (dataType: string) => {
     switch (dataType) {
       case "file":
-        return <File aria-hidden="true" className="event-type-icon" size={18} />;
+        return (
+          <File aria-hidden="true" className="event-type-icon" size={18} />
+        );
       case "folder":
         return (
           <Folder aria-hidden="true" className="event-type-icon" size={18} />
+        );
+      case "video":
+        return (
+          <Video aria-hidden="true" className="event-type-icon" size={18} />
+        );
+      case "unsupported":
+        return (
+          <AlertTriangle
+            aria-hidden="true"
+            className="event-type-icon"
+            size={18}
+          />
         );
       case "png":
       case "jpg":
@@ -449,7 +629,9 @@ function App() {
         );
       case "files":
       case "files and folders":
-        return <Files aria-hidden="true" className="event-type-icon" size={18} />;
+        return (
+          <Files aria-hidden="true" className="event-type-icon" size={18} />
+        );
       case "folders":
         return (
           <Folder aria-hidden="true" className="event-type-icon" size={18} />
@@ -510,7 +692,9 @@ function App() {
 
             <label className="preference-row">
               <span className="preference-copy">
-                <span className="preference-title">Move restored items to top</span>
+                <span className="preference-title">
+                  Move restored items to top
+                </span>
                 <span className="preference-description">
                   <ArrowUpDown size={13} />
                   {moveRestoredItemToTop
@@ -588,7 +772,9 @@ function App() {
             </section>
 
             {loading ? (
-              <div className="placeholder-card">Loading clipboard history...</div>
+              <div className="placeholder-card">
+                Loading clipboard history...
+              </div>
             ) : copyEvents.length === 0 ? (
               <div className="empty-state">
                 <h3>No clipboard events yet</h3>
@@ -601,7 +787,9 @@ function App() {
               <div className="events-list">
                 {copyEvents.map(event => {
                   const preview = getDisplayPreview(event);
-                  const isExpanded = expandedEventHashes.has(event.content_hash);
+                  const isExpanded = expandedEventHashes.has(
+                    event.content_hash
+                  );
                   const visibleFileItems =
                     preview.fileItems && !isExpanded
                       ? preview.fileItems.slice(0, 1)
@@ -619,15 +807,25 @@ function App() {
                       onKeyDown={keyboardEvent =>
                         handleEventCardKeyDown(
                           keyboardEvent,
-                          event.content_hash,
+                          event.content_hash
                         )
                       }
                     >
                       <div className="event-content">
                         <p className="event-meta">
-                          <span>{event.data_type}</span>
+                          <span>{getEventTypeLabel(event, preview)}</span>
                         </p>
-                        {preview.image ? (
+                        {preview.richSegments.length > 0 ? (
+                          <div className="event-rich-preview">
+                            {preview.richSegments.map((segment, index) =>
+                              renderRichPreviewSegment(
+                                segment,
+                                index,
+                                isExpanded
+                              )
+                            )}
+                          </div>
+                        ) : preview.image ? (
                           <div className="event-image-preview">
                             <ImageThumbnail {...preview.image} />
                             <p className="event-text">{preview.image.label}</p>
@@ -651,8 +849,8 @@ function App() {
                                       Math.max(
                                         0,
                                         displayMaxWidth -
-                                          getDisplayWidth(collapsedSuffix),
-                                      ),
+                                          getDisplayWidth(collapsedSuffix)
+                                      )
                                     )}${collapsedSuffix}`
                                   : truncateContent(item.name);
 
