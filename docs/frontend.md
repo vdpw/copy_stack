@@ -74,29 +74,39 @@ interface StoredEvent {
   content_hash: string;
   data_type: string;
   display: number[];
+  rich_preview: RichPreviewSegment[];
   timestamp: number;
 }
 ```
 
 SQLite keeps the source event as a binary blob for restore operations, but
-`get_copy_events` does not return or decode `event_data`. `data_type` and
-`display` are selected by the backend classifier and should be used for
-user-facing previews. `display` is a byte array so text labels, structured
+`get_copy_events` does not return the raw `event_data`. `data_type` and
+`display` are selected by the backend classifier and remain the fallback
+user-facing preview. `display` is a byte array so text labels, structured
 file/folder item metadata, and image thumbnail bytes can share the same field.
+`rich_preview` is a backend-decoded preview, with segments tagged as `text`,
+`image`, or `video`; image segment bytes are intended for small thumbnails,
+while video segments carry local file metadata for Tauri asset rendering.
 `timestamp` is a Unix millisecond timestamp.
 
 ## Clipboard Preview Display
 
 The history list decodes `StoredEvent.display` as UTF-8. Most data types store
-plain text labels. File and folder events store JSON with format
-`copy_stack.file-items.v1` and an `items` array whose entries contain `type`
-(`file` or `folder`) and `name`; render one file/folder icon per item. Keep
-preview selection in the backend classifier so the main window and tray menu use
-the same display value.
+plain text labels, including video file basenames for `data_type: "video"` and
+unsupported clipboard flavor summaries for `data_type: "unsupported"`. File and
+folder events store JSON with format `copy_stack.file-items.v1` and an `items`
+array whose entries contain `type` (`file` or `folder`) and `name`; render one
+file/folder icon per item. Keep preview selection in the backend classifier so
+the main window and tray menu use the same display value.
 
 History cards are folded by default. PNG image events whose `display` starts
 with a PNG signature render a constrained thumbnail from a browser object URL;
-the component revokes the URL on cleanup. The collapsed preview uses
+the component revokes the URL on cleanup. Mixed text/image events use
+`rich_preview` when present so text and image thumbnails render in original
+clipboard order, including cases like text-image, image-text, and
+text-image-text. Video events use `rich_preview` to render a local video
+thumbnail from metadata instead of copying video bytes through the command
+payload. The collapsed preview uses
 `truncateContent(...)`, which defensively normalizes whitespace and limits long
 previews to 40 display-width characters, counting CJK/full-width characters as
 2 columns and ASCII characters as 1. Overflow uses `...`. Clicking a history

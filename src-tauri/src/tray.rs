@@ -1,7 +1,7 @@
 use crate::store::{Database, FileDisplayItem, StoredEvent};
 use crate::{
     clear_restore_suppression_if_matches, queue_restore_suppression, restore_event_to_clipboard,
-    AppState,
+    write_history_jsonl_if_enabled, AppState,
 };
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::TrayIconBuilder;
@@ -114,6 +114,11 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) -> Result<()
                 let state = app.state::<AppState>();
                 let db = state.db.lock().unwrap();
                 db.clear_all_events().map_err(|error| error.to_string())?;
+                write_history_jsonl_if_enabled(
+                    &db,
+                    state.history_jsonl.as_ref(),
+                    "tray clear history",
+                );
             }
             notify_history_changed(app)?;
             sync(app)
@@ -164,6 +169,7 @@ fn restore_event<R: Runtime>(app: &AppHandle<R>, content_hash: &str) -> Result<(
             let db = state.db.lock().unwrap();
             db.move_event_to_top(&restore_content_hash)
                 .map_err(|error| error.to_string())?;
+            write_history_jsonl_if_enabled(&db, state.history_jsonl.as_ref(), "tray restore");
         }
         notify_history_changed(app)?;
         sync(app)?;

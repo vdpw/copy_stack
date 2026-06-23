@@ -3,7 +3,7 @@
 
 use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
-use copy_stack_lib::run;
+use copy_stack_lib::{run, StartupOptions};
 use std::sync::mpsc;
 
 macro_rules! debug_log {
@@ -17,6 +17,10 @@ macro_rules! debug_log {
 
 fn main() {
     debug_log!("[copy_stack] application starting");
+    let startup_options = StartupOptions::from_env_args().unwrap_or_else(|error| {
+        eprintln!("[copy_stack] failed to parse startup options: {}", error);
+        std::process::exit(2);
+    });
 
     let (tx, rx) = mpsc::channel();
 
@@ -34,5 +38,5 @@ fn main() {
 
     // Start the Tauri application
     debug_log!("[copy_stack] launching Tauri runtime");
-    run(rx);
+    run(rx, startup_options);
 }
