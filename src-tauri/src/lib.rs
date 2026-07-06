@@ -25,6 +25,8 @@ use crate::event::{filter_event_for_storage, ClipboardEvent};
 use crate::store::{AppSettings, Database, StoredEvent};
 use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -188,6 +190,34 @@ fn should_skip_pending_restore_event(state: &AppState, content_hash: &str) -> bo
 
     *pending = None;
     true
+}
+
+#[cfg(target_os = "macos")]
+fn current_source_app() -> Option<String> {
+    let output = Command::new("/usr/bin/osascript")
+        .args([
+            "-e",
+            "tell application \"System Events\" to get name of first application process whose frontmost is true",
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let source_app = String::from_utf8(output.stdout).ok()?;
+    let source_app = source_app.trim();
+    if source_app.is_empty() || source_app == "Copy Stack" {
+        None
+    } else {
+        Some(source_app.to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_source_app() -> Option<String> {
+    None
 }
 
 fn build_app_menu<R: Runtime>(app_handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -413,10 +443,12 @@ pub fn run(rx: Receiver<Event>) {
                     }
 
                     debug_log!("[copy_stack] storing clipboard listener event");
+                    let source_app = current_source_app();
                     let insert_result = {
                         let state = app_handle_clone.state::<AppState>();
                         let db = state.db.lock().unwrap();
-                        db.insert_event(&event).map_err(|error| error.to_string())
+                        db.insert_event(&event, source_app)
+                            .map_err(|error| error.to_string())
                     };
 
                     if let Err(_error) = insert_result {

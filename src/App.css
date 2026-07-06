@@ -230,6 +230,10 @@ button {
 
 .event-meta {
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .event-meta span {
@@ -244,6 +248,21 @@ button {
   line-height: 1;
   padding: 6px 9px;
   text-transform: uppercase;
+}
+
+.event-meta .event-source {
+  gap: 5px;
+  max-width: min(260px, 100%);
+  background: rgba(20, 33, 61, 0.07);
+  color: #475569;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.event-source svg {
+  flex: 0 0 auto;
 }
 
 .event-preview {

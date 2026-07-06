@@ -64,7 +64,8 @@ frontend event emission.
 
 Returns stored event metadata ordered by `timestamp DESC, content_hash ASC`.
 Rows include `content_hash`, backend-selected `data_type` and binary `display`,
-and `timestamp`; they do not include decoded `event_data`.
+`timestamp`, and nullable `source_app`; they do not include decoded
+`event_data`.
 
 ### `delete_copy_event`
 
@@ -114,9 +115,14 @@ For each event:
 2. Compare it with pending restore suppression.
 3. Skip the event if it is the one app-initiated restore that should preserve
    order.
-4. Insert or update the event through `Database::insert_event`.
-5. Sync the tray menu.
-6. Emit `clipboard-history-updated` so the frontend reloads from SQLite.
+4. Capture the current foreground macOS app name as best-effort `source_app`.
+5. Insert or update the event through `Database::insert_event`.
+6. Sync the tray menu.
+7. Emit `clipboard-history-updated` so the frontend reloads from SQLite.
+
+Source capture is intentionally non-fatal. Unsupported platforms, permission
+failures, empty values, and `Copy Stack` as the foreground app are stored as
+`None` so restore operations do not overwrite an existing source label.
 
 ## Restore Suppression
 

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
+  AppWindow,
   ArrowUpDown,
   Copy,
   Eye,
@@ -30,6 +31,7 @@ interface StoredEvent {
   data_type: string;
   display: number[];
   timestamp: number;
+  source_app: string | null;
 }
 
 interface AppSettings {
@@ -626,6 +628,12 @@ function App() {
                       <div className="event-content">
                         <p className="event-meta">
                           <span>{event.data_type}</span>
+                          {event.source_app && (
+                            <span className="event-source">
+                              <AppWindow size={12} />
+                              {event.source_app}
+                            </span>
+                          )}
                         </p>
                         {preview.image ? (
                           <div className="event-image-preview">
