@@ -42,6 +42,8 @@ Important rules:
   be absent when permissions or platform support are unavailable.
 - The UI reloads from SQLite instead of inserting optimistic rows.
 - Tray sync runs after successful persistence.
+- When the history JSONL mirror is enabled, the backend rewrites it after
+  successful persistence before tray/UI refresh.
 
 ## Restore From Main Window
 
@@ -155,10 +157,16 @@ Stored payloads are binary-encoded Rust values:
 copy_event_listener::event::Event -> binary event blob -> clipboard_events.event_data
 ```
 
+The binary event blob preserves all data flavors reported by the listener,
+including private or platform-specific metadata. Classification selects stable
+public flavors for `content_hash`, `data_type`, and `display`; it does not
+filter the persisted event payload.
+
 The backend returns stored `data_type` and binary `display` preview metadata for
-history lists without decoding or sending `event_data` to React. Restore
-operations use the backend to decode and pass the original event back to
-`ClipboardListener::set_clipboard_event(...)`.
+history lists without sending raw `event_data` to React. It also returns
+display-only `rich_preview` segments when the stored event contains ordered
+mixed text/image content. Restore operations use the backend to decode and pass
+the original event back to `ClipboardListener::set_clipboard_event(...)`.
 
 ## Flow Change Checklist
 

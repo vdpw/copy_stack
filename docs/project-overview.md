@@ -23,6 +23,7 @@ in the current codebase.
 - Configure whether restored items move to the top of history.
 - Keep the app running when the main window is closed by hiding the window.
 - Reopen the main window from the tray menu and navigate to History or Settings.
+- Optionally mirror stored history to a local JSONL file through startup flags.
 
 ## Primary User Workflows
 
@@ -54,7 +55,7 @@ actions.
 
 - Cross-device sync.
 - Search, tags, categories, or filtering.
-- Import/export.
+- User-facing import/export.
 - Global keyboard shortcuts.
 - Rich previews for every clipboard format.
 - Cross-platform tray behavior beyond the current Tauri configuration and
@@ -68,6 +69,8 @@ payloads. When adding features, treat clipboard content as private by default:
 
 - Do not log clipboard payloads.
 - Do not send clipboard content to third-party services.
+- Treat optional JSONL mirrors like database files because they can contain
+  clipboard payloads.
 - Avoid adding telemetry around item contents.
 - Keep generated database files out of source control.
 

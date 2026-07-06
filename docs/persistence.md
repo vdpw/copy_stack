@@ -40,10 +40,11 @@ Columns:
 - `content_hash`: normalized SHA-256 hash used as the stable row key and
   deduplication key.
 - `event_data`: compact binary clipboard event payload. The binary format stores
-  each item, data type, and raw `data` bytes directly.
+  each item, data type, and raw `data` bytes directly, including private or
+  platform-specific clipboard flavors.
 - `data_type`: backend classification used by the UI and tray, currently
-  `rtf`, `html`, image extensions, `file`, `folder`, `files`, `folders`,
-  `files and folders`, or `text`.
+  `rtf`, `html`, image extensions, `video`, `file`, `folder`, `files`,
+  `folders`, `files and folders`, `text`, or `unsupported`.
 - `display`: backend-selected preview bytes. Current text labels are stored as
   UTF-8 bytes. File and folder events store UTF-8 JSON with format
   `copy_stack.file-items.v1` and one `{type, name}` entry per copied item.
@@ -128,11 +129,75 @@ another row or changing list order. If duplicate content is copied from another
 source later, the source label can refresh even though the original row order is
 preserved.
 
+## Rich Preview Payload
+
+`get_copy_events` decodes stored `event_data` into a `rich_preview` array for
+user-facing previews. WeCom-style rich clips expose `public.utf8-plain-text`
+with the object replacement character (`U+FFFC`) where inline images appear.
+The backend splits that text into segments and replaces each placeholder with a
+thumbnail segment loaded from a supported `public.file-url` image, preserving
+source order such as text-image, image-text, and text-image-text. Single local
+video file URLs produce a video segment with label, media type, and decoded
+local path so the UI can render a thumbnail without storing video bytes in the
+command payload.
+
+The raw clipboard event remains the source of truth for restore operations.
+`rich_preview` is display-only and falls back to the existing `data_type` /
+`display` preview when no ordered mixed preview can be built.
+
+## JSONL History Mirror
+
+When the app starts with `--copy-stack-history-jsonl <path>`, it rewrites that
+file as a JSONL snapshot of the current `clipboard_events` table. Each line is
+one database row ordered the same way as `get_copy_events`:
+
+```json
+{
+  "content_hash": "...",
+  "data_type": "text",
+  "timestamp": 1710000000000,
+  "display": {
+    "byte_len": 11,
+    "truncated": true,
+    "encoding": "utf8",
+    "value": "hell"
+  },
+  "event_data": {
+    "items": [
+      {
+        "data_list": [
+          {
+            "type": "public.utf8-plain-text",
+            "data": {
+              "byte_len": 11,
+              "truncated": true,
+              "encoding": "utf8",
+              "value": "hell"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`event_data` is decoded from the binary blob into clipboard items and data
+flavors. Each byte field is represented as `{byte_len, truncated, encoding,
+value}`. Valid UTF-8 is written as `encoding: "utf8"`; binary data is written as
+lowercase hex. Values longer than
+`--copy-stack-history-jsonl-max-data-bytes` are truncated before serialization;
+the default limit is `4096` bytes per field.
+
+The mirror is rewritten after startup cleanup and after history mutations. It
+is intended for local inspection/debugging and can contain sensitive clipboard
+data.
+
 ## Content Hashing
 
-Deduplication uses a backend classifier instead of hashing the full binary event
-payload or picking arbitrary fallback data. The classifier applies these
-priorities:
+Deduplication uses a backend classifier that prefers normalized content hashes
+for known clipboard types and falls back to hashing the full encoded event for
+unsupported clipboard types. The classifier applies these priorities:
 
 1. `public.rtf`: hash that `data` value; use `public.utf8-plain-text` as
    `display` when present; classify as `rtf`.
@@ -141,31 +206,41 @@ priorities:
 3. `public.html`: hash that `data` value; use `public.utf8-plain-text` as
    `display` when present; classify as `html`.
    TODO: render HTML previews in the UI.
-4. One `items` element with `public.file-url` for a local image path: hash the
+4. One `items` element with `public.file-url` for a local video path: hash the
+   file URL `data`; classify as `video`; use the decoded file basename as
+   `display`. This handles app-originated video copies that also expose an empty
+   `public.tiff` flavor.
+5. One `items` element with `public.file-url` for a local image path: hash the
    file URL `data`; classify with the lowercased file extension such as `png`,
    `jpg`, `tiff`, or `heic`; use the uppercased extension as `display`.
    This covers local-app image copies that expose `public.file-url` and may also
    include `public.tiff`.
-5. One `items` element with `public.file-url`: hash the file URL `data`; store
+6. One `items` element with `public.file-url`: hash the file URL `data`; store
    a structured file display payload with the item `type` (`file` or `folder`)
    and display `name`. The name comes from raw `public.utf8-plain-text` split on
    carriage returns when possible, then a safe basename fallback, then `File N`
    or `Folder N`; Finder reference ids such as `id=...` are never used as
    display names. A file URL ending with `/` is classified as `folder`;
    otherwise it is classified as `file`.
-6. Multiple `items` elements where every item has `public.file-url`: ignore
-   other surviving data types, concatenate all `public.file-url` data values in
-   item order, and hash the concatenated bytes. Store a structured file display
-   payload with one `{type, name}` entry per item using the same safe display
-   name rules as single file URLs. Classify as `files` when no file URL ends
-   with `/`, `folders` when all file URLs end with `/`, and `files and folders`
-   when the event contains both.
-7. Plain text copies: when there is exactly one `items` element and its filtered
-   `data_list` contains only `public.utf8-plain-text`, hash that raw `data`
-   value and store the same bytes as `display`; classify as `text`.
+7. Multiple `items` elements where every item has `public.file-url`: ignore
+   other data types for classification, concatenate all `public.file-url` data
+   values in item order, and hash the concatenated bytes. Store a structured
+   file display payload with one `{type, name}` entry per item using the same
+   safe display name rules as single file URLs. Classify as `files` when no
+   file URL ends with `/`, `folders` when all file URLs end with `/`, and
+   `files and folders` when the event contains both.
+8. Plain text copies: when there is exactly one `items` element with
+   `public.utf8-plain-text`, hash that raw `data` value and store the same bytes
+   as `display`; classify as `text`. Other data types in the same item are
+   retained in `event_data` but not used for the plain text hash.
+9. Unsupported copies: hash the encoded full event payload, classify as
+   `unsupported`, and store a short display label listing the first clipboard
+   data types. The full raw event payload is still stored in `event_data`, so
+   the JSONL mirror includes all original data flavors even when the UI has no
+   specialized preview for them.
 
-Unsupported payloads are not stored. Legacy rows that only survived because of
-the old arbitrary fallback are removed during metadata rebuild.
+Legacy rows that only survived because of the old arbitrary fallback are
+reclassified with the current rules during metadata rebuild.
 
 ## Ordering
 
@@ -222,5 +297,6 @@ user data.
 - Preserve or deliberately migrate legacy `event_data` JSON compatibility.
 - Keep dedupe behavior aligned with `docs/design/copy-event-ordering.md`.
 - Keep tray and frontend refresh behavior aligned with persisted ordering.
+- Keep the optional JSONL mirror aligned with history mutations.
 - Run `cargo check --manifest-path src-tauri/Cargo.toml`.
 - Run `pnpm type-check` if API payload shapes consumed by React changed.

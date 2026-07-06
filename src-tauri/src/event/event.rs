@@ -4,7 +4,6 @@ use copy_event_listener::event::{
 use serde::{Deserialize, Serialize};
 
 const EVENT_BLOB_MAGIC: &[u8; 4] = b"CSB1";
-const FILTERED_DATA_TYPE_PREFIXES: &[&str] = &["dyn.", "org.chromium", "com.apple."];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClipboardEvent {
@@ -20,39 +19,6 @@ pub struct ClipboardItem {
 pub struct ClipboardData {
     pub r#type: String,
     pub data: Vec<u8>,
-}
-
-pub fn filter_event_for_storage(event: &ListenerEvent) -> Option<ListenerEvent> {
-    let items = event
-        .items
-        .iter()
-        .filter_map(|item| {
-            let data_list = item
-                .data_list
-                .iter()
-                .filter(|data| should_store_data_type(&data.r#type))
-                .cloned()
-                .collect::<Vec<_>>();
-
-            if data_list.is_empty() {
-                None
-            } else {
-                Some(ListenerItem { data_list })
-            }
-        })
-        .collect::<Vec<_>>();
-
-    if items.is_empty() {
-        None
-    } else {
-        Some(ListenerEvent { items })
-    }
-}
-
-fn should_store_data_type(data_type: &str) -> bool {
-    !FILTERED_DATA_TYPE_PREFIXES
-        .iter()
-        .any(|prefix| data_type.starts_with(prefix))
 }
 
 pub fn encode_event_blob(event: &ListenerEvent) -> Result<Vec<u8>, String> {
@@ -234,46 +200,6 @@ mod tests {
             r#type: data_type.to_string(),
             data: data_type.as_bytes().to_vec(),
         }
-    }
-
-    #[test]
-    fn filter_event_for_storage_removes_platform_specific_data_types() {
-        let event = ListenerEvent {
-            items: vec![ListenerItem {
-                data_list: vec![
-                    listener_data("dyn.agk8"),
-                    listener_data("org.chromium.internal.source-rfh-token"),
-                    listener_data("org.chromium.source-url"),
-                    listener_data("com.apple.webarchive"),
-                    listener_data("public.utf8-plain-text"),
-                ],
-            }],
-        };
-
-        let filtered = filter_event_for_storage(&event).expect("event should keep public data");
-
-        assert_eq!(filtered.items.len(), 1);
-        assert_eq!(filtered.items[0].data_list.len(), 1);
-        assert_eq!(
-            filtered.items[0].data_list[0].r#type,
-            "public.utf8-plain-text"
-        );
-    }
-
-    #[test]
-    fn filter_event_for_storage_drops_empty_items_and_events() {
-        let event = ListenerEvent {
-            items: vec![
-                ListenerItem {
-                    data_list: vec![listener_data("dyn.agk8")],
-                },
-                ListenerItem {
-                    data_list: vec![listener_data("org.chromium.source-url")],
-                },
-            ],
-        };
-
-        assert!(filter_event_for_storage(&event).is_none());
     }
 
     #[test]

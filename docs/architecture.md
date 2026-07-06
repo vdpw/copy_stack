@@ -8,6 +8,7 @@ flowchart TD
   Listener --> Channel["std::sync::mpsc channel"]
   Channel --> Tauri["Tauri backend src-tauri/src/lib.rs"]
   Tauri --> DB["SQLite $HOME/.copy_stack/copy_stack.db"]
+  Tauri --> JSONL["Optional history JSONL mirror"]
   Tauri --> Tray["Tauri tray menu src-tauri/src/tray.rs"]
   Tauri --> Events["Tauri window events"]
   UI["React app src/App.tsx"] --> Commands["Tauri invoke commands"]
@@ -24,10 +25,11 @@ flowchart TD
    `ClipboardListener::new().with_interval(500)`.
 3. The listener sends captured `copy_event_listener::event::Event` values to
    the backend over the channel.
-4. `copy_stack_lib::run(rx)` starts the Tauri runtime.
-5. `src-tauri/src/lib.rs` initializes SQLite, shared app state, startup cleanup,
+4. `main.rs` parses app-specific startup flags.
+5. `copy_stack_lib::run(rx, startup_options)` starts the Tauri runtime.
+6. `src-tauri/src/lib.rs` initializes SQLite, shared app state, startup cleanup,
    the tray menu, and a thread that consumes clipboard events from `rx`.
-6. The React frontend mounts, calls `get_copy_events` and `get_app_settings`,
+7. The React frontend mounts, calls `get_copy_events` and `get_app_settings`,
    and subscribes to backend events.
 
 ## Backend State
@@ -38,6 +40,8 @@ The Tauri app stores shared state in `AppState`:
 - `pending_restore_suppression: Mutex<Option<PendingRestoreSuppression>>`
   prevents app-initiated clipboard restores from being captured back into
   history when restore ordering should be preserved.
+- `history_jsonl: Option<HistoryJsonlConfig>` stores the optional startup
+  configuration for mirroring history rows to JSONL.
 
 The database connection is serialized through the mutex. Any command that reads
 or mutates history or settings locks `state.db`.

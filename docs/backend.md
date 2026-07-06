@@ -21,8 +21,8 @@
 - `src-tauri/src/tray.rs`: menu bar setup, tray menu sync, tray action handling,
   and frontend event emission.
 - `src-tauri/src/store/mod.rs`: re-exports store types.
-- `src-tauri/src/event/`: frontend payload structs, clipboard event filtering,
-  and binary event blob encode/decode helpers.
+- `src-tauri/src/event/`: frontend payload structs and binary event blob
+  encode/decode helpers.
 
 ## Application Startup
 
@@ -32,7 +32,8 @@
 2. Spawns a clipboard listener thread.
 3. Configures the listener interval to 500 milliseconds.
 4. Sends each captured `copy_event_listener::event::Event` through the channel.
-5. Calls `copy_stack_lib::run(rx)`.
+5. Parses app-specific startup flags.
+6. Calls `copy_stack_lib::run(rx, startup_options)`.
 
 `lib.rs` then builds the Tauri app:
 
@@ -41,9 +42,26 @@
 3. Creates the database.
 4. Stores `AppState` in Tauri managed state.
 5. Runs retention cleanup.
-6. Sets up and syncs the tray menu.
-7. Spawns a thread to consume clipboard events from `rx`.
-8. Registers Tauri commands.
+6. Writes the optional history JSONL mirror when enabled.
+7. Sets up and syncs the tray menu.
+8. Spawns a thread to consume clipboard events from `rx`.
+9. Registers Tauri commands.
+
+## Startup Flags
+
+The binary accepts project-specific flags and ignores unrelated arguments:
+
+- `--copy-stack-history-jsonl <path>` or
+  `--copy-stack-history-jsonl=<path>` enables a JSONL mirror of
+  `clipboard_events`.
+- `--copy-stack-history-jsonl-max-data-bytes <bytes>` or
+  `--copy-stack-history-jsonl-max-data-bytes=<bytes>` controls the maximum bytes
+  written for each clipboard byte field. The default is `4096`.
+
+When enabled, the app rewrites the JSONL file after startup cleanup and after
+history mutations such as inserts, deletes, clears, retention trims, and
+restore-to-top updates. The file can contain clipboard contents and should be
+treated like the SQLite database.
 
 ## Shared State
 
@@ -51,6 +69,7 @@
 pub struct AppState {
     pub(crate) db: Mutex<Database>,
     pub(crate) pending_restore_suppression: Mutex<Option<PendingRestoreSuppression>>,
+    pub(crate) history_jsonl: Option<HistoryJsonlConfig>,
 }
 ```
 
@@ -64,8 +83,8 @@ frontend event emission.
 
 Returns stored event metadata ordered by `timestamp DESC, content_hash ASC`.
 Rows include `content_hash`, backend-selected `data_type` and binary `display`,
-`timestamp`, and nullable `source_app`; they do not include decoded
-`event_data`.
+ordered `rich_preview` segments for mixed text/image clips, and `timestamp`;
+nullable `source_app`; they do not include raw `event_data`.
 
 ### `delete_copy_event`
 
@@ -117,8 +136,9 @@ For each event:
    order.
 4. Capture the current foreground macOS app name as best-effort `source_app`.
 5. Insert or update the event through `Database::insert_event`.
-6. Sync the tray menu.
-7. Emit `clipboard-history-updated` so the frontend reloads from SQLite.
+6. Rewrite the optional history JSONL mirror when enabled.
+7. Sync the tray menu.
+8. Emit `clipboard-history-updated` so the frontend reloads from SQLite.
 
 Source capture is intentionally non-fatal. Unsupported platforms, permission
 failures, empty values, and `Copy Stack` as the foreground app are stored as
