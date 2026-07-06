@@ -28,6 +28,8 @@ use crate::event::ClipboardEvent;
 use crate::store::{AppSettings, Database, HistoryJsonlConfig, StoredEvent};
 use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -195,6 +197,34 @@ fn should_skip_pending_restore_event(state: &AppState, content_hash: &str) -> bo
 
     *pending = None;
     true
+}
+
+#[cfg(target_os = "macos")]
+fn current_source_app() -> Option<String> {
+    let output = Command::new("/usr/bin/osascript")
+        .args([
+            "-e",
+            "tell application \"System Events\" to get name of first application process whose frontmost is true",
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let source_app = String::from_utf8(output.stdout).ok()?;
+    let source_app = source_app.trim();
+    if source_app.is_empty() || source_app == "Copy Stack" {
+        None
+    } else {
+        Some(source_app.to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_source_app() -> Option<String> {
+    None
 }
 
 pub(crate) fn write_history_jsonl_if_enabled(
@@ -455,10 +485,13 @@ pub fn run(rx: Receiver<Event>, startup_options: StartupOptions) {
                     }
 
                     debug_log!("[copy_stack] storing clipboard listener event");
+                    let source_app = current_source_app();
                     let insert_result = {
                         let state = app_handle_clone.state::<AppState>();
                         let db = state.db.lock().unwrap();
-                        let result = db.insert_event(&event).map_err(|error| error.to_string());
+                        let result = db
+                            .insert_event(&event, source_app)
+                            .map_err(|error| error.to_string());
                         if result.is_ok() {
                             write_history_jsonl_if_enabled(
                                 &db,

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
+  AppWindow,
   ArrowUpDown,
   Copy,
   Eye,
@@ -32,6 +33,7 @@ interface StoredEvent {
   display: number[];
   rich_preview: RichPreviewSegment[];
   timestamp: number;
+  source_app: string | null;
 }
 
 interface AppSettings {
@@ -814,6 +816,12 @@ function App() {
                       <div className="event-content">
                         <p className="event-meta">
                           <span>{getEventTypeLabel(event, preview)}</span>
+                          {event.source_app && (
+                            <span className="event-source">
+                              <AppWindow size={12} />
+                              {event.source_app}
+                            </span>
+                          )}
                         </p>
                         {preview.richSegments.length > 0 ? (
                           <div className="event-rich-preview">

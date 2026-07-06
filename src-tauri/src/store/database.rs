@@ -25,6 +25,7 @@ pub struct StoredEvent {
     pub display: Vec<u8>,
     pub rich_preview: Vec<StoredPreviewSegment>,
     pub timestamp: i64,
+    pub source_app: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -73,6 +74,7 @@ impl StoredEvent {
         display: Vec<u8>,
         rich_preview: Vec<StoredPreviewSegment>,
         timestamp: i64,
+        source_app: Option<String>,
     ) -> Self {
         Self {
             content_hash,
@@ -80,6 +82,7 @@ impl StoredEvent {
             display,
             rich_preview,
             timestamp,
+            source_app,
         }
     }
 }
@@ -87,6 +90,7 @@ impl StoredEvent {
 struct DbRow {
     event_data: Vec<u8>,
     timestamp: i64,
+    source_app: Option<String>,
 }
 
 struct ClassifiedEvent {
@@ -271,6 +275,12 @@ impl Database {
         {
             self.rebuild_clipboard_events_table(&columns)?;
         } else {
+            if !columns.iter().any(|column| column == "source_app") {
+                self.conn.execute(
+                    "ALTER TABLE clipboard_events ADD COLUMN source_app TEXT",
+                    [],
+                )?;
+            }
             self.drop_legacy_clipboard_events_indexes()?;
             self.create_clipboard_events_indexes()?;
         }
@@ -339,7 +349,8 @@ impl Database {
                     event_data BLOB NOT NULL,
                     data_type TEXT NOT NULL,
                     display BLOB NOT NULL,
-                    timestamp INTEGER NOT NULL
+                    timestamp INTEGER NOT NULL,
+                    source_app TEXT
                 )",
                 table
             ),
@@ -390,9 +401,14 @@ impl Database {
         } else {
             "ORDER BY timestamp DESC"
         };
+        let source_app_select = if columns.iter().any(|column| column == "source_app") {
+            "source_app"
+        } else {
+            "NULL AS source_app"
+        };
         let query = format!(
-            "SELECT event_data, timestamp FROM clipboard_events {}",
-            order_clause
+            "SELECT event_data, timestamp, {} FROM clipboard_events {}",
+            source_app_select, order_clause
         );
 
         let mut stmt = self.conn.prepare(&query)?;
@@ -400,6 +416,7 @@ impl Database {
             Ok(DbRow {
                 event_data: Self::event_blob_from_row(row, 0)?,
                 timestamp: Self::timestamp_from_row(row, 1)?,
+                source_app: Self::normalized_source_app(row.get(2)?),
             })
         })?;
 
@@ -467,7 +484,7 @@ impl Database {
 
     fn rebuild_history_metadata(&self) -> Result<()> {
         let mut stmt = self.conn.prepare(
-            "SELECT event_data, timestamp
+            "SELECT event_data, timestamp, source_app
              FROM clipboard_events
              ORDER BY timestamp DESC, content_hash ASC",
         )?;
@@ -475,6 +492,7 @@ impl Database {
             Ok(DbRow {
                 event_data: Self::event_blob_from_row(row, 0)?,
                 timestamp: row.get(1)?,
+                source_app: Self::normalized_source_app(row.get(2)?),
             })
         })?;
 
@@ -515,8 +533,8 @@ impl Database {
 
             self.conn.execute(
                 &format!(
-                    "INSERT INTO {} (content_hash, event_data, data_type, display, timestamp)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO {} (content_hash, event_data, data_type, display, timestamp, source_app)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     table
                 ),
                 (
@@ -525,6 +543,7 @@ impl Database {
                     classified.data_type,
                     classified.display,
                     row.timestamp,
+                    row.source_app,
                 ),
             )?;
         }
@@ -577,19 +596,21 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_event(&self, event: &Event) -> Result<()> {
+    pub fn insert_event(&self, event: &Event, source_app: Option<String>) -> Result<()> {
         let event_data = encode_event_blob(event)
             .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
         let classified = Self::classify_event(event)?;
+        let source_app = Self::normalized_source_app(source_app);
 
         let updated = self.conn.execute(
             "UPDATE clipboard_events
-             SET event_data = ?1, data_type = ?2, display = ?3
-             WHERE content_hash = ?4",
+             SET event_data = ?1, data_type = ?2, display = ?3, source_app = COALESCE(?4, source_app)
+             WHERE content_hash = ?5",
             (
                 &event_data,
                 &classified.data_type,
                 &classified.display,
+                &source_app,
                 &classified.content_hash,
             ),
         )?;
@@ -600,14 +621,15 @@ impl Database {
 
         let timestamp = self.next_history_timestamp()?;
         self.conn.execute(
-            "INSERT INTO clipboard_events (content_hash, event_data, data_type, display, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO clipboard_events (content_hash, event_data, data_type, display, timestamp, source_app)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             (
                 classified.content_hash,
                 event_data,
                 classified.data_type,
                 classified.display,
                 timestamp,
+                source_app,
             ),
         )?;
 
@@ -1376,9 +1398,15 @@ impl Database {
             .join(" ")
     }
 
+    fn normalized_source_app(source_app: Option<String>) -> Option<String> {
+        source_app
+            .map(|source| Self::normalize_text(&source))
+            .filter(|source| !source.is_empty())
+    }
+
     pub fn get_all_events(&self) -> Result<Vec<StoredEvent>> {
         let mut stmt = self.conn.prepare(
-            "SELECT content_hash, data_type, display, event_data, timestamp
+            "SELECT content_hash, data_type, display, event_data, timestamp, source_app
              FROM clipboard_events
              ORDER BY timestamp DESC, content_hash ASC",
         )?;
@@ -1391,6 +1419,7 @@ impl Database {
                 row.get(2)?,
                 Self::rich_preview_from_event_data(&event_data),
                 row.get(4)?,
+                row.get(5)?,
             ))
         })?;
 
@@ -2003,7 +2032,7 @@ mod tests {
             data("public.utf8-plain-text", b"hello world"),
         ]);
 
-        db.insert_event(&event).expect("event should insert");
+        db.insert_event(&event, None).expect("event should insert");
         db.write_history_jsonl(&HistoryJsonlConfig {
             path: path.clone(),
             max_data_bytes: 4,
@@ -2050,7 +2079,7 @@ mod tests {
         let path = temp_jsonl_path();
         let event = event(vec![data("com.example.private", &[0xde, 0xad, 0xbe, 0xef])]);
 
-        db.insert_event(&event)
+        db.insert_event(&event, None)
             .expect("unsupported event should insert");
         db.write_history_jsonl(&HistoryJsonlConfig {
             path: path.clone(),
@@ -2149,7 +2178,7 @@ mod tests {
             data("public.file-url", file_url.as_bytes()),
         ]);
 
-        db.insert_event(&event).expect("event should insert");
+        db.insert_event(&event, None).expect("event should insert");
         let events = db.get_all_events().expect("events should load");
         let _ = std::fs::remove_file(&image_path);
 
@@ -2186,7 +2215,7 @@ mod tests {
             data("public.tiff", &[]),
         ]);
 
-        db.insert_event(&event).expect("event should insert");
+        db.insert_event(&event, None).expect("event should insert");
         let events = db.get_all_events().expect("events should load");
         let _ = std::fs::remove_file(&video_path);
 

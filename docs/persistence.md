@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS clipboard_events (
   event_data BLOB NOT NULL,
   data_type TEXT NOT NULL,
   display BLOB NOT NULL,
-  timestamp INTEGER NOT NULL
+  timestamp INTEGER NOT NULL,
+  source_app TEXT
 );
 ```
 
@@ -49,6 +50,10 @@ Columns:
   `copy_stack.file-items.v1` and one `{type, name}` entry per copied item.
   PNG image events store the PNG bytes used by the frontend thumbnail preview.
 - `timestamp`: Unix timestamp in milliseconds. This is also the ordering key.
+- `source_app`: nullable foreground macOS application name captured when the
+  listener received the event. It is best-effort metadata and may be null for
+  older rows, unsupported platforms, permission failures, or app-owned restore
+  writes.
 
 Indexes:
 
@@ -98,7 +103,7 @@ Then it:
 2. Recomputes a content hash from `event_data`.
 3. Keeps the first row for each hash.
 4. Rewrites the table with `content_hash`, binary `event_data`, `data_type`,
-   binary `display`, and integer `timestamp`.
+   binary `display`, integer `timestamp`, and nullable `source_app`.
 
 This means opening an older database can delete duplicate rows that collapse to
 the same normalized content hash. Rows that cannot be classified by the current
@@ -107,18 +112,22 @@ raw-payload fallback.
 
 ## Event Insertion
 
-`insert_event(event)`:
+`insert_event(event, source_app)`:
 
 1. Encodes the event to the binary clipboard payload format.
 2. Classifies the event into `content_hash`, `data_type`, and `display`.
-3. If a row with the same hash exists, updates `event_data`, `data_type`, and
-   `display` while preserving the existing `timestamp`.
-4. If it does not exist, computes the next history timestamp in Unix
+3. Normalizes the optional source application name.
+4. If a row with the same hash exists, updates `event_data`, `data_type`,
+   `display`, and non-null `source_app` while preserving the existing
+   `timestamp`.
+5. If it does not exist, computes the next history timestamp in Unix
    milliseconds and inserts a new row keyed by `content_hash`.
-5. Runs `cleanup_old_events()` after new inserts.
+6. Runs `cleanup_old_events()` after new inserts.
 
 Duplicate clipboard content refreshes the stored payload without creating
-another row or changing list order.
+another row or changing list order. If duplicate content is copied from another
+source later, the source label can refresh even though the original row order is
+preserved.
 
 ## Rich Preview Payload
 
@@ -275,7 +284,7 @@ Useful local commands:
 
 ```bash
 sqlite3 "$HOME/.copy_stack/copy_stack.db" ".schema"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, hex(substr(display, 1, 24)), timestamp FROM clipboard_events ORDER BY timestamp DESC LIMIT 20;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, source_app, hex(substr(display, 1, 24)), timestamp FROM clipboard_events ORDER BY timestamp DESC LIMIT 20;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings ORDER BY key;"
 ```
 
