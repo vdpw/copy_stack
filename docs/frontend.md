@@ -76,7 +76,6 @@ interface StoredEvent {
   display: number[];
   rich_preview: RichPreviewSegment[];
   timestamp: number;
-  source_app: string | null;
 }
 ```
 
@@ -86,12 +85,11 @@ SQLite keeps the source event as a binary blob for restore operations, but
 user-facing preview. `display` is a byte array so text labels, structured
 file/folder item metadata, and image thumbnail bytes can share the same field.
 `rich_preview` is a backend-decoded preview, with segments tagged as `text`,
-`image`, or `video`; image segment bytes are intended for small thumbnails,
-while video segments carry local file metadata for Tauri asset rendering.
-`timestamp` is a Unix millisecond timestamp. `source_app` is the best-effort
-macOS foreground application name captured with the clipboard event and can be
-`null` for older rows, permission failures, unsupported platforms, or app-owned
-restore writes.
+`image`, `image_placeholder`, or `video`; image segment bytes are intended for
+thumbnails, image placeholders identify copied images whose cached bytes are no
+longer available, and video segments carry local file metadata for Tauri asset
+rendering.
+`timestamp` is a Unix millisecond timestamp.
 
 ## Clipboard Preview Display
 
@@ -108,9 +106,10 @@ with a PNG signature render a constrained thumbnail from a browser object URL;
 the component revokes the URL on cleanup. Mixed text/image events use
 `rich_preview` when present so text and image thumbnails render in original
 clipboard order, including cases like text-image, image-text, and
-text-image-text. Video events use `rich_preview` to render a local video
-thumbnail from metadata instead of copying video bytes through the command
-payload. The collapsed preview uses
+text-image-text. Expanded cards render rich image previews at a larger size.
+Video events use `rich_preview` to render a local video thumbnail from metadata
+instead of copying video bytes through the command payload. The collapsed
+preview uses
 `truncateContent(...)`, which defensively normalizes whitespace and limits long
 previews to 40 display-width characters, counting CJK/full-width characters as
 2 columns and ASCII characters as 1. Overflow uses `...`. Clicking a history
@@ -119,10 +118,6 @@ restore and delete buttons keep their own actions. File and folder payloads are
 also folded: the collapsed state shows one item with a remaining-count suffix,
 and the expanded state shows the full item list. History card text is not
 selectable, so repeated clicks only toggle expansion.
-
-When `source_app` is present, the history card renders it beside the data type
-badge. Missing sources are intentionally hidden rather than replaced with a
-generic label.
 
 TODO: render HTML previews in the UI for `data_type: "html"`.
 

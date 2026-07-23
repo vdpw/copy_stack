@@ -25,7 +25,6 @@ sequenceDiagram
   Listener->>Backend: send Event over mpsc channel
   Backend->>DB: classify data and compute content hash
   Backend->>Backend: check restore suppression
-  Backend->>Backend: capture foreground source app
   Backend->>DB: insert new row or refresh duplicate payload
   Backend->>Tray: rebuild menu
   Backend->>UI: emit clipboard-history-updated
@@ -38,8 +37,6 @@ Important rules:
 
 - The listener polls every 500 milliseconds.
 - Duplicate content updates the existing row payload and preserves its order.
-- Source application names are best-effort macOS foreground app metadata and may
-  be absent when permissions or platform support are unavailable.
 - The UI reloads from SQLite instead of inserting optimistic rows.
 - Tray sync runs after successful persistence.
 - When the history JSONL mirror is enabled, the backend rewrites it after
