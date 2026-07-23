@@ -51,6 +51,17 @@ button {
   gap: 24px;
 }
 
+.app-shell,
+.app-shell * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-shell input {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .section-kicker {
   text-transform: uppercase;
   letter-spacing: 0.18em;
@@ -212,7 +223,6 @@ button {
     box-shadow 180ms ease,
     border-color 180ms ease;
   cursor: pointer;
-  user-select: none;
 }
 
 .event-card:hover {
@@ -257,21 +267,6 @@ button {
   text-transform: uppercase;
 }
 
-.event-meta .event-source {
-  gap: 5px;
-  max-width: min(260px, 100%);
-  background: rgba(20, 33, 61, 0.07);
-  color: #475569;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-transform: none;
-  white-space: nowrap;
-}
-
-.event-source svg {
-  flex: 0 0 auto;
-}
-
 .event-preview {
   display: flex;
   align-items: flex-start;
@@ -298,6 +293,19 @@ button {
 
 .event-rich-image {
   max-width: 100%;
+}
+
+.event-rich-image-missing {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.event-rich-image-missing .event-image-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
 }
 
 .event-video-preview {
@@ -373,6 +381,13 @@ button {
 .event-image-thumbnail {
   display: block;
   object-fit: contain;
+}
+
+.event-card-expanded .event-rich-image .event-image-thumbnail {
+  width: auto;
+  height: auto;
+  max-width: min(520px, 100%);
+  max-height: 520px;
 }
 
 .event-type-icon {

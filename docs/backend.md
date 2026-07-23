@@ -83,8 +83,13 @@ frontend event emission.
 
 Returns stored event metadata ordered by `timestamp DESC, content_hash ASC`.
 Rows include `content_hash`, backend-selected `data_type` and binary `display`,
-ordered `rich_preview` segments for mixed text/image clips, and `timestamp`;
-nullable `source_app`; they do not include raw `event_data`.
+ordered `rich_preview` segments for mixed text/image clips, and `timestamp`.
+They do not include raw `event_data`.
+
+For WeCom private clipboard payloads, the backend decodes ordered text and image
+metadata from the stored binary plist/protobuf envelope. It resolves image bytes
+from WeCom's local profile cache, preferring the HD cache entry, and returns an
+image placeholder segment if the cached file is no longer available.
 
 ### `delete_copy_event`
 
@@ -134,15 +139,10 @@ For each event:
 2. Compare it with pending restore suppression.
 3. Skip the event if it is the one app-initiated restore that should preserve
    order.
-4. Capture the current foreground macOS app name as best-effort `source_app`.
-5. Insert or update the event through `Database::insert_event`.
-6. Rewrite the optional history JSONL mirror when enabled.
-7. Sync the tray menu.
-8. Emit `clipboard-history-updated` so the frontend reloads from SQLite.
-
-Source capture is intentionally non-fatal. Unsupported platforms, permission
-failures, empty values, and `Copy Stack` as the foreground app are stored as
-`None` so restore operations do not overwrite an existing source label.
+4. Insert or update the event through `Database::insert_event`.
+5. Rewrite the optional history JSONL mirror when enabled.
+6. Sync the tray menu.
+7. Emit `clipboard-history-updated` so the frontend reloads from SQLite.
 
 ## Restore Suppression
 

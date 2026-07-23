@@ -3,7 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
-  AppWindow,
   ArrowUpDown,
   Copy,
   Eye,
@@ -33,7 +32,6 @@ interface StoredEvent {
   display: number[];
   rich_preview: RichPreviewSegment[];
   timestamp: number;
-  source_app: string | null;
 }
 
 interface AppSettings {
@@ -68,6 +66,7 @@ interface ImageDisplay {
 type RichPreviewSegment =
   | RichPreviewTextSegment
   | RichPreviewImageSegment
+  | RichPreviewImagePlaceholderSegment
   | RichPreviewVideoSegment;
 
 interface RichPreviewTextSegment {
@@ -80,6 +79,11 @@ interface RichPreviewImageSegment {
   label: string;
   media_type: string;
   data: number[];
+}
+
+interface RichPreviewImagePlaceholderSegment {
+  type: "image_placeholder";
+  label: string;
 }
 
 interface RichPreviewVideoSegment {
@@ -533,7 +537,8 @@ function App() {
         segment => segment.type === "text"
       );
       const hasImage = preview.richSegments.some(
-        segment => segment.type === "image"
+        segment =>
+          segment.type === "image" || segment.type === "image_placeholder"
       );
       const hasVideo = preview.richSegments.some(
         segment => segment.type === "video"
@@ -571,6 +576,20 @@ function App() {
 
     if (segment.type === "video") {
       return <VideoThumbnail key={`video-${index}`} {...segment} />;
+    }
+
+    if (segment.type === "image_placeholder") {
+      return (
+        <div
+          className="event-rich-image event-rich-image-missing"
+          key={`image-placeholder-${index}`}
+        >
+          <div className="event-image-placeholder">
+            <ImageIcon aria-hidden="true" size={22} />
+          </div>
+          <p className="event-text">{segment.label}</p>
+        </div>
+      );
     }
 
     return (
@@ -816,12 +835,6 @@ function App() {
                       <div className="event-content">
                         <p className="event-meta">
                           <span>{getEventTypeLabel(event, preview)}</span>
-                          {event.source_app && (
-                            <span className="event-source">
-                              <AppWindow size={12} />
-                              {event.source_app}
-                            </span>
-                          )}
                         </p>
                         {preview.richSegments.length > 0 ? (
                           <div className="event-rich-preview">
