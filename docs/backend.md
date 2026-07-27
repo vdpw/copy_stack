@@ -115,7 +115,8 @@ registered as a command, although the current frontend does not call it.
 
 ### `get_app_settings`
 
-Returns `max_items`, `show_in_menu_bar`, and `move_restored_item_to_top`.
+Returns `max_items`, `show_in_menu_bar`, `move_restored_item_to_top`, and
+`compact_mode`.
 
 ### `set_max_items`
 
@@ -130,19 +131,27 @@ Stores tray visibility and syncs the tray.
 
 Stores restore ordering behavior.
 
+### `set_compact_mode`
+
+Stores compact-mode behavior, rebuilds the tray menu, and notifies frontend
+windows to reload history. It does not destructively rewrite older full
+events; those rows are projected to plain text while the setting is enabled.
+
 ## Clipboard Event Consumption
 
 The background consumer thread in `lib.rs` receives events from the channel.
 For each event:
 
-1. Classify it into `content_hash`, `data_type`, and `display`.
-2. Compare it with pending restore suppression.
-3. Skip the event if it is the one app-initiated restore that should preserve
+1. When compact mode is enabled, extract a valid standalone plain-text event
+   and filter events containing image, file, video, or embedded-media data.
+2. Classify it into `content_hash`, `data_type`, and `display`.
+3. Compare it with pending restore suppression.
+4. Skip the event if it is the one app-initiated restore that should preserve
    order.
-4. Insert or update the event through `Database::insert_event`.
-5. Rewrite the optional history JSONL mirror when enabled.
-6. Sync the tray menu.
-7. Emit `clipboard-history-updated` so the frontend reloads from SQLite.
+5. Insert or update the event through `Database::insert_event`.
+6. Rewrite the optional history JSONL mirror when enabled.
+7. Sync the tray menu.
+8. Emit `clipboard-history-updated` so the frontend reloads from SQLite.
 
 ## Restore Suppression
 

@@ -56,6 +56,12 @@ binary `display` preview bytes for the UI.
 
 This keeps duplicate detection focused on the meaningful clipboard content and avoids false misses caused by time-bearing metadata.
 
+When compact mode is enabled, identity is always the hash of the accepted
+plain-text bytes. Older RTF/HTML rows are compared and visibly deduplicated by
+that effective text. Capturing the same text again consolidates matching older
+format rows into a single text-only row while preserving the newest matching
+timestamp.
+
 ### UI refresh contract
 
 The frontend should not prepend or reorder rows optimistically. Instead:

@@ -88,9 +88,9 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
 
     WebviewWindowBuilder::new(app, SETTINGS_WINDOW_LABEL, WebviewUrl::default())
         .title("Settings")
-        .inner_size(520.0, 330.0)
-        .min_inner_size(520.0, 330.0)
-        .max_inner_size(520.0, 330.0)
+        .inner_size(520.0, 410.0)
+        .min_inner_size(520.0, 410.0)
+        .max_inner_size(520.0, 410.0)
         .resizable(false)
         .maximizable(false)
         .center()
@@ -145,7 +145,8 @@ fn restore_event<R: Runtime>(app: &AppHandle<R>, content_hash: &str) -> Result<(
             .ok_or_else(|| format!("Clipboard item not found: {}", content_hash))?;
         let restore_content_hash = db
             .event_content_hash(&event)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "Stored event has no restorable text".to_string())?;
         let move_restored_item_to_top = db
             .get_move_restored_item_to_top()
             .map_err(|error| error.to_string())?;
@@ -167,7 +168,7 @@ fn restore_event<R: Runtime>(app: &AppHandle<R>, content_hash: &str) -> Result<(
         {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
-            db.move_event_to_top(&restore_content_hash)
+            db.move_event_to_top(content_hash)
                 .map_err(|error| error.to_string())?;
             write_history_jsonl_if_enabled(&db, state.history_jsonl.as_ref(), "tray restore");
         }
