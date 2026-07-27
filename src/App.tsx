@@ -13,6 +13,7 @@ import {
   Image as ImageIcon,
   RefreshCw,
   Trash2,
+  Type,
   Video,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -38,6 +39,7 @@ interface AppSettings {
   max_items: number;
   show_in_menu_bar: boolean;
   move_restored_item_to_top: boolean;
+  compact_mode: boolean;
 }
 
 interface FileDisplayItem {
@@ -212,6 +214,7 @@ function App() {
   const [pendingMaxItemsInput, setPendingMaxItemsInput] = useState("100");
   const [menuBarVisible, setMenuBarVisible] = useState(true);
   const [moveRestoredItemToTop, setMoveRestoredItemToTop] = useState(false);
+  const [compactMode, setCompactMode] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [eventsToDelete, setEventsToDelete] = useState(0);
   const [expandedEventHashes, setExpandedEventHashes] = useState<Set<string>>(
@@ -248,6 +251,7 @@ function App() {
       setPendingMaxItemsInput(String(settings.max_items));
       setMenuBarVisible(settings.show_in_menu_bar);
       setMoveRestoredItemToTop(settings.move_restored_item_to_top);
+      setCompactMode(settings.compact_mode);
     } catch (error) {
       if (import.meta.env.DEV) {
         console.error("Failed to load app settings", error);
@@ -264,6 +268,7 @@ function App() {
     const registerListeners = async () => {
       unlistenHistory = await listen("clipboard-history-updated", () => {
         void loadEvents();
+        void loadSettings();
       });
     };
 
@@ -324,6 +329,23 @@ function App() {
     } catch (error) {
       if (import.meta.env.DEV) {
         console.error("Failed to update restore ordering", error);
+      }
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const updateCompactMode = async (nextEnabled: boolean) => {
+    setSettingsLoading(true);
+    try {
+      await invoke("set_compact_mode", {
+        compactMode: nextEnabled,
+      });
+      setCompactMode(nextEnabled);
+      await loadEvents();
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error("Failed to update compact mode", error);
       }
     } finally {
       setSettingsLoading(false);
@@ -713,6 +735,29 @@ function App() {
 
             <label className="preference-row">
               <span className="preference-copy">
+                <span className="preference-title">Compact mode</span>
+                <span className="preference-description">
+                  <Type size={13} />
+                  {compactMode
+                    ? "Only recognizable text is kept; image and file clips are ignored."
+                    : "Keep all supported clipboard content and formatting."}
+                </span>
+              </span>
+              <span className="mac-switch">
+                <input
+                  type="checkbox"
+                  checked={compactMode}
+                  onChange={event =>
+                    void updateCompactMode(event.target.checked)
+                  }
+                  disabled={settingsLoading}
+                />
+                <span className="mac-switch-track" />
+              </span>
+            </label>
+
+            <label className="preference-row">
+              <span className="preference-copy">
                 <span className="preference-title">
                   Move restored items to top
                 </span>
@@ -800,8 +845,9 @@ function App() {
               <div className="empty-state">
                 <h3>No clipboard events yet</h3>
                 <p>
-                  Start copying text or files and they will appear here and in
-                  the menu bar menu.
+                  {compactMode
+                    ? "Start copying text and it will appear here and in the menu bar menu."
+                    : "Start copying text or files and they will appear here and in the menu bar menu."}
                 </p>
               </div>
             ) : (

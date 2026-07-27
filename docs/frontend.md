@@ -43,11 +43,13 @@ The tray can switch views by emitting `app:navigate` with `history` or
 `App.tsx` calls these backend commands:
 
 - `get_copy_events`: loads stored history.
-- `get_app_settings`: loads `max_items`, `show_in_menu_bar`, and
-  `move_restored_item_to_top`.
+- `get_app_settings`: loads `max_items`, `show_in_menu_bar`,
+  `move_restored_item_to_top`, and `compact_mode`.
 - `set_max_items`: updates retention limit and then reloads history.
 - `set_show_in_menu_bar`: toggles tray visibility.
 - `set_move_restored_item_to_top`: toggles restore ordering behavior.
+- `set_compact_mode`: toggles text-only storage, display, and restore behavior,
+  then reloads history.
 - `delete_copy_event`: deletes one history row and reloads history.
 - `copy_to_clipboard`: restores one stored event and reloads history.
 - `clear_all_events`: deletes all history rows and reloads history.
@@ -131,8 +133,10 @@ TODO: render HTML previews in the UI for `data_type: "html"`.
 - Reducing below the current event count opens a confirmation modal.
 - Confirming calls `set_max_items`, then reloads history.
 
-The menu bar and restore-order settings are simple switch-style buttons backed
-by Tauri commands.
+The menu bar, restore-order, and compact-mode settings are simple switch-style
+buttons backed by Tauri commands. In compact mode, the history response contains
+only recognizable text rows, including plain-text projections of older
+formatted rows. Image/file-dominant rows are hidden.
 
 ## Styling Conventions
 

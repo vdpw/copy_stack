@@ -146,6 +146,22 @@ Frontend flow:
 
 This setting does not rewrite existing history.
 
+## Toggle Compact Mode
+
+Frontend flow:
+
+1. User toggles compact mode.
+2. `set_compact_mode` stores `compact_mode`.
+3. Backend rebuilds the tray and emits `clipboard-history-updated`.
+4. Frontend reloads history.
+
+While enabled, new captures persist only recognizable, non-blank UTF-8 text.
+Formatted text keeps its plain-text representation; image/file/video or
+embedded-media events are filtered. Older full events remain stored but are
+shown and restored as plain text only. Visible old rows with the same effective
+text are deduplicated without changing the underlying rows until that text is
+captured again in compact mode.
+
 ## Payload Flow
 
 Stored payloads are binary-encoded Rust values:
@@ -154,10 +170,11 @@ Stored payloads are binary-encoded Rust values:
 copy_event_listener::event::Event -> binary event blob -> clipboard_events.event_data
 ```
 
-The binary event blob preserves all data flavors reported by the listener,
-including private or platform-specific metadata. Classification selects stable
-public flavors for `content_hash`, `data_type`, and `display`; it does not
-filter the persisted event payload.
+The binary event blob normally preserves all data flavors reported by the
+listener, including private or platform-specific metadata. Classification
+selects stable public flavors for `content_hash`, `data_type`, and `display`
+without filtering the payload. Compact mode is the exception: it builds and
+persists a new event containing only `public.utf8-plain-text`.
 
 The backend returns stored `data_type` and binary `display` preview metadata for
 history lists without sending raw `event_data` to React. It also returns

@@ -15,6 +15,7 @@ const DEFAULT_MAX_ITEMS: u32 = 100;
 const MAX_ITEMS_KEY: &str = "max_items";
 const SHOW_IN_MENU_BAR_KEY: &str = "show_in_menu_bar";
 const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
+const COMPACT_MODE_KEY: &str = "compact_mode";
 const FILE_DISPLAY_FORMAT: &str = "copy_stack.file-items.v1";
 const INLINE_ATTACHMENT_PLACEHOLDER: char = '\u{fffc}';
 const WECOM_PRIVATE_PASTEBOARD_TYPES: [&str; 2] = [
@@ -57,6 +58,7 @@ pub struct AppSettings {
     pub max_items: u32,
     pub show_in_menu_bar: bool,
     pub move_restored_item_to_top: bool,
+    pub compact_mode: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -243,6 +245,10 @@ impl Database {
         )?;
         self.conn.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('move_restored_item_to_top', 'false')",
+            [],
+        )?;
+        self.conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('compact_mode', 'false')",
             [],
         )?;
 
@@ -548,6 +554,7 @@ impl Database {
             max_items: self.get_max_items()?,
             show_in_menu_bar: self.get_show_in_menu_bar()?,
             move_restored_item_to_top: self.get_move_restored_item_to_top()?,
+            compact_mode: self.get_compact_mode()?,
         })
     }
 
@@ -588,10 +595,39 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_event(&self, event: &Event) -> Result<()> {
+    pub fn get_compact_mode(&self) -> Result<bool> {
+        self.get_bool_setting(COMPACT_MODE_KEY, false)
+    }
+
+    pub fn set_compact_mode(&self, compact_mode: bool) -> Result<()> {
+        self.set_setting(
+            COMPACT_MODE_KEY,
+            if compact_mode { "true" } else { "false" },
+        )
+    }
+
+    pub fn insert_event(&self, event: &Event) -> Result<bool> {
+        let compact_mode = self.get_compact_mode()?;
+        let compact_event = if compact_mode {
+            Self::compact_text_event(event)
+        } else {
+            None
+        };
+        let event = if compact_mode {
+            let Some(compact_event) = compact_event.as_ref() else {
+                return Ok(false);
+            };
+            compact_event
+        } else {
+            event
+        };
         let event_data = encode_event_blob(event)
             .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
         let classified = Self::classify_event(event)?;
+
+        if compact_mode {
+            return self.upsert_compact_event(event_data, classified);
+        }
 
         let updated = self.conn.execute(
             "UPDATE clipboard_events
@@ -606,7 +642,7 @@ impl Database {
         )?;
 
         if updated > 0 {
-            return Ok(());
+            return Ok(true);
         }
 
         let timestamp = self.next_history_timestamp()?;
@@ -624,7 +660,92 @@ impl Database {
 
         self.cleanup_old_events()?;
 
-        Ok(())
+        Ok(true)
+    }
+
+    fn upsert_compact_event(
+        &self,
+        event_data: Vec<u8>,
+        classified: ClassifiedEvent,
+    ) -> Result<bool> {
+        let mut stmt = self.conn.prepare(
+            "SELECT content_hash, event_data, timestamp
+             FROM clipboard_events
+             ORDER BY timestamp DESC, content_hash ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut matching_rows = Vec::new();
+
+        for row in rows {
+            let (content_hash, stored_event_data, timestamp) = row?;
+            let Ok(stored_event) = Self::event_from_blob(&stored_event_data) else {
+                continue;
+            };
+            let Some(stored_compact_event) = Self::compact_text_event(&stored_event) else {
+                continue;
+            };
+            let Ok(stored_classified) = Self::classify_event(&stored_compact_event) else {
+                continue;
+            };
+            if stored_classified.content_hash == classified.content_hash {
+                matching_rows.push((content_hash, timestamp));
+            }
+        }
+        drop(stmt);
+
+        if let Some((newest_content_hash, newest_timestamp)) = matching_rows.first() {
+            let existing_target_hash = matching_rows
+                .iter()
+                .find(|(content_hash, _)| content_hash == &classified.content_hash)
+                .map(|(content_hash, _)| content_hash.as_str());
+            let row_to_update = existing_target_hash.unwrap_or(newest_content_hash);
+            self.conn.execute(
+                "UPDATE clipboard_events
+                 SET content_hash = ?1,
+                     event_data = ?2,
+                     data_type = ?3,
+                     display = ?4,
+                     timestamp = ?5
+                 WHERE content_hash = ?6",
+                (
+                    &classified.content_hash,
+                    &event_data,
+                    &classified.data_type,
+                    &classified.display,
+                    newest_timestamp,
+                    row_to_update,
+                ),
+            )?;
+            for (content_hash, _) in &matching_rows {
+                if content_hash != row_to_update {
+                    self.delete_event(content_hash)?;
+                }
+            }
+            return Ok(true);
+        }
+
+        let timestamp = self.next_history_timestamp()?;
+        self.conn.execute(
+            "INSERT INTO clipboard_events
+             (content_hash, event_data, data_type, display, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            (
+                classified.content_hash,
+                event_data,
+                classified.data_type,
+                classified.display,
+                timestamp,
+            ),
+        )?;
+        self.cleanup_old_events()?;
+
+        Ok(true)
     }
 
     pub fn move_event_to_top(&self, content_hash: &str) -> Result<()> {
@@ -655,8 +776,15 @@ impl Database {
         Utc::now().timestamp_millis()
     }
 
-    pub fn event_content_hash(&self, event: &Event) -> Result<String> {
-        Ok(Self::classify_event(event)?.content_hash)
+    pub fn event_content_hash(&self, event: &Event) -> Result<Option<String>> {
+        if self.get_compact_mode()? {
+            let Some(event) = Self::compact_text_event(event) else {
+                return Ok(None);
+            };
+            return Ok(Some(Self::classify_event(&event)?.content_hash));
+        }
+
+        Ok(Some(Self::classify_event(event)?.content_hash))
     }
 
     fn classify_event_from_event_data(event_data: &[u8]) -> Result<ClassifiedEvent> {
@@ -1607,6 +1735,71 @@ impl Database {
             .join(" ")
     }
 
+    fn compact_text_event(event: &Event) -> Option<Event> {
+        if event.items.len() != 1 || Self::event_contains_attachment(event) {
+            return None;
+        }
+
+        let text_data = Self::find_data_in_item(&event.items[0], "public.utf8-plain-text")?;
+        let text = std::str::from_utf8(&text_data.data).ok()?;
+        if text.contains(INLINE_ATTACHMENT_PLACEHOLDER) {
+            return None;
+        }
+
+        let text = text.chars().filter(|ch| *ch != '\0').collect::<String>();
+        if text.trim().is_empty() {
+            return None;
+        }
+
+        Some(Event {
+            items: vec![Item {
+                data_list: vec![Data {
+                    r#type: "public.utf8-plain-text".to_string(),
+                    data: text.into_bytes(),
+                }],
+            }],
+        })
+    }
+
+    fn event_contains_attachment(event: &Event) -> bool {
+        event
+            .items
+            .iter()
+            .flat_map(|item| &item.data_list)
+            .any(|data| {
+                let data_type = data.r#type.to_ascii_lowercase();
+                matches!(
+                    data_type.as_str(),
+                    "public.file-url"
+                        | "public.image"
+                        | "public.png"
+                        | "public.tiff"
+                        | "public.jpeg"
+                        | "public.jpg"
+                        | "public.gif"
+                        | "public.heic"
+                        | "public.webp"
+                        | "public.bmp"
+                        | "public.movie"
+                        | "public.video"
+                ) || (data_type == "public.html" && Self::html_contains_attachment(&data.data))
+                    || (data_type == "public.rtf" && Self::rtf_contains_attachment(&data.data))
+            })
+    }
+
+    fn html_contains_attachment(data: &[u8]) -> bool {
+        let html = String::from_utf8_lossy(data).to_ascii_lowercase();
+        ["<img", "<picture", "<video", "<object", "<embed"]
+            .iter()
+            .any(|tag| html.contains(tag))
+    }
+
+    fn rtf_contains_attachment(data: &[u8]) -> bool {
+        String::from_utf8_lossy(data)
+            .to_ascii_lowercase()
+            .contains("\\pict")
+    }
+
     pub fn get_all_events(&self) -> Result<Vec<StoredEvent>> {
         let mut stmt = self.conn.prepare(
             "SELECT content_hash, data_type, display, event_data, timestamp
@@ -1615,19 +1808,48 @@ impl Database {
         )?;
 
         let event_iter = stmt.query_map([], |row| {
-            let event_data: Vec<u8> = row.get(3)?;
-            Ok(StoredEvent::new(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                Self::rich_preview_from_event_data(&event_data),
-                row.get(4)?,
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         })?;
 
         let mut events = Vec::new();
+        let compact_mode = self.get_compact_mode()?;
+        let mut compact_hashes = std::collections::HashSet::new();
+
         for event in event_iter {
-            events.push(event?);
+            let (content_hash, data_type, display, event_data, timestamp) = event?;
+            if compact_mode {
+                let Ok(event) = Self::event_from_blob(&event_data) else {
+                    continue;
+                };
+                let Some(compact_event) = Self::compact_text_event(&event) else {
+                    continue;
+                };
+                let classified = Self::classify_event(&compact_event)?;
+                if !compact_hashes.insert(classified.content_hash) {
+                    continue;
+                }
+                events.push(StoredEvent::new(
+                    content_hash,
+                    classified.data_type,
+                    classified.display,
+                    Vec::new(),
+                    timestamp,
+                ));
+            } else {
+                events.push(StoredEvent::new(
+                    content_hash,
+                    data_type,
+                    display,
+                    Self::rich_preview_from_event_data(&event_data),
+                    timestamp,
+                ));
+            }
         }
         Ok(events)
     }
@@ -1641,7 +1863,11 @@ impl Database {
         if let Some(row) = rows.next()? {
             let event_data: Vec<u8> = row.get(0)?;
             let event = Self::event_from_blob(&event_data)?;
-            Ok(Some(event))
+            if self.get_compact_mode()? {
+                Ok(Self::compact_text_event(&event))
+            } else {
+                Ok(Some(event))
+            }
         } else {
             Ok(None)
         }
@@ -1651,26 +1877,13 @@ impl Database {
         &self,
         content_hash: &str,
     ) -> Result<Option<ClipboardEvent>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT event_data FROM clipboard_events WHERE content_hash = ?1")?;
-
-        let mut rows = stmt.query([content_hash])?;
-        if let Some(row) = rows.next()? {
-            let event_data: Vec<u8> = row.get(0)?;
-            Ok(Some(Self::clipboard_event_from_blob(event_data)?))
-        } else {
-            Ok(None)
-        }
+        self.get_event_by_content_hash(content_hash)
+            .map(|event| event.map(|event| ClipboardEvent::from(&event)))
     }
 
     fn event_from_blob(event_data: &[u8]) -> Result<Event> {
         decode_event_blob(event_data)
             .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))
-    }
-
-    fn clipboard_event_from_blob(event_data: Vec<u8>) -> Result<ClipboardEvent> {
-        Self::event_from_blob(&event_data).map(|event| ClipboardEvent::from(&event))
     }
 
     pub fn delete_event(&self, content_hash: &str) -> Result<()> {
@@ -2319,6 +2532,169 @@ mod tests {
             classified.content_hash,
             Database::hash_bytes(b"hello\nworld")
         );
+    }
+
+    #[test]
+    fn compact_mode_setting_defaults_to_false_and_persists() {
+        let db = in_memory_database();
+
+        assert!(!db.get_compact_mode().expect("setting should load"));
+
+        db.set_compact_mode(true).expect("setting should update");
+
+        assert!(db.get_compact_mode().expect("setting should reload"));
+        assert!(
+            db.get_settings()
+                .expect("settings should load")
+                .compact_mode
+        );
+    }
+
+    #[test]
+    fn compact_mode_stores_formatted_text_as_plain_text() {
+        let db = in_memory_database();
+        db.set_compact_mode(true)
+            .expect("compact mode should enable");
+        let formatted_event = event(vec![
+            data("public.utf8-plain-text", b"Visible text"),
+            data("public.rtf", b"{\\rtf1 Visible text}"),
+        ]);
+
+        assert!(db
+            .insert_event(&formatted_event)
+            .expect("formatted text should store"));
+
+        let events = db.get_all_events().expect("events should load");
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].content_hash,
+            Database::hash_bytes(b"Visible text")
+        );
+        assert_eq!(events[0].data_type, "text");
+        assert_eq!(events[0].display, b"Visible text");
+        assert!(events[0].rich_preview.is_empty());
+
+        let stored_event = db
+            .get_event_by_content_hash(&events[0].content_hash)
+            .expect("stored event should load")
+            .expect("stored event should exist");
+        assert_eq!(stored_event.items.len(), 1);
+        assert_eq!(stored_event.items[0].data_list.len(), 1);
+        assert_eq!(
+            stored_event.items[0].data_list[0].r#type,
+            "public.utf8-plain-text"
+        );
+        assert_eq!(stored_event.items[0].data_list[0].data, b"Visible text");
+    }
+
+    #[test]
+    fn compact_mode_filters_image_file_and_embedded_media_events() {
+        let db = in_memory_database();
+        db.set_compact_mode(true)
+            .expect("compact mode should enable");
+        let mixed_image = event(vec![
+            data("public.utf8-plain-text", b"Image label"),
+            data("public.png", &[0x89, b'P', b'N', b'G']),
+        ]);
+        let file = event(vec![
+            data("public.utf8-plain-text", b"report.pdf"),
+            data("public.file-url", b"file:///tmp/report.pdf"),
+        ]);
+        let html_with_image = event(vec![
+            data("public.utf8-plain-text", b"Caption"),
+            data("public.html", br#"<p>Caption</p><img src="photo.png">"#),
+        ]);
+        let blank_text = event(vec![data("public.utf8-plain-text", b" \n\t")]);
+        let inline_attachment = event(vec![data(
+            "public.utf8-plain-text",
+            "Text \u{fffc}".as_bytes(),
+        )]);
+
+        assert!(!db.insert_event(&mixed_image).expect("image should filter"));
+        assert!(!db.insert_event(&file).expect("file should filter"));
+        assert!(!db
+            .insert_event(&html_with_image)
+            .expect("embedded image should filter"));
+        assert!(!db
+            .insert_event(&blank_text)
+            .expect("blank text should filter"));
+        assert!(!db
+            .insert_event(&inline_attachment)
+            .expect("inline attachment should filter"));
+        assert!(db.get_all_events().expect("events should load").is_empty());
+    }
+
+    #[test]
+    fn compact_mode_projects_old_formatted_events_without_destroying_them() {
+        let db = in_memory_database();
+        let formatted_event = event(vec![
+            data("public.utf8-plain-text", b"Visible text"),
+            data("public.rtf", b"{\\rtf1 Visible text}"),
+        ]);
+        db.insert_event(&formatted_event)
+            .expect("formatted event should store");
+        let original_hash = Database::hash_bytes(b"{\\rtf1 Visible text}");
+
+        db.set_compact_mode(true)
+            .expect("compact mode should enable");
+        let events = db.get_all_events().expect("events should load");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].content_hash, original_hash);
+        assert_eq!(events[0].data_type, "text");
+        assert_eq!(events[0].display, b"Visible text");
+
+        let compact_restore = db
+            .get_event_by_content_hash(&original_hash)
+            .expect("event should load")
+            .expect("event should remain visible");
+        assert_eq!(compact_restore.items[0].data_list.len(), 1);
+        assert_eq!(
+            db.event_content_hash(&compact_restore)
+                .expect("hash should compute"),
+            Some(Database::hash_bytes(b"Visible text"))
+        );
+
+        db.set_compact_mode(false)
+            .expect("compact mode should disable");
+        let original_restore = db
+            .get_event_by_content_hash(&original_hash)
+            .expect("event should load")
+            .expect("event should exist");
+        assert_eq!(original_restore.items[0].data_list.len(), 2);
+    }
+
+    #[test]
+    fn compact_mode_deduplicates_old_formats_by_effective_text() {
+        let db = in_memory_database();
+        let rtf_event = event(vec![
+            data("public.utf8-plain-text", b"Same text"),
+            data("public.rtf", b"{\\rtf1 Same text}"),
+        ]);
+        let html_event = event(vec![
+            data("public.utf8-plain-text", b"Same text"),
+            data("public.html", b"<p>Same text</p>"),
+        ]);
+        db.insert_event(&rtf_event).expect("RTF should store");
+        db.insert_event(&html_event).expect("HTML should store");
+        assert_eq!(db.get_all_events().expect("events should load").len(), 2);
+
+        db.set_compact_mode(true)
+            .expect("compact mode should enable");
+        assert_eq!(db.get_all_events().expect("events should load").len(), 1);
+
+        let plain_event = event(vec![data("public.utf8-plain-text", b"Same text")]);
+        assert!(db
+            .insert_event(&plain_event)
+            .expect("plain text should consolidate old formats"));
+        assert_eq!(
+            db.conn
+                .query_row("SELECT COUNT(*) FROM clipboard_events", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("row count should load"),
+            1
+        );
+        let events = db.get_all_events().expect("events should load");
+        assert_eq!(events[0].content_hash, Database::hash_bytes(b"Same text"));
     }
 
     #[test]

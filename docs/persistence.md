@@ -71,6 +71,7 @@ Current keys:
 - `max_items`, default `100`.
 - `show_in_menu_bar`, default `true`.
 - `move_restored_item_to_top`, default `false`.
+- `compact_mode`, default `false`.
 
 Settings are stored as strings and parsed by helper methods.
 
@@ -109,16 +110,24 @@ raw-payload fallback.
 
 `insert_event(event)`:
 
-1. Encodes the event to the binary clipboard payload format.
-2. Classifies the event into `content_hash`, `data_type`, and `display`.
-3. If a row with the same hash exists, updates `event_data`, `data_type`, and
+1. When compact mode is enabled, extracts one valid
+   `public.utf8-plain-text` value, rejects blank/invalid text and
+   image/file/video/embedded-media events, and discards all non-text flavors.
+2. Encodes the resulting event to the binary clipboard payload format.
+3. Classifies the event into `content_hash`, `data_type`, and `display`.
+4. If a row with the same hash exists, updates `event_data`, `data_type`, and
    `display` while preserving the existing `timestamp`.
-4. If it does not exist, computes the next history timestamp in Unix
+5. If it does not exist, computes the next history timestamp in Unix
    milliseconds and inserts a new row keyed by `content_hash`.
-5. Runs `cleanup_old_events()` after new inserts.
+6. Runs `cleanup_old_events()` after new inserts.
 
 Duplicate clipboard content refreshes the stored payload without creating
 another row or changing list order.
+
+In compact mode, deduplication also checks older stored events by their
+effective plain text. Re-copying text that already exists only as RTF/HTML
+consolidates those matching rows into one text-only row while preserving the
+newest matching timestamp.
 
 ## Rich Preview Payload
 
@@ -238,6 +247,20 @@ unsupported clipboard types. The classifier applies these priorities:
 
 Legacy rows that only survived because of the old arbitrary fallback are
 reclassified with the current rules during metadata rebuild.
+
+## Compact Mode
+
+Compact mode uses `public.utf8-plain-text` as the only accepted representation.
+The text must be valid UTF-8 and non-blank. RTF and HTML selections are kept
+when they include a safe plain-text representation, but only that text is
+persisted. Events with file URLs, image/video clipboard flavors, inline
+attachment placeholders, HTML media elements, or RTF picture data are filtered.
+
+Older rows are not destructively rewritten when the setting is toggled. History
+and tray reads project eligible rows to `data_type: "text"` with no rich
+preview, hide ineligible rows, and deduplicate visible rows by effective text.
+Restore commands likewise emit a newly built plain-text clipboard event.
+Disabling compact mode exposes the original full older rows again.
 
 ## Ordering
 

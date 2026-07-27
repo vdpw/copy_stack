@@ -99,7 +99,10 @@ async fn copy_to_clipboard(
             .get_event_by_content_hash(&content_hash)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Event not found: {}", content_hash))?;
-        let restore_content_hash = db.event_content_hash(&event).map_err(|e| e.to_string())?;
+        let restore_content_hash = db
+            .event_content_hash(&event)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Stored event has no restorable text".to_string())?;
         let move_restored_item_to_top = db
             .get_move_restored_item_to_top()
             .map_err(|e| e.to_string())?;
@@ -383,6 +386,21 @@ async fn set_move_restored_item_to_top(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn set_compact_mode(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    compact_mode: bool,
+) -> Result<(), String> {
+    {
+        let db = state.db.lock().unwrap();
+        db.set_compact_mode(compact_mode)
+            .map_err(|e| e.to_string())?;
+    }
+    tray::sync(&app)?;
+    tray::notify_history_changed(&app)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(rx: Receiver<Event>, startup_options: StartupOptions) {
     tauri::Builder::default()
@@ -444,7 +462,7 @@ pub fn run(rx: Receiver<Event>, startup_options: StartupOptions) {
                             .map_err(|error| error.to_string())
                     };
 
-                    if let Ok(event_hash) = event_hash {
+                    if let Ok(Some(event_hash)) = event_hash {
                         let state = app_handle_clone.state::<AppState>();
                         if should_skip_pending_restore_event(&state, &event_hash) {
                             debug_log!(
@@ -459,7 +477,7 @@ pub fn run(rx: Receiver<Event>, startup_options: StartupOptions) {
                         let state = app_handle_clone.state::<AppState>();
                         let db = state.db.lock().unwrap();
                         let result = db.insert_event(&event).map_err(|error| error.to_string());
-                        if result.is_ok() {
+                        if matches!(result, Ok(true)) {
                             write_history_jsonl_if_enabled(
                                 &db,
                                 state.history_jsonl.as_ref(),
@@ -469,9 +487,16 @@ pub fn run(rx: Receiver<Event>, startup_options: StartupOptions) {
                         result
                     };
 
-                    if let Err(_error) = insert_result {
-                        debug_error!("failed to store clipboard item: {}", _error);
-                        continue;
+                    match insert_result {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            debug_log!("[copy_stack] clipboard event filtered by compact mode");
+                            continue;
+                        }
+                        Err(_error) => {
+                            debug_error!("failed to store clipboard item: {}", _error);
+                            continue;
+                        }
                     }
 
                     if let Err(_error) = tray::sync(&app_handle_clone) {
@@ -494,7 +519,8 @@ pub fn run(rx: Receiver<Event>, startup_options: StartupOptions) {
             get_app_settings,
             set_max_items,
             set_show_in_menu_bar,
-            set_move_restored_item_to_top
+            set_move_restored_item_to_top,
+            set_compact_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
