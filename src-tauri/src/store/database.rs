@@ -947,6 +947,11 @@ impl Database {
             return wecom_preview;
         }
 
+        let image_preview = Self::standalone_image_preview_segments(&event);
+        if !image_preview.is_empty() {
+            return image_preview;
+        }
+
         Self::video_preview_segments(&event)
     }
 
@@ -1037,6 +1042,18 @@ impl Database {
             "bmp" => Some("image/bmp"),
             _ => None,
         }
+    }
+
+    fn standalone_image_preview_segments(event: &Event) -> Vec<StoredPreviewSegment> {
+        if event.items.len() != 1
+            || Self::find_data_in_item(&event.items[0], "public.png").is_some()
+        {
+            return Vec::new();
+        }
+
+        Self::rich_preview_image_in_item(&event.items[0])
+            .into_iter()
+            .collect()
     }
 
     fn wecom_preview_segments(event: &Event) -> Vec<StoredPreviewSegment> {
@@ -2921,6 +2938,39 @@ mod tests {
                 media_type: "image/png".to_string(),
                 data: image_bytes,
             }
+        );
+    }
+
+    #[test]
+    fn get_all_events_includes_standalone_file_url_image_preview() {
+        let db = in_memory_database();
+        let image_path = temp_png_path();
+        let image_bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 7, 8, 9];
+        std::fs::write(&image_path, &image_bytes).expect("preview image should write");
+        let file_url = format!("file://{}", image_path.display());
+        let event = event(vec![
+            data("public.file-url", file_url.as_bytes()),
+            data("public.tiff", &[1, 2, 3]),
+        ]);
+
+        db.insert_event(&event).expect("event should insert");
+        let events = db.get_all_events().expect("events should load");
+        let _ = std::fs::remove_file(&image_path);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data_type, "png");
+        assert_eq!(events[0].display, b"PNG");
+        assert_eq!(
+            events[0].rich_preview,
+            vec![StoredPreviewSegment::Image {
+                label: image_path
+                    .file_name()
+                    .expect("image should have a file name")
+                    .to_string_lossy()
+                    .into_owned(),
+                media_type: "image/png".to_string(),
+                data: image_bytes,
+            }]
         );
     }
 
