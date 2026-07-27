@@ -136,7 +136,9 @@ bytes from the matching WeCom profile cache entry, preferring the HD variant.
 If WeCom has removed the cache file, the preview returns an image placeholder
 with the stored label. Single local video file URLs produce a video segment with
 label, media type, and decoded local path so the UI can render a thumbnail
-without storing video bytes in the command payload.
+without storing video bytes in the command payload. Single local image file URLs
+produce an image segment by reading the referenced file; this supplies the
+thumbnail when `display` contains only an extension label.
 
 The raw clipboard event remains the source of truth for restore operations.
 `rich_preview` is display-only and falls back to the existing `data_type` /

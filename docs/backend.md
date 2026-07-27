@@ -86,6 +86,10 @@ Rows include `content_hash`, backend-selected `data_type` and binary `display`,
 ordered `rich_preview` segments for mixed text/image clips, and `timestamp`.
 They do not include raw `event_data`.
 
+Standalone image file URLs also produce a `rich_preview` image segment by
+reading the referenced local file. This allows file-originated image clips,
+whose `display` value is only an extension label, to render a thumbnail.
+
 For WeCom private clipboard payloads, the backend decodes ordered text and image
 metadata from the stored binary plist/protobuf envelope. It resolves image bytes
 from WeCom's local profile cache, preferring the HD cache entry, and returns an

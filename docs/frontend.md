@@ -106,7 +106,9 @@ with a PNG signature render a constrained thumbnail from a browser object URL;
 the component revokes the URL on cleanup. Mixed text/image events use
 `rich_preview` when present so text and image thumbnails render in original
 clipboard order, including cases like text-image, image-text, and
-text-image-text. Expanded cards render rich image previews at a larger size.
+text-image-text. Standalone local image file URLs also use `rich_preview`
+because their `display` field contains an extension label rather than image
+bytes. Expanded cards render rich image previews at a larger size.
 Video events use `rich_preview` to render a local video thumbnail from metadata
 instead of copying video bytes through the command payload. The collapsed
 preview uses
