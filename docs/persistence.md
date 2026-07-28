@@ -138,20 +138,16 @@ backend splits that text into segments and replaces each placeholder with a
 thumbnail segment loaded from a supported `public.file-url` image, preserving
 source order such as text-image, image-text, and text-image-text.
 
-WeCom can instead expose only its private `WWKPrivatePBDataKey` binary
-plist/protobuf payload. The database already retains that complete payload.
-Preview decoding extracts ordered text and image metadata and resolves image
-bytes from the matching WeCom profile cache entry, preferring the HD variant.
-If WeCom has removed the cache file, the preview returns an image placeholder
-with the stored label. Single local video file URLs produce a video segment with
-label, media type, and decoded local path so the UI can render a thumbnail
-without storing video bytes in the command payload. Single local image file URLs
-produce an image segment by reading the referenced file; this supplies the
-thumbnail when `display` contains only an extension label.
+Single local video file URLs produce a video segment with label, media type, and
+decoded local path so the UI can render a thumbnail without storing video bytes
+in the command payload. Single local image file URLs produce an image segment
+by reading the referenced file; this supplies the thumbnail when `display`
+contains only an extension label.
 
 The raw clipboard event remains the source of truth for restore operations.
 `rich_preview` is display-only and falls back to the existing `data_type` /
-`display` preview when no ordered mixed preview can be built.
+`display` preview when no ordered mixed preview can be built. Application-private
+formats are retained for restore but are not decoded for previews.
 
 ## JSONL History Mirror
 
@@ -227,7 +223,7 @@ unsupported clipboard types. The classifier applies these priorities:
    a structured file display payload with the item `type` (`file` or `folder`)
    and display `name`. The name comes from raw `public.utf8-plain-text` split on
    carriage returns when possible, then a safe basename fallback, then `File N`
-   or `Folder N`; Finder reference ids such as `id=...` are never used as
+   or `Folder N`; opaque reference ids such as `id=...` are never used as
    display names. A file URL ending with `/` is classified as `folder`;
    otherwise it is classified as `file`.
 7. Multiple `items` elements where every item has `public.file-url`: ignore

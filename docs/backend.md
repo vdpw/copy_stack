@@ -90,10 +90,10 @@ Standalone image file URLs also produce a `rich_preview` image segment by
 reading the referenced local file. This allows file-originated image clips,
 whose `display` value is only an extension label, to render a thumbnail.
 
-For WeCom private clipboard payloads, the backend decodes ordered text and image
-metadata from the stored binary plist/protobuf envelope. It resolves image bytes
-from WeCom's local profile cache, preferring the HD cache entry, and returns an
-image placeholder segment if the cached file is no longer available.
+Application-private clipboard formats are not decoded for previews, and the
+backend does not inspect another application's cache directories. Private
+flavors remain in the raw stored event only so restore operations can reproduce
+the original clipboard payload.
 
 ### `delete_copy_event`
 
@@ -198,7 +198,7 @@ text displays are normalized as one label. File and folder displays parse the
 `copy_stack.file-items.v1` JSON payload and prefix each item name with a file or
 folder marker. File item names come from the raw `public.utf8-plain-text`
 filename list split on carriage returns, with generic `File N` / `Folder N`
-fallbacks. Finder reference ids such as `id=...` are never used as display
+fallbacks. Opaque reference ids such as `id=...` are never used as display
 names. This keeps the tray and React history previews aligned while allowing
 binary thumbnails to be stored in the same column later.
 

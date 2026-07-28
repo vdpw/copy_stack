@@ -295,19 +295,6 @@ button {
   max-width: 100%;
 }
 
-.event-rich-image-missing {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.event-rich-image-missing .event-image-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #64748b;
-}
-
 .event-video-preview {
   display: grid;
   grid-template-columns: 160px minmax(0, 1fr);

@@ -568,7 +568,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "copy_event_listener",
- "plist",
  "rusqlite",
  "serde",
  "serde_json",

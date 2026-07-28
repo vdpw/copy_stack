@@ -87,10 +87,8 @@ SQLite keeps the source event as a binary blob for restore operations, but
 user-facing preview. `display` is a byte array so text labels, structured
 file/folder item metadata, and image thumbnail bytes can share the same field.
 `rich_preview` is a backend-decoded preview, with segments tagged as `text`,
-`image`, `image_placeholder`, or `video`; image segment bytes are intended for
-thumbnails, image placeholders identify copied images whose cached bytes are no
-longer available, and video segments carry local file metadata for Tauri asset
-rendering.
+`image`, or `video`; image segment bytes are intended for thumbnails, and video
+segments carry local file metadata for Tauri asset rendering.
 `timestamp` is a Unix millisecond timestamp.
 
 ## Clipboard Preview Display
