@@ -131,12 +131,21 @@ async fn copy_to_clipboard(
     );
 
     if move_restored_item_to_top {
-        let db = state.db.lock().unwrap();
-        db.move_event_to_top(&content_hash)
-            .map_err(|e| e.to_string())?;
-        write_history_jsonl_if_enabled(&db, state.history_jsonl.as_ref(), "copy_to_clipboard");
+        {
+            let db = state.db.lock().unwrap();
+            db.move_event_to_top(&content_hash)
+                .map_err(|e| e.to_string())?;
+            write_history_jsonl_if_enabled(&db, state.history_jsonl.as_ref(), "copy_to_clipboard");
+        }
         debug_log!(
             "[copy_stack] clipboard event moved to top: content_hash={}",
+            content_hash
+        );
+
+        tray::sync(&app_handle)?;
+        tray::notify_history_changed(&app_handle)?;
+        debug_log!(
+            "[copy_stack] history/tray refresh notified: content_hash={}",
             content_hash
         );
     } else {
@@ -145,13 +154,6 @@ async fn copy_to_clipboard(
             content_hash
         );
     }
-
-    tray::sync(&app_handle)?;
-    tray::notify_history_changed(&app_handle)?;
-    debug_log!(
-        "[copy_stack] history/tray refresh notified: content_hash={}",
-        content_hash
-    );
 
     Ok(())
 }
@@ -462,14 +464,26 @@ pub fn run(rx: Receiver<Event>, startup_options: StartupOptions) {
                             .map_err(|error| error.to_string())
                     };
 
-                    if let Ok(Some(event_hash)) = event_hash {
-                        let state = app_handle_clone.state::<AppState>();
-                        if should_skip_pending_restore_event(&state, &event_hash) {
+                    let event_hash = match event_hash {
+                        Ok(Some(event_hash)) => event_hash,
+                        Ok(None) => {
                             debug_log!(
-                                "[copy_stack] skipped restored clipboard event to preserve order"
+                                "[copy_stack] skipped unsupported or disallowed clipboard event"
                             );
                             continue;
                         }
+                        Err(_error) => {
+                            debug_error!("failed to classify clipboard item: {}", _error);
+                            continue;
+                        }
+                    };
+
+                    let state = app_handle_clone.state::<AppState>();
+                    if should_skip_pending_restore_event(&state, &event_hash) {
+                        debug_log!(
+                            "[copy_stack] skipped restored clipboard event to preserve order"
+                        );
+                        continue;
                     }
 
                     debug_log!("[copy_stack] storing clipboard listener event");
@@ -490,7 +504,7 @@ pub fn run(rx: Receiver<Event>, startup_options: StartupOptions) {
                     match insert_result {
                         Ok(true) => {}
                         Ok(false) => {
-                            debug_log!("[copy_stack] clipboard event filtered by compact mode");
+                            debug_log!("[copy_stack] clipboard event filtered before persistence");
                             continue;
                         }
                         Err(_error) => {

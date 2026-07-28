@@ -83,17 +83,21 @@ frontend event emission.
 
 Returns stored event metadata ordered by `timestamp DESC, content_hash ASC`.
 Rows include `content_hash`, backend-selected `data_type` and binary `display`,
-ordered `rich_preview` segments for mixed text/image clips, and `timestamp`.
-They do not include raw `event_data`.
+optional `html_preview`, ordered `rich_preview` segments for mixed text/image
+clips, and `timestamp`. They do not include raw `event_data`.
 
 Standalone image file URLs also produce a `rich_preview` image segment by
 reading the referenced local file. This allows file-originated image clips,
 whose `display` value is only an extension label, to render a thumbnail.
+When a stored event contains `public.html`, its decoded text is returned as
+`html_preview` for the frontend's sandboxed expanded-card renderer.
 
 Application-private clipboard formats are not decoded for previews, and the
 backend does not inspect another application's cache directories. Private
-flavors remain in the raw stored event only so restore operations can reproduce
-the original clipboard payload.
+flavors remain in a raw stored event when that event also contains a supported
+public representation so restore operations can reproduce the original
+clipboard payload. Events containing only private or otherwise unsupported
+flavors are discarded before persistence.
 
 ### `delete_copy_event`
 
@@ -105,8 +109,10 @@ Deletes all history, then syncs the tray.
 
 ### `copy_to_clipboard`
 
-Loads a stored event, writes it back to the system clipboard, optionally moves
-the row to the top, syncs the tray, and notifies the frontend.
+Loads a stored event and writes it back to the system clipboard. When restore
+ordering is enabled, it also moves the row to the top, syncs the tray, and
+notifies the frontend. When ordering is disabled, it leaves the history and
+tray untouched after the clipboard write.
 
 When restore ordering is disabled, it queues restore suppression before writing
 to the clipboard so the listener does not immediately reprocess that same

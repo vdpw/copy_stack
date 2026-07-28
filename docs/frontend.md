@@ -76,6 +76,7 @@ interface StoredEvent {
   content_hash: string;
   data_type: string;
   display: number[];
+  html_preview: string | null;
   rich_preview: RichPreviewSegment[];
   timestamp: number;
 }
@@ -86,6 +87,9 @@ SQLite keeps the source event as a binary blob for restore operations, but
 `display` are selected by the backend classifier and remain the fallback
 user-facing preview. `display` is a byte array so text labels, structured
 file/folder item metadata, and image thumbnail bytes can share the same field.
+`html_preview` contains the stored `public.html` representation when available
+and compact mode is disabled. The frontend sanitizes it and renders it only in
+an expanded card inside a sandboxed iframe.
 `rich_preview` is a backend-decoded preview, with segments tagged as `text`,
 `image`, or `video`; image segment bytes are intended for thumbnails, and video
 segments carry local file metadata for Tauri asset rendering.
@@ -94,12 +98,11 @@ segments carry local file metadata for Tauri asset rendering.
 ## Clipboard Preview Display
 
 The history list decodes `StoredEvent.display` as UTF-8. Most data types store
-plain text labels, including video file basenames for `data_type: "video"` and
-unsupported clipboard flavor summaries for `data_type: "unsupported"`. File and
-folder events store JSON with format `copy_stack.file-items.v1` and an `items`
-array whose entries contain `type` (`file` or `folder`) and `name`; render one
-file/folder icon per item. Keep preview selection in the backend classifier so
-the main window and tray menu use the same display value.
+plain text labels, including video file basenames for `data_type: "video"`.
+File and folder events store JSON with format `copy_stack.file-items.v1` and an
+`items` array whose entries contain `type` (`file` or `folder`) and `name`;
+render one file/folder icon per item. Keep preview selection in the backend
+classifier so the main window and tray menu use the same display value.
 
 History cards are folded by default. PNG image events whose `display` starts
 with a PNG signature render a constrained thumbnail from a browser object URL;
@@ -121,7 +124,20 @@ also folded: the collapsed state shows one item with a remaining-count suffix,
 and the expanded state shows the full item list. History card text is not
 selectable, so repeated clicks only toggle expansion.
 
-TODO: render HTML previews in the UI for `data_type: "html"`.
+Expanded formatted-text cards prefer `html_preview`. Active elements, inline
+event handlers, and resource/navigation URLs are removed before rendering.
+The iframe sandbox and content security policy block scripts and external
+resource loads while preserving inline text formatting and embedded data
+images.
+
+History reloads keep the current list mounted after the initial load. Restore
+actions do not request a redundant frontend reload; the backend emits
+`clipboard-history-updated` only when restore ordering changes the persisted
+list. This avoids thumbnail flicker and preserves the window scroll position.
+After a restore command succeeds, the clicked button briefly changes to a green
+checkmark and the card receives a subtle highlight animation. An `aria-live`
+message announces the successful copy, and the animations are disabled when
+the user prefers reduced motion.
 
 ## Settings Behavior
 
