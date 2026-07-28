@@ -39,11 +39,12 @@ Columns:
 - `content_hash`: normalized SHA-256 hash used as the stable row key and
   deduplication key.
 - `event_data`: compact binary clipboard event payload. The binary format stores
-  each item, data type, and raw `data` bytes directly, including private or
-  platform-specific clipboard flavors.
+  each item, data type, and raw `data` bytes directly. Accepted events may
+  include private or platform-specific clipboard flavors alongside their
+  supported public representation.
 - `data_type`: backend classification used by the UI and tray, currently
   `rtf`, `html`, image extensions, `video`, `file`, `folder`, `files`,
-  `folders`, `files and folders`, `text`, or `unsupported`.
+  `folders`, `files and folders`, or `text`.
 - `display`: backend-selected preview bytes. Current text labels are stored as
   UTF-8 bytes. File and folder events store UTF-8 JSON with format
   `copy_stack.file-items.v1` and one `{type, name}` entry per copied item.
@@ -114,7 +115,8 @@ raw-payload fallback.
    `public.utf8-plain-text` value, rejects blank/invalid text and
    image/file/video/embedded-media events, and discards all non-text flavors.
 2. Encodes the resulting event to the binary clipboard payload format.
-3. Classifies the event into `content_hash`, `data_type`, and `display`.
+3. Classifies the event into `content_hash`, `data_type`, and `display`;
+   returns without storing when no supported public representation exists.
 4. If a row with the same hash exists, updates `event_data`, `data_type`, and
    `display` while preserving the existing `timestamp`.
 5. If it does not exist, computes the next history timestamp in Unix
@@ -129,7 +131,7 @@ effective plain text. Re-copying text that already exists only as RTF/HTML
 consolidates those matching rows into one text-only row while preserving the
 newest matching timestamp.
 
-## Rich Preview Payload
+## Preview Payloads
 
 `get_copy_events` decodes stored `event_data` into a `rich_preview` array for
 user-facing previews. Standard rich clips expose `public.utf8-plain-text` with
@@ -144,10 +146,16 @@ in the command payload. Single local image file URLs produce an image segment
 by reading the referenced file; this supplies the thumbnail when `display`
 contains only an extension label.
 
+When `public.html` is present, `get_copy_events` also returns its decoded value
+as `html_preview`. This is display-only and omitted in compact mode. The
+frontend sanitizes and isolates it before rendering; the stored event remains
+unchanged.
+
 The raw clipboard event remains the source of truth for restore operations.
 `rich_preview` is display-only and falls back to the existing `data_type` /
-`display` preview when no ordered mixed preview can be built. Application-private
-formats are retained for restore but are not decoded for previews.
+`display` preview when no ordered mixed preview can be built.
+Application-private formats are retained for restore only when the event also
+has a supported public representation; they are not decoded for previews.
 
 ## JSONL History Mirror
 
@@ -199,17 +207,17 @@ data.
 
 ## Content Hashing
 
-Deduplication uses a backend classifier that prefers normalized content hashes
-for known clipboard types and falls back to hashing the full encoded event for
-unsupported clipboard types. The classifier applies these priorities:
+Deduplication uses a backend classifier that derives normalized content hashes
+only from supported clipboard representations. The classifier applies these
+priorities:
 
 1. `public.rtf`: hash that `data` value; use `public.utf8-plain-text` as
    `display` when present; classify as `rtf`.
 2. `public.png`: hash that `data` value; use the PNG bytes as `display`;
    classify as `png`.
 3. `public.html`: hash that `data` value; use `public.utf8-plain-text` as
-   `display` when present; classify as `html`.
-   TODO: render HTML previews in the UI.
+   `display` when present; classify as `html`; expose its decoded value as
+   `html_preview` outside compact mode.
 4. One `items` element with `public.file-url` for a local video path: hash the
    file URL `data`; classify as `video`; use the decoded file basename as
    `display`. This handles app-originated video copies that also expose an empty
@@ -237,11 +245,9 @@ unsupported clipboard types. The classifier applies these priorities:
    `public.utf8-plain-text`, hash that raw `data` value and store the same bytes
    as `display`; classify as `text`. Other data types in the same item are
    retained in `event_data` but not used for the plain text hash.
-9. Unsupported copies: hash the encoded full event payload, classify as
-   `unsupported`, and store a short display label listing the first clipboard
-   data types. The full raw event payload is still stored in `event_data`, so
-   the JSONL mirror includes all original data flavors even when the UI has no
-   specialized preview for them.
+9. Unsupported copies: return no classification and do not insert a database
+   row. This includes events that contain only application-private or opaque
+   dynamic clipboard types.
 
 Legacy rows that only survived because of the old arbitrary fallback are
 reclassified with the current rules during metadata rebuild.

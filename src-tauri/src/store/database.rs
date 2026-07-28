@@ -24,6 +24,7 @@ pub struct StoredEvent {
     pub content_hash: String,
     pub data_type: String,
     pub display: Vec<u8>,
+    pub html_preview: Option<String>,
     pub rich_preview: Vec<StoredPreviewSegment>,
     pub timestamp: i64,
 }
@@ -73,6 +74,7 @@ impl StoredEvent {
         content_hash: String,
         data_type: String,
         display: Vec<u8>,
+        html_preview: Option<String>,
         rich_preview: Vec<StoredPreviewSegment>,
         timestamp: i64,
     ) -> Self {
@@ -80,6 +82,7 @@ impl StoredEvent {
             content_hash,
             data_type,
             display,
+            html_preview,
             rich_preview,
             timestamp,
         }
@@ -510,8 +513,8 @@ impl Database {
 
         for row in rows {
             let classified = match Self::classify_event_from_event_data(&row.event_data) {
-                Ok(classified) => classified,
-                Err(_) => continue,
+                Ok(Some(classified)) => classified,
+                Ok(None) | Err(_) => continue,
             };
             if classified.content_hash.is_empty()
                 || !seen_hashes.insert(classified.content_hash.clone())
@@ -610,9 +613,11 @@ impl Database {
         } else {
             event
         };
+        let Some(classified) = Self::classify_event(event) else {
+            return Ok(false);
+        };
         let event_data = encode_event_blob(event)
             .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
-        let classified = Self::classify_event(event)?;
 
         if compact_mode {
             return self.upsert_compact_event(event_data, classified);
@@ -679,7 +684,7 @@ impl Database {
             let Some(stored_compact_event) = Self::compact_text_event(&stored_event) else {
                 continue;
             };
-            let Ok(stored_classified) = Self::classify_event(&stored_compact_event) else {
+            let Some(stored_classified) = Self::classify_event(&stored_compact_event) else {
                 continue;
             };
             if stored_classified.content_hash == classified.content_hash {
@@ -770,65 +775,20 @@ impl Database {
             let Some(event) = Self::compact_text_event(event) else {
                 return Ok(None);
             };
-            return Ok(Some(Self::classify_event(&event)?.content_hash));
+            return Ok(Self::classify_event(&event).map(|classified| classified.content_hash));
         }
 
-        Ok(Some(Self::classify_event(event)?.content_hash))
+        Ok(Self::classify_event(event).map(|classified| classified.content_hash))
     }
 
-    fn classify_event_from_event_data(event_data: &[u8]) -> Result<ClassifiedEvent> {
+    fn classify_event_from_event_data(event_data: &[u8]) -> Result<Option<ClassifiedEvent>> {
         let event = decode_event_blob(event_data)
             .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
-        Self::classify_event(&event)
+        Ok(Self::classify_event(&event))
     }
 
-    fn classify_event(event: &Event) -> Result<ClassifiedEvent> {
-        if let Some(classified) = Self::classify_supported_event(event) {
-            return Ok(classified);
-        }
-
-        Self::classify_unsupported_event(event)
-    }
-
-    fn classify_unsupported_event(event: &Event) -> Result<ClassifiedEvent> {
-        let event_data = encode_event_blob(event)
-            .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
-
-        Ok(ClassifiedEvent {
-            content_hash: Self::hash_bytes(&event_data),
-            data_type: "unsupported".to_string(),
-            display: Self::display_bytes(Self::unsupported_event_display(event)),
-        })
-    }
-
-    fn unsupported_event_display(event: &Event) -> String {
-        let mut data_types = Vec::new();
-
-        for item in &event.items {
-            for data in &item.data_list {
-                if !data_types.contains(&data.r#type) {
-                    data_types.push(data.r#type.clone());
-                }
-            }
-        }
-
-        if data_types.is_empty() {
-            return "Unsupported clipboard data".to_string();
-        }
-
-        let visible = data_types.iter().take(3).cloned().collect::<Vec<_>>();
-        let suffix = data_types
-            .len()
-            .checked_sub(visible.len())
-            .filter(|hidden| *hidden > 0)
-            .map(|hidden| format!(" + {} more", hidden))
-            .unwrap_or_default();
-
-        format!(
-            "Unsupported clipboard data: {}{}",
-            visible.join(", "),
-            suffix
-        )
+    fn classify_event(event: &Event) -> Option<ClassifiedEvent> {
+        Self::classify_supported_event(event)
     }
 
     pub fn parse_file_display(display: &[u8]) -> Option<FileDisplay> {
@@ -937,6 +897,16 @@ impl Database {
         }
 
         Self::video_preview_segments(&event)
+    }
+
+    fn html_preview_from_event_data(event_data: &[u8]) -> Option<String> {
+        let event = Self::event_from_blob(event_data).ok()?;
+        let html = Self::find_data(&event, "public.html")?;
+        let html = String::from_utf8_lossy(&html.data)
+            .trim_matches('\0')
+            .trim()
+            .to_string();
+        (!html.is_empty()).then_some(html)
     }
 
     fn rich_preview_segments(event: &Event) -> Vec<StoredPreviewSegment> {
@@ -1616,7 +1586,9 @@ impl Database {
                 let Some(compact_event) = Self::compact_text_event(&event) else {
                     continue;
                 };
-                let classified = Self::classify_event(&compact_event)?;
+                let Some(classified) = Self::classify_event(&compact_event) else {
+                    continue;
+                };
                 if !compact_hashes.insert(classified.content_hash) {
                     continue;
                 }
@@ -1624,6 +1596,7 @@ impl Database {
                     content_hash,
                     classified.data_type,
                     classified.display,
+                    None,
                     Vec::new(),
                     timestamp,
                 ));
@@ -1632,6 +1605,7 @@ impl Database {
                     content_hash,
                     data_type,
                     display,
+                    Self::html_preview_from_event_data(&event_data),
                     Self::rich_preview_from_event_data(&event_data),
                     timestamp,
                 ));
@@ -2252,6 +2226,10 @@ mod tests {
         let formatted_event = event(vec![
             data("public.utf8-plain-text", b"Visible text"),
             data("public.rtf", b"{\\rtf1 Visible text}"),
+            data(
+                "public.html",
+                br#"<p><strong style="color: red">Visible text</strong></p>"#,
+            ),
         ]);
 
         assert!(db
@@ -2266,6 +2244,7 @@ mod tests {
         );
         assert_eq!(events[0].data_type, "text");
         assert_eq!(events[0].display, b"Visible text");
+        assert!(events[0].html_preview.is_none());
         assert!(events[0].rich_preview.is_empty());
 
         let stored_event = db
@@ -2392,23 +2371,25 @@ mod tests {
     }
 
     #[test]
-    fn classification_falls_back_to_unsupported_for_unknown_data_types() {
+    fn private_only_events_are_not_classified_or_stored() {
+        let db = in_memory_database();
         let event = event(vec![
             data("com.example.private-a", b"alpha"),
             data("com.example.private-b", b"beta"),
             data("com.example.private-c", b"gamma"),
             data("com.example.private-d", b"delta"),
         ]);
-        let event_blob = encode_event_blob(&event).expect("event should encode");
 
-        let classified = Database::classify_event(&event).expect("event should classify");
-
-        assert_eq!(classified.data_type, "unsupported");
+        assert!(Database::classify_event(&event).is_none());
         assert_eq!(
-            display_string(&classified),
-            "Unsupported clipboard data: com.example.private-a, com.example.private-b, com.example.private-c + 1 more"
+            db.event_content_hash(&event)
+                .expect("unsupported event hash should be filtered"),
+            None
         );
-        assert_eq!(classified.content_hash, Database::hash_bytes(&event_blob));
+        assert!(!db
+            .insert_event(&event)
+            .expect("unsupported event should be filtered"));
+        assert!(db.get_all_events().expect("events should load").is_empty());
     }
 
     #[test]
@@ -2488,13 +2469,14 @@ mod tests {
     }
 
     #[test]
-    fn history_jsonl_writes_unsupported_events_with_raw_data() {
+    fn history_jsonl_omits_unsupported_events() {
         let db = in_memory_database();
         let path = temp_jsonl_path();
         let event = event(vec![data("com.example.private", &[0xde, 0xad, 0xbe, 0xef])]);
 
-        db.insert_event(&event)
-            .expect("unsupported event should insert");
+        assert!(!db
+            .insert_event(&event)
+            .expect("unsupported event should be filtered"));
         db.write_history_jsonl(&HistoryJsonlConfig {
             path: path.clone(),
             max_data_bytes: 128,
@@ -2503,28 +2485,7 @@ mod tests {
 
         let contents = std::fs::read_to_string(&path).expect("JSONL should be readable");
         let _ = std::fs::remove_file(&path);
-        let lines = contents.lines().collect::<Vec<_>>();
-        assert_eq!(lines.len(), 1);
-
-        let value: serde_json::Value =
-            serde_json::from_str(lines[0]).expect("JSONL row should be valid JSON");
-        assert_eq!(value["data_type"], "unsupported");
-        assert_eq!(
-            value["display"]["value"],
-            "Unsupported clipboard data: com.example.private"
-        );
-        assert_eq!(
-            value["event_data"]["items"][0]["data_list"][0]["type"],
-            "com.example.private"
-        );
-        assert_eq!(
-            value["event_data"]["items"][0]["data_list"][0]["data"]["encoding"],
-            "hex"
-        );
-        assert_eq!(
-            value["event_data"]["items"][0]["data_list"][0]["data"]["value"],
-            "deadbeef"
-        );
+        assert!(contents.is_empty());
     }
 
     #[test]
@@ -2581,6 +2542,28 @@ mod tests {
     }
 
     #[test]
+    fn get_all_events_includes_html_preview_for_formatted_content() {
+        let db = in_memory_database();
+        let html = br#"<p><strong style="color: red">Visible text</strong></p>"#;
+        let event = event(vec![
+            data("public.utf8-plain-text", b"Visible text"),
+            data("public.rtf", b"{\\rtf1\\b Visible text}"),
+            data("public.html", html),
+        ]);
+
+        db.insert_event(&event)
+            .expect("formatted event should insert");
+        let events = db.get_all_events().expect("events should load");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data_type, "rtf");
+        assert_eq!(
+            events[0].html_preview.as_deref(),
+            Some(std::str::from_utf8(html).expect("HTML fixture should be UTF-8"))
+        );
+    }
+
+    #[test]
     fn get_all_events_includes_rich_preview_segments() {
         let db = in_memory_database();
         let image_path = temp_png_path();
@@ -2619,17 +2602,29 @@ mod tests {
     }
 
     #[test]
-    fn get_all_events_does_not_decode_private_formats() {
+    fn metadata_rebuild_removes_legacy_unsupported_rows() {
         let db = in_memory_database();
         let event = event(vec![data("com.example.private", b"opaque payload")]);
+        let event_blob = encode_event_blob(&event).expect("private event should encode");
 
-        db.insert_event(&event)
-            .expect("private event should be retained");
-        let events = db.get_all_events().expect("events should load");
+        db.conn
+            .execute(
+                "INSERT INTO clipboard_events
+                 (content_hash, event_data, data_type, display, timestamp)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                (
+                    "legacy-private-hash",
+                    event_blob,
+                    "unsupported",
+                    b"Unsupported clipboard data".to_vec(),
+                    1_i64,
+                ),
+            )
+            .expect("legacy private row should insert");
+        db.rebuild_history_metadata()
+            .expect("metadata rebuild should succeed");
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].data_type, "unsupported");
-        assert!(events[0].rich_preview.is_empty());
+        assert!(db.get_all_events().expect("events should load").is_empty());
     }
 
     #[test]

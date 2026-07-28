@@ -36,6 +36,8 @@ sequenceDiagram
 Important rules:
 
 - The listener polls every 500 milliseconds.
+- Events with no supported public clipboard representation are discarded before
+  database insertion.
 - Duplicate content updates the existing row payload and preserves its order.
 - The UI reloads from SQLite instead of inserting optimistic rows.
 - Tray sync runs after successful persistence.
@@ -58,14 +60,16 @@ sequenceDiagram
   Backend->>Clipboard: write stored Event
   alt move_restored_item_to_top is true
     Backend->>DB: move row to top
+    Backend->>Tray: sync menu
+    Backend->>UI: emit clipboard-history-updated
+    UI->>Backend: invoke get_copy_events
   end
-  Backend->>Tray: sync menu
-  Backend->>UI: emit clipboard-history-updated
-  UI->>Backend: invoke get_copy_events
 ```
 
-The frontend also calls `loadEvents()` after `copy_to_clipboard` resolves. The
-backend notification keeps other UI refresh paths consistent.
+The frontend does not call `loadEvents()` after `copy_to_clipboard` resolves.
+When ordering is unchanged there is nothing to reload. When ordering changes,
+the backend notification triggers one background reload while the existing
+list remains mounted, preserving thumbnails and the current scroll position.
 
 ## Restore From Tray Menu
 
@@ -170,17 +174,19 @@ Stored payloads are binary-encoded Rust values:
 copy_event_listener::event::Event -> binary event blob -> clipboard_events.event_data
 ```
 
-The binary event blob normally preserves all data flavors reported by the
-listener, including private or platform-specific metadata. Classification
-selects stable public flavors for `content_hash`, `data_type`, and `display`
-without filtering the payload. Compact mode is the exception: it builds and
-persists a new event containing only `public.utf8-plain-text`.
+For accepted events, the binary event blob preserves all data flavors reported
+by the listener, including private or platform-specific metadata.
+Classification requires a supported public flavor and selects it for
+`content_hash`, `data_type`, and `display`; events containing only unsupported
+flavors are not persisted. Compact mode additionally builds and persists a new
+event containing only `public.utf8-plain-text`.
 
 The backend returns stored `data_type` and binary `display` preview metadata for
-history lists without sending raw `event_data` to React. It also returns
-display-only `rich_preview` segments when the stored event contains ordered
-mixed text/image content. Restore operations use the backend to decode and pass
-the original event back to `ClipboardListener::set_clipboard_event(...)`.
+history lists without sending raw `event_data` to React. It also returns an
+optional `html_preview` for sandboxed expanded-card rendering and display-only
+`rich_preview` segments when the stored event contains ordered mixed text/image
+content. Restore operations use the backend to decode and pass the original
+event back to `ClipboardListener::set_clipboard_event(...)`.
 
 ## Flow Change Checklist
 

@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
   ArrowUpDown,
+  Check,
   Copy,
   Eye,
   EyeOff,
@@ -16,7 +17,7 @@ import {
   Type,
   Video,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import "./App.css";
 
@@ -31,6 +32,7 @@ interface StoredEvent {
   content_hash: string;
   data_type: string;
   display: number[];
+  html_preview: string | null;
   rich_preview: RichPreviewSegment[];
   timestamp: number;
 }
@@ -55,6 +57,7 @@ interface FileDisplayPayload {
 interface DisplayPreview {
   text: string;
   fileItems: FileDisplayItem[] | null;
+  html: string | null;
   image: ImageDisplay | null;
   richSegments: RichPreviewSegment[];
 }
@@ -87,6 +90,91 @@ interface RichPreviewVideoSegment {
   label: string;
   media_type: string;
   path: string;
+}
+
+const blockedHtmlPreviewElements =
+  "script, noscript, iframe, frame, frameset, object, embed, form, input, button, textarea, select, option, link, base, meta";
+const blockedHtmlPreviewUrlAttributes = new Set([
+  "action",
+  "formaction",
+  "href",
+  "poster",
+  "src",
+  "srcdoc",
+  "srcset",
+  "xlink:href",
+]);
+
+function buildHtmlPreviewDocument(html: string) {
+  const parsed = new window.DOMParser().parseFromString(html, "text/html");
+  parsed
+    .querySelectorAll(blockedHtmlPreviewElements)
+    .forEach(element => element.remove());
+
+  parsed.querySelectorAll("*").forEach(element => {
+    Array.from(element.attributes).forEach(attribute => {
+      const attributeName = attribute.name.toLowerCase();
+      const isInlineHandler = attributeName.startsWith("on");
+      const isDataImage =
+        element.tagName === "IMG" &&
+        attributeName === "src" &&
+        /^data:image\/(?:bmp|gif|jpeg|jpg|png|webp);/i.test(attribute.value);
+
+      if (
+        isInlineHandler ||
+        (blockedHtmlPreviewUrlAttributes.has(attributeName) && !isDataImage)
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+
+  const preservedStyles = Array.from(parsed.head.querySelectorAll("style")).map(
+    style => style.outerHTML
+  );
+  const previewStyles = `
+    :root { color-scheme: light; background: #fff; }
+    * { box-sizing: border-box; max-width: 100%; }
+    body {
+      margin: 0;
+      padding: 16px;
+      overflow-wrap: anywhere;
+      color: #14213d;
+      background: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    img { height: auto; }
+    table { border-collapse: collapse; }
+  `;
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">
+    <style>${previewStyles}</style>
+    ${preservedStyles.join("\n")}
+  </head>
+  <body>${parsed.body.innerHTML}</body>
+</html>`;
+}
+
+function HtmlPreview({ html }: { html: string }) {
+  return (
+    <div
+      className="event-html-preview-shell"
+      onClick={event => event.stopPropagation()}
+    >
+      <iframe
+        className="event-html-preview"
+        referrerPolicy="no-referrer"
+        sandbox=""
+        srcDoc={buildHtmlPreviewDocument(html)}
+        title="Formatted clipboard preview"
+      />
+    </div>
+  );
 }
 
 function ImageThumbnail({ bytes, label, mediaType }: ImageDisplay) {
@@ -202,7 +290,8 @@ function VideoThumbnail({ label, path }: RichPreviewVideoSegment) {
 
 function App() {
   const [copyEvents, setCopyEvents] = useState<StoredEvent[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [maxItems, setMaxItems] = useState(100);
   const [pendingMaxItemsInput, setPendingMaxItemsInput] = useState("100");
@@ -211,12 +300,22 @@ function App() {
   const [compactMode, setCompactMode] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [eventsToDelete, setEventsToDelete] = useState(0);
+  const [copiedEventHash, setCopiedEventHash] = useState<string | null>(null);
+  const copiedFeedbackTimerRef = useRef<number | null>(null);
   const [expandedEventHashes, setExpandedEventHashes] = useState<Set<string>>(
     () => new Set()
   );
 
+  useEffect(() => {
+    return () => {
+      if (copiedFeedbackTimerRef.current !== null) {
+        window.clearTimeout(copiedFeedbackTimerRef.current);
+      }
+    };
+  }, []);
+
   const loadEvents = useCallback(async () => {
-    setLoading(true);
+    setRefreshing(true);
     try {
       const events = await invoke<StoredEvent[]>("get_copy_events");
       setCopyEvents(events);
@@ -235,6 +334,7 @@ function App() {
       }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -390,14 +490,16 @@ function App() {
     }
     try {
       await invoke("copy_to_clipboard", { contentHash });
+      setCopiedEventHash(contentHash);
+      if (copiedFeedbackTimerRef.current !== null) {
+        window.clearTimeout(copiedFeedbackTimerRef.current);
+      }
+      copiedFeedbackTimerRef.current = window.setTimeout(() => {
+        setCopiedEventHash(null);
+        copiedFeedbackTimerRef.current = null;
+      }, 1400);
       if (import.meta.env.DEV) {
         console.info("[copy_stack] restore command completed", { contentHash });
-      }
-      await loadEvents();
-      if (import.meta.env.DEV) {
-        console.info("[copy_stack] history refreshed after restore", {
-          contentHash,
-        });
       }
     } catch (error) {
       if (import.meta.env.DEV) {
@@ -542,6 +644,7 @@ function App() {
     return {
       text: image ? image.label : text,
       fileItems,
+      html: typeof event.html_preview === "string" ? event.html_preview : null,
       image,
       richSegments: Array.isArray(event.rich_preview) ? event.rich_preview : [],
     };
@@ -799,7 +902,7 @@ function App() {
               <div className="panel-actions">
                 <button
                   onClick={() => void loadEvents()}
-                  disabled={loading}
+                  disabled={refreshing}
                   className="btn btn-secondary"
                 >
                   <RefreshCw size={16} />
@@ -836,6 +939,7 @@ function App() {
                   const isExpanded = expandedEventHashes.has(
                     event.content_hash
                   );
+                  const wasJustCopied = copiedEventHash === event.content_hash;
                   const visibleFileItems =
                     preview.fileItems && !isExpanded
                       ? preview.fileItems.slice(0, 1)
@@ -845,7 +949,7 @@ function App() {
                       key={event.content_hash}
                       className={`event-card ${
                         isExpanded ? "event-card-expanded" : ""
-                      }`}
+                      } ${wasJustCopied ? "event-card-copied" : ""}`}
                       role="button"
                       tabIndex={0}
                       aria-expanded={isExpanded}
@@ -861,7 +965,9 @@ function App() {
                         <p className="event-meta">
                           <span>{getEventTypeLabel(event, preview)}</span>
                         </p>
-                        {preview.richSegments.length > 0 ? (
+                        {isExpanded && preview.html ? (
+                          <HtmlPreview html={preview.html} />
+                        ) : preview.richSegments.length > 0 ? (
                           <div className="event-rich-preview">
                             {preview.richSegments.map((segment, index) =>
                               renderRichPreviewSegment(
@@ -936,10 +1042,25 @@ function App() {
                             clickEvent.stopPropagation();
                             void copyToClipboard(event.content_hash);
                           }}
-                          className="btn btn-primary"
-                          title="Restore to clipboard"
+                          aria-label={
+                            wasJustCopied
+                              ? "Copied to clipboard"
+                              : "Restore to clipboard"
+                          }
+                          className={`btn btn-primary copy-feedback-button ${
+                            wasJustCopied ? "btn-copy-success" : ""
+                          }`}
+                          title={
+                            wasJustCopied
+                              ? "Copied to clipboard"
+                              : "Restore to clipboard"
+                          }
                         >
-                          <Copy size={16} />
+                          {wasJustCopied ? (
+                            <Check className="copy-feedback-icon" size={16} />
+                          ) : (
+                            <Copy size={16} />
+                          )}
                         </button>
                         <button
                           onClick={clickEvent => {
@@ -957,6 +1078,9 @@ function App() {
                 })}
               </div>
             )}
+            <span aria-live="polite" className="sr-only">
+              {copiedEventHash ? "Clipboard item copied." : ""}
+            </span>
           </main>
         </div>
       )}
