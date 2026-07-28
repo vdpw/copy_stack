@@ -6,7 +6,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tauri::AppHandle;
 
 const APP_DATA_DIR: &str = ".copy_stack";
@@ -18,10 +18,6 @@ const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
 const COMPACT_MODE_KEY: &str = "compact_mode";
 const FILE_DISPLAY_FORMAT: &str = "copy_stack.file-items.v1";
 const INLINE_ATTACHMENT_PLACEHOLDER: char = '\u{fffc}';
-const WECOM_PRIVATE_PASTEBOARD_TYPES: [&str; 2] = [
-    "dyn.ah62d4rv4gu8zsz4pnb3gw7xbsvwzauweqf4gcw5fte",
-    "dyn.ah62d4rv4gu8zsz4pnb3gw7xbsvwzauweqf4gcyxfsb11e7cpqz6u",
-];
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredEvent {
@@ -43,8 +39,6 @@ pub enum StoredPreviewSegment {
         media_type: String,
         data: Vec<u8>,
     },
-    #[serde(rename = "image_placeholder")]
-    ImagePlaceholder { label: String },
     #[serde(rename = "video")]
     Video {
         label: String,
@@ -101,11 +95,6 @@ struct ClassifiedEvent {
     content_hash: String,
     data_type: String,
     display: Vec<u8>,
-}
-
-enum WeComPreviewPart {
-    Text(String),
-    Image { label: String, cache_id: String },
 }
 
 #[derive(Clone, Debug)]
@@ -794,7 +783,7 @@ impl Database {
     }
 
     fn classify_event(event: &Event) -> Result<ClassifiedEvent> {
-        if let Some(classified) = Self::classify_special_event(event) {
+        if let Some(classified) = Self::classify_supported_event(event) {
             return Ok(classified);
         }
 
@@ -942,11 +931,6 @@ impl Database {
             return rich_preview;
         }
 
-        let wecom_preview = Self::wecom_preview_segments(&event);
-        if !wecom_preview.is_empty() {
-            return wecom_preview;
-        }
-
         let image_preview = Self::standalone_image_preview_segments(&event);
         if !image_preview.is_empty() {
             return image_preview;
@@ -1056,221 +1040,6 @@ impl Database {
             .collect()
     }
 
-    fn wecom_preview_segments(event: &Event) -> Vec<StoredPreviewSegment> {
-        Self::wecom_preview_parts(event)
-            .into_iter()
-            .map(|part| match part {
-                WeComPreviewPart::Text(text) => StoredPreviewSegment::Text { text },
-                WeComPreviewPart::Image { label, cache_id } => {
-                    match Self::wecom_cached_image(&label, &cache_id) {
-                        Some((media_type, data)) => StoredPreviewSegment::Image {
-                            label,
-                            media_type,
-                            data,
-                        },
-                        None => StoredPreviewSegment::ImagePlaceholder { label },
-                    }
-                }
-            })
-            .collect()
-    }
-
-    fn wecom_preview_parts(event: &Event) -> Vec<WeComPreviewPart> {
-        let Some(private_data) = WECOM_PRIVATE_PASTEBOARD_TYPES
-            .iter()
-            .find_map(|data_type| Self::find_data(event, data_type))
-        else {
-            return Vec::new();
-        };
-        let Ok(plist::Value::Array(values)) = plist::from_bytes::<plist::Value>(&private_data.data)
-        else {
-            return Vec::new();
-        };
-        let Some(payload) = values.into_iter().find_map(|value| match value {
-            plist::Value::Data(data) => Some(data),
-            _ => None,
-        }) else {
-            return Vec::new();
-        };
-        let Some(message_list) = Self::protobuf_first_bytes(&payload, 10) else {
-            return Vec::new();
-        };
-        let Some(messages) = Self::protobuf_bytes_fields(message_list, 1) else {
-            return Vec::new();
-        };
-
-        let mut parts = Vec::new();
-        for message in messages {
-            if let Some(text) = Self::wecom_text_message(message) {
-                parts.push(WeComPreviewPart::Text(text));
-            }
-            if let Some((label, cache_id)) = Self::wecom_image_message(message) {
-                parts.push(WeComPreviewPart::Image { label, cache_id });
-            }
-        }
-        parts
-    }
-
-    fn wecom_text_message(message: &[u8]) -> Option<String> {
-        let text_metadata = Self::protobuf_first_bytes(message, 101)?;
-        let text_wrapper = Self::protobuf_first_bytes(text_metadata, 1)?;
-        let text_payload = Self::protobuf_first_bytes(text_wrapper, 2)?;
-        let text = Self::protobuf_first_bytes(text_payload, 1)?;
-        let text = String::from_utf8(text.to_vec()).ok()?;
-        let text = text.trim_matches('\0').trim().to_string();
-        (!text.is_empty()).then_some(text)
-    }
-
-    fn wecom_image_message(message: &[u8]) -> Option<(String, String)> {
-        let image_metadata = Self::protobuf_first_bytes(message, 103)?;
-        let label = String::from_utf8(Self::protobuf_first_bytes(image_metadata, 2)?.to_vec())
-            .ok()?
-            .trim_matches('\0')
-            .trim()
-            .to_string();
-        let cache_id = String::from_utf8(Self::protobuf_first_bytes(image_metadata, 10)?.to_vec())
-            .ok()?
-            .trim_matches('\0')
-            .trim()
-            .to_string();
-
-        if label.is_empty()
-            || Path::new(&label).file_name().and_then(|name| name.to_str()) != Some(&label)
-            || cache_id.len() != 32
-            || !cache_id
-                .chars()
-                .all(|character| character.is_ascii_hexdigit())
-        {
-            return None;
-        }
-
-        Some((label, cache_id))
-    }
-
-    fn wecom_cached_image(label: &str, cache_id: &str) -> Option<(String, Vec<u8>)> {
-        let profiles_root = std::env::var_os("HOME")
-            .map(PathBuf::from)?
-            .join("Library/Containers/com.tencent.WeWorkMac/Data/Documents/Profiles");
-        Self::wecom_cached_image_in_profiles(&profiles_root, label, cache_id)
-    }
-
-    fn wecom_cached_image_in_profiles(
-        profiles_root: &Path,
-        label: &str,
-        cache_id: &str,
-    ) -> Option<(String, Vec<u8>)> {
-        for directory_suffix in ["_HD", ""] {
-            let profile_dirs = std::fs::read_dir(profiles_root).ok()?;
-            for profile_dir in profile_dirs.flatten() {
-                let images_root = profile_dir.path().join("Caches/Images");
-                let Ok(cache_buckets) = std::fs::read_dir(images_root) else {
-                    continue;
-                };
-
-                for cache_bucket in cache_buckets.flatten() {
-                    let image_path = cache_bucket
-                        .path()
-                        .join(format!("{}{}", cache_id, directory_suffix))
-                        .join(label);
-                    let Ok(data) = std::fs::read(image_path) else {
-                        continue;
-                    };
-                    let Some(media_type) = Self::image_media_type_from_bytes(&data) else {
-                        continue;
-                    };
-                    return Some((media_type.to_string(), data));
-                }
-            }
-        }
-
-        None
-    }
-
-    fn image_media_type_from_bytes(data: &[u8]) -> Option<&'static str> {
-        if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
-            Some("image/png")
-        } else if data.starts_with(&[0xff, 0xd8, 0xff]) {
-            Some("image/jpeg")
-        } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
-            Some("image/gif")
-        } else if data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" {
-            Some("image/webp")
-        } else if data.starts_with(b"BM") {
-            Some("image/bmp")
-        } else {
-            None
-        }
-    }
-
-    fn protobuf_first_bytes<'a>(data: &'a [u8], field_number: u32) -> Option<&'a [u8]> {
-        Self::protobuf_bytes_fields(data, field_number)?
-            .into_iter()
-            .next()
-    }
-
-    fn protobuf_bytes_fields(data: &[u8], field_number: u32) -> Option<Vec<&[u8]>> {
-        let mut offset = 0;
-        let mut values = Vec::new();
-
-        while offset < data.len() {
-            let tag = Self::protobuf_varint(data, &mut offset)?;
-            let current_field = u32::try_from(tag >> 3).ok()?;
-            let wire_type = (tag & 0x07) as u8;
-            if current_field == 0 {
-                return None;
-            }
-
-            match wire_type {
-                0 => {
-                    Self::protobuf_varint(data, &mut offset)?;
-                }
-                1 => {
-                    offset = offset.checked_add(8)?;
-                    if offset > data.len() {
-                        return None;
-                    }
-                }
-                2 => {
-                    let length = usize::try_from(Self::protobuf_varint(data, &mut offset)?).ok()?;
-                    let end = offset.checked_add(length)?;
-                    if end > data.len() {
-                        return None;
-                    }
-                    if current_field == field_number {
-                        values.push(&data[offset..end]);
-                    }
-                    offset = end;
-                }
-                5 => {
-                    offset = offset.checked_add(4)?;
-                    if offset > data.len() {
-                        return None;
-                    }
-                }
-                _ => return None,
-            }
-        }
-
-        Some(values)
-    }
-
-    fn protobuf_varint(data: &[u8], offset: &mut usize) -> Option<u64> {
-        let mut value = 0_u64;
-        let mut shift = 0;
-
-        while shift < 64 {
-            let byte = *data.get(*offset)?;
-            *offset += 1;
-            value |= u64::from(byte & 0x7f) << shift;
-            if byte & 0x80 == 0 {
-                return Some(value);
-            }
-            shift += 7;
-        }
-
-        None
-    }
-
     fn video_preview_segments(event: &Event) -> Vec<StoredPreviewSegment> {
         if event.items.len() != 1 {
             return Vec::new();
@@ -1352,7 +1121,7 @@ impl Database {
         }
     }
 
-    fn classify_special_event(event: &Event) -> Option<ClassifiedEvent> {
+    fn classify_supported_event(event: &Event) -> Option<ClassifiedEvent> {
         if let Some(data) = Self::find_data(event, "public.rtf") {
             return Some(Self::classified_from_single_data(
                 "rtf",
@@ -1999,50 +1768,6 @@ mod tests {
         }
     }
 
-    fn protobuf_varint_bytes(mut value: u64) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        loop {
-            let mut byte = (value & 0x7f) as u8;
-            value >>= 7;
-            if value != 0 {
-                byte |= 0x80;
-            }
-            bytes.push(byte);
-            if value == 0 {
-                return bytes;
-            }
-        }
-    }
-
-    fn protobuf_bytes_field(field_number: u32, value: &[u8]) -> Vec<u8> {
-        let mut bytes = protobuf_varint_bytes((u64::from(field_number) << 3) | 2);
-        bytes.extend(protobuf_varint_bytes(value.len() as u64));
-        bytes.extend(value);
-        bytes
-    }
-
-    fn wecom_private_event(text: &str, image_label: &str, cache_id: &str) -> Event {
-        let text_payload = protobuf_bytes_field(1, text.as_bytes());
-        let text_wrapper = protobuf_bytes_field(2, &text_payload);
-        let text_metadata = protobuf_bytes_field(1, &text_wrapper);
-        let text_message = protobuf_bytes_field(101, &text_metadata);
-
-        let mut image_metadata = protobuf_bytes_field(2, image_label.as_bytes());
-        image_metadata.extend(protobuf_bytes_field(10, cache_id.as_bytes()));
-        let image_message = protobuf_bytes_field(103, &image_metadata);
-
-        let mut message_list = protobuf_bytes_field(1, &text_message);
-        message_list.extend(protobuf_bytes_field(1, &image_message));
-        let payload = protobuf_bytes_field(10, &message_list);
-        let value = plist::Value::Array(vec![plist::Value::Data(payload)]);
-        let mut private_data = Vec::new();
-        value
-            .to_writer_binary(&mut private_data)
-            .expect("private payload should encode");
-
-        event(vec![data(WECOM_PRIVATE_PASTEBOARD_TYPES[0], &private_data)])
-    }
-
     fn in_memory_database() -> Database {
         let db = Database {
             conn: Connection::open_in_memory().expect("in-memory database should open"),
@@ -2171,55 +1896,7 @@ mod tests {
     }
 
     #[test]
-    fn wecom_private_payload_preserves_text_and_image_order() {
-        let cache_id = "0123456789abcdef0123456789abcdef";
-        let event = wecom_private_event("First message", "capture.png", cache_id);
-
-        let parts = Database::wecom_preview_parts(&event);
-
-        assert_eq!(parts.len(), 2);
-        assert!(matches!(
-            &parts[0],
-            WeComPreviewPart::Text(text) if text == "First message"
-        ));
-        assert!(matches!(
-            &parts[1],
-            WeComPreviewPart::Image { label, cache_id: parsed_cache_id }
-                if label == "capture.png" && parsed_cache_id == cache_id
-        ));
-    }
-
-    #[test]
-    fn wecom_cached_image_prefers_hd_file_and_detects_actual_media_type() {
-        let cache_id = "0123456789abcdef0123456789abcdef";
-        let profiles_root = std::env::temp_dir().join(format!(
-            "copy_stack_wecom_cache_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after epoch")
-                .as_nanos()
-        ));
-        let image_dir = profiles_root
-            .join("profile")
-            .join("Caches/Images/1970-1")
-            .join(format!("{}_HD", cache_id));
-        std::fs::create_dir_all(&image_dir).expect("cache directory should create");
-        let image_bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3];
-        std::fs::write(image_dir.join("capture.bin"), &image_bytes)
-            .expect("cached image should write");
-
-        let image =
-            Database::wecom_cached_image_in_profiles(&profiles_root, "capture.bin", cache_id)
-                .expect("cached image should resolve");
-        let _ = std::fs::remove_dir_all(&profiles_root);
-
-        assert_eq!(image.0, "image/png");
-        assert_eq!(image.1, image_bytes);
-    }
-
-    #[test]
-    fn classification_prefers_png_over_html_for_chrome_image_copy() {
+    fn classification_prefers_png_over_html() {
         let event = event(vec![
             data("public.png", &[0, 1, 2]),
             data(
@@ -2536,7 +2213,7 @@ mod tests {
     fn classification_hashes_utf8_plain_text_when_private_metadata_is_present() {
         let event = event(vec![
             data("dyn.agk8", b"metadata"),
-            data("org.chromium.source-url", b"https://example.test"),
+            data("com.example.source-url", b"https://example.test"),
             data("com.apple.webarchive", b"archive"),
             data("public.utf8-plain-text", b"hello\nworld"),
         ]);
@@ -2738,7 +2415,7 @@ mod tests {
     fn event_blob_preserves_private_metadata_for_classified_events() {
         let event = event(vec![
             data("dyn.agk8", b"metadata"),
-            data("org.chromium.source-url", b"https://example.test"),
+            data("com.example.source-url", b"https://example.test"),
             data("com.apple.webarchive", b"archive"),
             data("public.utf8-plain-text", b"hello\nworld"),
         ]);
@@ -2751,7 +2428,7 @@ mod tests {
         assert_eq!(decoded.items[0].data_list[0].r#type, "dyn.agk8");
         assert_eq!(
             decoded.items[0].data_list[1].r#type,
-            "org.chromium.source-url"
+            "com.example.source-url"
         );
         assert_eq!(decoded.items[0].data_list[2].r#type, "com.apple.webarchive");
         assert_eq!(
@@ -2939,6 +2616,20 @@ mod tests {
                 data: image_bytes,
             }
         );
+    }
+
+    #[test]
+    fn get_all_events_does_not_decode_private_formats() {
+        let db = in_memory_database();
+        let event = event(vec![data("com.example.private", b"opaque payload")]);
+
+        db.insert_event(&event)
+            .expect("private event should be retained");
+        let events = db.get_all_events().expect("events should load");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data_type, "unsupported");
+        assert!(events[0].rich_preview.is_empty());
     }
 
     #[test]

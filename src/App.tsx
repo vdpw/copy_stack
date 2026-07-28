@@ -68,7 +68,6 @@ interface ImageDisplay {
 type RichPreviewSegment =
   | RichPreviewTextSegment
   | RichPreviewImageSegment
-  | RichPreviewImagePlaceholderSegment
   | RichPreviewVideoSegment;
 
 interface RichPreviewTextSegment {
@@ -81,11 +80,6 @@ interface RichPreviewImageSegment {
   label: string;
   media_type: string;
   data: number[];
-}
-
-interface RichPreviewImagePlaceholderSegment {
-  type: "image_placeholder";
-  label: string;
 }
 
 interface RichPreviewVideoSegment {
@@ -559,8 +553,7 @@ function App() {
         segment => segment.type === "text"
       );
       const hasImage = preview.richSegments.some(
-        segment =>
-          segment.type === "image" || segment.type === "image_placeholder"
+        segment => segment.type === "image"
       );
       const hasVideo = preview.richSegments.some(
         segment => segment.type === "video"
@@ -598,20 +591,6 @@ function App() {
 
     if (segment.type === "video") {
       return <VideoThumbnail key={`video-${index}`} {...segment} />;
-    }
-
-    if (segment.type === "image_placeholder") {
-      return (
-        <div
-          className="event-rich-image event-rich-image-missing"
-          key={`image-placeholder-${index}`}
-        >
-          <div className="event-image-placeholder">
-            <ImageIcon aria-hidden="true" size={22} />
-          </div>
-          <p className="event-text">{segment.label}</p>
-        </div>
-      );
     }
 
     return (
