@@ -1,4 +1,5 @@
 use crate::event::{decode_event_blob, encode_event_blob, event_from_legacy_json, ClipboardEvent};
+use crate::i18n::LanguagePreference;
 use chrono::Utc;
 use copy_event_listener::event::{Data, Event, Item};
 use rusqlite::{types::ValueRef, Connection, Result};
@@ -16,6 +17,7 @@ const MAX_ITEMS_KEY: &str = "max_items";
 const SHOW_IN_MENU_BAR_KEY: &str = "show_in_menu_bar";
 const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
 const COMPACT_MODE_KEY: &str = "compact_mode";
+const LANGUAGE_KEY: &str = "language";
 const FILE_DISPLAY_FORMAT: &str = "copy_stack.file-items.v1";
 const INLINE_ATTACHMENT_PLACEHOLDER: char = '\u{fffc}';
 
@@ -54,6 +56,8 @@ pub struct AppSettings {
     pub show_in_menu_bar: bool,
     pub move_restored_item_to_top: bool,
     pub compact_mode: bool,
+    pub language: String,
+    pub resolved_language: String,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -241,6 +245,10 @@ impl Database {
         )?;
         self.conn.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('compact_mode', 'false')",
+            [],
+        )?;
+        self.conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('language', 'system')",
             [],
         )?;
 
@@ -542,11 +550,14 @@ impl Database {
     }
 
     pub fn get_settings(&self) -> Result<AppSettings> {
+        let language = self.get_language()?;
         Ok(AppSettings {
             max_items: self.get_max_items()?,
             show_in_menu_bar: self.get_show_in_menu_bar()?,
             move_restored_item_to_top: self.get_move_restored_item_to_top()?,
             compact_mode: self.get_compact_mode()?,
+            language: language.code().to_string(),
+            resolved_language: language.resolve().code().to_string(),
         })
     }
 
@@ -596,6 +607,18 @@ impl Database {
             COMPACT_MODE_KEY,
             if compact_mode { "true" } else { "false" },
         )
+    }
+
+    pub(crate) fn get_language(&self) -> Result<LanguagePreference> {
+        let value = self.get_string_setting(LANGUAGE_KEY)?;
+        Ok(value
+            .as_deref()
+            .and_then(LanguagePreference::from_code)
+            .unwrap_or(LanguagePreference::System))
+    }
+
+    pub(crate) fn set_language(&self, language: LanguagePreference) -> Result<()> {
+        self.set_setting(LANGUAGE_KEY, language.code())
     }
 
     pub fn insert_event(&self, event: &Event) -> Result<bool> {
@@ -1320,7 +1343,7 @@ impl Database {
     fn file_display_item_for_url(
         item_type: &str,
         file_url: &str,
-        index: usize,
+        _index: usize,
         display_name: Option<String>,
     ) -> FileDisplayItem {
         let name = display_name
@@ -1328,7 +1351,7 @@ impl Database {
                 Self::file_url_display_name(file_url)
                     .filter(|name| !Self::is_file_reference_display_name(name))
             })
-            .unwrap_or_else(|| Self::generic_file_display_name(item_type, index));
+            .unwrap_or_default();
 
         FileDisplayItem {
             item_type: item_type.to_string(),
@@ -1399,15 +1422,6 @@ impl Database {
 
     fn is_file_reference_display_name(display_name: &str) -> bool {
         display_name == ".file" || display_name.starts_with("id=")
-    }
-
-    fn generic_file_display_name(item_type: &str, index: usize) -> String {
-        let label = if item_type == "folder" {
-            "Folder"
-        } else {
-            "File"
-        };
-        format!("{} {}", label, index + 1)
     }
 
     fn path_display_name(path: &str) -> Option<String> {
@@ -2125,7 +2139,7 @@ mod tests {
             vec![
                 FileDisplayItem {
                     item_type: "file".to_string(),
-                    name: "File 1".to_string(),
+                    name: String::new(),
                 },
                 FileDisplayItem {
                     item_type: "file".to_string(),
@@ -2159,7 +2173,7 @@ mod tests {
             vec![
                 FileDisplayItem {
                     item_type: "folder".to_string(),
-                    name: "Folder 1".to_string(),
+                    name: String::new(),
                 },
                 FileDisplayItem {
                     item_type: "folder".to_string(),
@@ -2215,6 +2229,39 @@ mod tests {
             db.get_settings()
                 .expect("settings should load")
                 .compact_mode
+        );
+    }
+
+    #[test]
+    fn language_setting_defaults_to_system_and_persists() {
+        let db = in_memory_database();
+
+        assert_eq!(
+            db.get_language().expect("setting should load"),
+            LanguagePreference::System
+        );
+
+        db.set_language(LanguagePreference::TraditionalChinese)
+            .expect("setting should update");
+
+        assert_eq!(
+            db.get_language().expect("setting should reload"),
+            LanguagePreference::TraditionalChinese
+        );
+        let settings = db.get_settings().expect("settings should load");
+        assert_eq!(settings.language, "zh-TW");
+        assert_eq!(settings.resolved_language, "zh-TW");
+    }
+
+    #[test]
+    fn invalid_stored_language_falls_back_to_system() {
+        let db = in_memory_database();
+        db.set_setting(LANGUAGE_KEY, "unsupported")
+            .expect("fixture should update");
+
+        assert_eq!(
+            db.get_language().expect("setting should load"),
+            LanguagePreference::System
         );
     }
 

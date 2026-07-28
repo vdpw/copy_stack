@@ -20,6 +20,16 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import "./App.css";
+import {
+  detectSystemLanguage,
+  getEventTypeLabel as getLocalizedEventTypeLabel,
+  getMessages,
+  isLanguagePreference,
+  isSupportedLanguage,
+  languageDisplayNames,
+  languagePreferences,
+} from "./i18n";
+import type { LanguagePreference, SupportedLanguage } from "./i18n";
 
 const currentWindowLabel = getCurrentWindow().label;
 const isSettingsWindow = currentWindowLabel === "settings";
@@ -42,6 +52,8 @@ interface AppSettings {
   show_in_menu_bar: boolean;
   move_restored_item_to_top: boolean;
   compact_mode: boolean;
+  language: string;
+  resolved_language: string;
 }
 
 interface FileDisplayItem {
@@ -160,7 +172,7 @@ function buildHtmlPreviewDocument(html: string) {
 </html>`;
 }
 
-function HtmlPreview({ html }: { html: string }) {
+function HtmlPreview({ html, title }: { html: string; title: string }) {
   return (
     <div
       className="event-html-preview-shell"
@@ -171,13 +183,17 @@ function HtmlPreview({ html }: { html: string }) {
         referrerPolicy="no-referrer"
         sandbox=""
         srcDoc={buildHtmlPreviewDocument(html)}
-        title="Formatted clipboard preview"
+        title={title}
       />
     </div>
   );
 }
 
-function ImageThumbnail({ bytes, label, mediaType }: ImageDisplay) {
+function ImageThumbnail({
+  alt,
+  bytes,
+  mediaType,
+}: ImageDisplay & { alt: string }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -196,7 +212,7 @@ function ImageThumbnail({ bytes, label, mediaType }: ImageDisplay) {
 
   return (
     <img
-      alt={`${label} thumbnail`}
+      alt={alt}
       className="event-image-thumbnail"
       draggable={false}
       src={imageUrl}
@@ -204,7 +220,11 @@ function ImageThumbnail({ bytes, label, mediaType }: ImageDisplay) {
   );
 }
 
-function VideoThumbnail({ label, path }: RichPreviewVideoSegment) {
+function VideoThumbnail({
+  coverAlt,
+  label,
+  path,
+}: RichPreviewVideoSegment & { coverAlt: string }) {
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -268,14 +288,14 @@ function VideoThumbnail({ label, path }: RichPreviewVideoSegment) {
       <div className="event-video-frame">
         {coverUrl ? (
           <img
-            alt={`${label} video cover`}
+            alt={coverAlt}
             className="event-video-cover"
             draggable={false}
             src={coverUrl}
           />
         ) : (
           <div
-            aria-label={`${label} video cover`}
+            aria-label={coverAlt}
             className="event-video-cover event-video-cover-placeholder"
           />
         )}
@@ -298,6 +318,11 @@ function App() {
   const [menuBarVisible, setMenuBarVisible] = useState(true);
   const [moveRestoredItemToTop, setMoveRestoredItemToTop] = useState(false);
   const [compactMode, setCompactMode] = useState(false);
+  const [languagePreference, setLanguagePreference] =
+    useState<LanguagePreference>("system");
+  const [language, setLanguage] = useState<SupportedLanguage>(() =>
+    detectSystemLanguage()
+  );
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [eventsToDelete, setEventsToDelete] = useState(0);
   const [copiedEventHash, setCopiedEventHash] = useState<string | null>(null);
@@ -305,6 +330,7 @@ function App() {
   const [expandedEventHashes, setExpandedEventHashes] = useState<Set<string>>(
     () => new Set()
   );
+  const messages = getMessages(language);
 
   useEffect(() => {
     return () => {
@@ -313,6 +339,11 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+    document.title = isSettingsWindow ? messages.settings : "Copy Stack";
+  }, [language, messages.settings]);
 
   const loadEvents = useCallback(async () => {
     setRefreshing(true);
@@ -338,38 +369,88 @@ function App() {
     }
   }, []);
 
-  const loadSettings = useCallback(async () => {
-    try {
-      const settings = await invoke<AppSettings>("get_app_settings");
+  const applySettings = useCallback(
+    (settings: AppSettings, preservePendingMaxItems = false) => {
       setMaxItems(settings.max_items);
-      setPendingMaxItemsInput(String(settings.max_items));
+      if (!preservePendingMaxItems) {
+        setPendingMaxItemsInput(String(settings.max_items));
+      }
       setMenuBarVisible(settings.show_in_menu_bar);
       setMoveRestoredItemToTop(settings.move_restored_item_to_top);
       setCompactMode(settings.compact_mode);
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        console.error("Failed to load app settings", error);
+      setLanguagePreference(
+        isLanguagePreference(settings.language) ? settings.language : "system"
+      );
+      setLanguage(
+        isSupportedLanguage(settings.resolved_language)
+          ? settings.resolved_language
+          : detectSystemLanguage()
+      );
+    },
+    []
+  );
+
+  const loadSettings = useCallback(
+    async (preservePendingMaxItems = false) => {
+      try {
+        const settings = await invoke<AppSettings>("get_app_settings");
+        applySettings(settings, preservePendingMaxItems);
+      } catch (error) {
+        if (import.meta.env.DEV) {
+          console.error("Failed to load app settings", error);
+        }
       }
-    }
-  }, []);
+    },
+    [applySettings]
+  );
 
   useEffect(() => {
     void loadEvents();
     void loadSettings();
 
-    let unlistenHistory: (() => void) | undefined;
+    let disposed = false;
+    let unlisteners: (() => void)[] = [];
 
     const registerListeners = async () => {
-      unlistenHistory = await listen("clipboard-history-updated", () => {
-        void loadEvents();
-        void loadSettings();
-      });
+      const registered: (() => void)[] = [];
+      try {
+        registered.push(
+          await listen("clipboard-history-updated", () => {
+            void loadEvents();
+            void loadSettings(true);
+          })
+        );
+        if (disposed) {
+          registered.forEach(unlisten => unlisten());
+          return;
+        }
+
+        registered.push(
+          await listen("app-language-changed", () => {
+            void loadSettings(true);
+          })
+        );
+        if (disposed) {
+          registered.forEach(unlisten => unlisten());
+          return;
+        }
+
+        unlisteners = registered;
+      } catch (error) {
+        registered.forEach(unlisten => unlisten());
+        throw error;
+      }
     };
 
-    void registerListeners();
+    void registerListeners().catch(error => {
+      if (import.meta.env.DEV) {
+        console.error("Failed to register app event listeners", error);
+      }
+    });
 
     return () => {
-      unlistenHistory?.();
+      disposed = true;
+      unlisteners.forEach(unlisten => unlisten());
     };
   }, [loadEvents, loadSettings]);
 
@@ -440,6 +521,22 @@ function App() {
     } catch (error) {
       if (import.meta.env.DEV) {
         console.error("Failed to update compact mode", error);
+      }
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const updateLanguage = async (nextLanguage: LanguagePreference) => {
+    setSettingsLoading(true);
+    try {
+      const settings = await invoke<AppSettings>("set_language", {
+        language: nextLanguage,
+      });
+      applySettings(settings, true);
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error("Failed to update language", error);
       }
     } finally {
       setSettingsLoading(false);
@@ -547,7 +644,7 @@ function App() {
   };
 
   const formatTimestamp = (timestamp: number) => {
-    return new Date(timestamp).toLocaleString();
+    return new Date(timestamp).toLocaleString(language);
   };
 
   const getCharacterDisplayWidth = (character: string) => {
@@ -596,7 +693,10 @@ function App() {
   const decodeDisplayText = (event: StoredEvent) => {
     const text = new TextDecoder().decode(new Uint8Array(event.display));
     if (text.includes("\uFFFD")) {
-      return event.data_type.toUpperCase();
+      return getLocalizedEventTypeLabel(messages, event.data_type);
+    }
+    if (event.data_type === "video" && text === "Video") {
+      return messages.video;
     }
     return text;
   };
@@ -633,7 +733,7 @@ function App() {
     return {
       bytes: new Uint8Array(event.display),
       mediaType: "image/png",
-      label: "PNG image",
+      label: messages.pngImage,
     };
   };
 
@@ -663,20 +763,20 @@ function App() {
       );
 
       if (hasText && hasImage) {
-        return "Text + image";
+        return messages.textAndImage;
       }
       if (hasVideo) {
-        return "Video";
+        return messages.video;
       }
       if (hasImage) {
-        return "Image";
+        return messages.image;
       }
       if (hasText) {
-        return "Text";
+        return messages.text;
       }
     }
 
-    return event.data_type;
+    return getLocalizedEventTypeLabel(messages, event.data_type);
   };
 
   const renderRichPreviewSegment = (
@@ -693,14 +793,24 @@ function App() {
     }
 
     if (segment.type === "video") {
-      return <VideoThumbnail key={`video-${index}`} {...segment} />;
+      const label = segment.label === "Video" ? messages.video : segment.label;
+      return (
+        <VideoThumbnail
+          key={`video-${index}`}
+          {...segment}
+          coverAlt={messages.videoCoverAlt(label)}
+          label={label}
+        />
+      );
     }
 
+    const label = segment.label === "Image" ? messages.image : segment.label;
     return (
       <div className="event-rich-image" key={`image-${index}`}>
         <ImageThumbnail
+          alt={messages.imageThumbnailAlt(label)}
           bytes={new Uint8Array(segment.data)}
-          label={segment.label}
+          label={label}
           mediaType={segment.media_type}
         />
       </div>
@@ -715,6 +825,16 @@ function App() {
     }
 
     return <File aria-hidden="true" className="event-type-icon" size={18} />;
+  };
+
+  const getFileItemLabel = (item: FileDisplayItem, index: number) => {
+    if (item.name.length > 0) {
+      return item.name;
+    }
+
+    return item.type === "folder"
+      ? messages.folderFallbackName(index + 1)
+      : messages.fileFallbackName(index + 1);
   };
 
   const renderEventTypeIcon = (dataType: string) => {
@@ -771,16 +891,47 @@ function App() {
       {isSettingsWindow ? (
         <main className="preferences-panel">
           <header className="preferences-header">
-            <h1>Settings</h1>
+            <h1>{messages.settings}</h1>
           </header>
 
           <section className="preference-group">
+            <div className="preference-row">
+              <span className="preference-copy">
+                <label htmlFor="language-select">{messages.language}</label>
+                <span className="preference-description">
+                  {languagePreference === "system"
+                    ? messages.languageDescriptionSystem(
+                        languageDisplayNames[language]
+                      )
+                    : messages.languageDescriptionManual}
+                </span>
+              </span>
+              <select
+                id="language-select"
+                className="language-select"
+                value={languagePreference}
+                onChange={event => {
+                  if (isLanguagePreference(event.target.value)) {
+                    void updateLanguage(event.target.value);
+                  }
+                }}
+                disabled={settingsLoading}
+              >
+                {languagePreferences.map(preference => (
+                  <option key={preference} value={preference}>
+                    {preference === "system"
+                      ? messages.systemDefault
+                      : languageDisplayNames[preference]}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="preference-row preference-row-stacked">
               <div className="preference-copy">
-                <label htmlFor="max-items-input">Stored items</label>
+                <label htmlFor="max-items-input">{messages.storedItems}</label>
                 <p>
-                  Keep the newest {maxItems} clips. Currently storing{" "}
-                  {copyEvents.length}.
+                  {messages.storedItemsDescription(maxItems, copyEvents.length)}
                 </p>
               </div>
               <div className="preference-control storage-input-row">
@@ -805,24 +956,22 @@ function App() {
                     !isStorageLimitDirty
                   }
                 >
-                  Apply
+                  {messages.apply}
                 </button>
               </div>
               {!isPendingMaxItemsValid && (
-                <p className="settings-error">
-                  Enter a whole number between 1 and 1000.
-                </p>
+                <p className="settings-error">{messages.storageLimitError}</p>
               )}
             </div>
 
             <label className="preference-row">
               <span className="preference-copy">
-                <span className="preference-title">Compact mode</span>
+                <span className="preference-title">{messages.compactMode}</span>
                 <span className="preference-description">
                   <Type size={13} />
                   {compactMode
-                    ? "Only recognizable text is kept; image and file clips are ignored."
-                    : "Keep all supported clipboard content and formatting."}
+                    ? messages.compactModeEnabled
+                    : messages.compactModeDisabled}
                 </span>
               </span>
               <span className="mac-switch">
@@ -841,13 +990,13 @@ function App() {
             <label className="preference-row">
               <span className="preference-copy">
                 <span className="preference-title">
-                  Move restored items to top
+                  {messages.moveRestoredItemsToTop}
                 </span>
                 <span className="preference-description">
                   <ArrowUpDown size={13} />
                   {moveRestoredItemToTop
-                    ? "Restored clips refresh history order."
-                    : "Restored clips keep their current order."}
+                    ? messages.restoreOrderingEnabled
+                    : messages.restoreOrderingDisabled}
                 </span>
               </span>
               <span className="mac-switch">
@@ -865,12 +1014,14 @@ function App() {
 
             <label className="preference-row">
               <span className="preference-copy">
-                <span className="preference-title">Show in menu bar</span>
+                <span className="preference-title">
+                  {messages.showInMenuBar}
+                </span>
                 <span className="preference-description">
                   {menuBarVisible ? <Eye size={13} /> : <EyeOff size={13} />}
                   {menuBarVisible
-                    ? "Recent clips are available from the tray menu."
-                    : "The tray menu is hidden."}
+                    ? messages.menuBarEnabled
+                    : messages.menuBarDisabled}
                 </span>
               </span>
               <span className="mac-switch">
@@ -892,10 +1043,10 @@ function App() {
           <main className="content-panel">
             <section className="panel-header">
               <div>
-                <p className="section-kicker">Clipboard history</p>
-                <h2>Recent events</h2>
+                <p className="section-kicker">{messages.clipboardHistory}</p>
+                <h2>{messages.recentEvents}</h2>
                 <p className="section-description">
-                  Refresh the list, restore an item, or clear the local stack.
+                  {messages.historyDescription}
                 </p>
               </div>
 
@@ -906,7 +1057,7 @@ function App() {
                   className="btn btn-secondary"
                 >
                   <RefreshCw size={16} />
-                  Refresh
+                  {messages.refresh}
                 </button>
                 <button
                   onClick={() => void clearAllEvents()}
@@ -914,22 +1065,20 @@ function App() {
                   disabled={copyEvents.length === 0}
                 >
                   <Trash2 size={16} />
-                  Clear all
+                  {messages.clearAll}
                 </button>
               </div>
             </section>
 
             {loading ? (
-              <div className="placeholder-card">
-                Loading clipboard history...
-              </div>
+              <div className="placeholder-card">{messages.loadingHistory}</div>
             ) : copyEvents.length === 0 ? (
               <div className="empty-state">
-                <h3>No clipboard events yet</h3>
+                <h3>{messages.emptyHistory}</h3>
                 <p>
                   {compactMode
-                    ? "Start copying text and it will appear here and in the menu bar menu."
-                    : "Start copying text or files and they will appear here and in the menu bar menu."}
+                    ? messages.emptyHistoryCompact
+                    : messages.emptyHistoryAll}
                 </p>
               </div>
             ) : (
@@ -966,7 +1115,10 @@ function App() {
                           <span>{getEventTypeLabel(event, preview)}</span>
                         </p>
                         {isExpanded && preview.html ? (
-                          <HtmlPreview html={preview.html} />
+                          <HtmlPreview
+                            html={preview.html}
+                            title={messages.formattedPreviewTitle}
+                          />
                         ) : preview.richSegments.length > 0 ? (
                           <div className="event-rich-preview">
                             {preview.richSegments.map((segment, index) =>
@@ -979,12 +1131,18 @@ function App() {
                           </div>
                         ) : preview.image ? (
                           <div className="event-image-preview">
-                            <ImageThumbnail {...preview.image} />
+                            <ImageThumbnail
+                              {...preview.image}
+                              alt={messages.imageThumbnailAlt(
+                                preview.image.label
+                              )}
+                            />
                             <p className="event-text">{preview.image.label}</p>
                           </div>
                         ) : visibleFileItems ? (
                           <ul className="event-file-items">
                             {visibleFileItems.map((item, index) => {
+                              const itemLabel = getFileItemLabel(item, index);
                               const hiddenItemCount =
                                 preview.fileItems && !isExpanded
                                   ? preview.fileItems.length -
@@ -992,29 +1150,29 @@ function App() {
                                   : 0;
                               const collapsedSuffix =
                                 hiddenItemCount > 0
-                                  ? ` + ${hiddenItemCount} more`
+                                  ? messages.moreItems(hiddenItemCount)
                                   : "";
                               const collapsedFileLabel =
                                 hiddenItemCount > 0
                                   ? `${truncateContent(
-                                      item.name,
+                                      itemLabel,
                                       Math.max(
                                         0,
                                         displayMaxWidth -
                                           getDisplayWidth(collapsedSuffix)
                                       )
                                     )}${collapsedSuffix}`
-                                  : truncateContent(item.name);
+                                  : truncateContent(itemLabel);
 
                               return (
                                 <li
                                   className="event-file-item"
-                                  key={`${item.type}-${item.name}-${index}`}
+                                  key={`${item.type}-${itemLabel}-${index}`}
                                 >
                                   {renderFileItemIcon(item.type)}
                                   <span>
                                     {isExpanded
-                                      ? item.name
+                                      ? itemLabel
                                       : collapsedFileLabel}
                                   </span>
                                 </li>
@@ -1044,16 +1202,16 @@ function App() {
                           }}
                           aria-label={
                             wasJustCopied
-                              ? "Copied to clipboard"
-                              : "Restore to clipboard"
+                              ? messages.copiedToClipboard
+                              : messages.restoreToClipboard
                           }
                           className={`btn btn-primary copy-feedback-button ${
                             wasJustCopied ? "btn-copy-success" : ""
                           }`}
                           title={
                             wasJustCopied
-                              ? "Copied to clipboard"
-                              : "Restore to clipboard"
+                              ? messages.copiedToClipboard
+                              : messages.restoreToClipboard
                           }
                         >
                           {wasJustCopied ? (
@@ -1068,7 +1226,8 @@ function App() {
                             void deleteEvent(event.content_hash);
                           }}
                           className="btn btn-danger"
-                          title="Delete item"
+                          aria-label={messages.deleteItem}
+                          title={messages.deleteItem}
                         >
                           <Trash2 size={16} />
                         </button>
@@ -1079,7 +1238,7 @@ function App() {
               </div>
             )}
             <span aria-live="polite" className="sr-only">
-              {copiedEventHash ? "Clipboard item copied." : ""}
+              {copiedEventHash ? messages.clipboardItemCopied : ""}
             </span>
           </main>
         </div>
@@ -1090,17 +1249,18 @@ function App() {
           <div className="modal-content">
             <div className="modal-header">
               <AlertTriangle size={24} className="warning-icon" />
-              <h3>Reduce stored history?</h3>
+              <h3>{messages.reduceHistory}</h3>
             </div>
 
             <div className="modal-body">
               <p>
-                Changing the storage limit from <strong>{maxItems}</strong> to{" "}
-                <strong>{parsedPendingMaxItems}</strong> will remove the{" "}
-                <strong>{eventsToDelete}</strong> oldest clipboard events from
-                local storage.
+                {messages.reduceHistoryDescription(
+                  maxItems,
+                  parsedPendingMaxItems,
+                  eventsToDelete
+                )}
               </p>
-              <p className="warning-text">This action cannot be undone.</p>
+              <p className="warning-text">{messages.cannotUndo}</p>
             </div>
 
             <div className="modal-actions">
@@ -1109,14 +1269,14 @@ function App() {
                 className="btn btn-secondary"
                 disabled={settingsLoading}
               >
-                Cancel
+                {messages.cancel}
               </button>
               <button
                 onClick={() => void confirmMaxItemsChange()}
                 className="btn btn-danger"
                 disabled={settingsLoading}
               >
-                {settingsLoading ? "Updating..." : "Delete and update"}
+                {settingsLoading ? messages.updating : messages.deleteAndUpdate}
               </button>
             </div>
           </div>

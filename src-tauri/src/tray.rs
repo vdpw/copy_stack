@@ -1,7 +1,8 @@
+use crate::i18n::{native_strings, Language};
 use crate::store::{Database, FileDisplayItem, StoredEvent};
 use crate::{
-    clear_restore_suppression_if_matches, queue_restore_suppression, restore_event_to_clipboard,
-    write_history_jsonl_if_enabled, AppState,
+    clear_restore_suppression_if_matches, queue_restore_suppression, resolved_language,
+    restore_event_to_clipboard, write_history_jsonl_if_enabled, AppState,
 };
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::TrayIconBuilder;
@@ -21,6 +22,7 @@ const MAX_MENU_LABEL_WIDTH: usize = 40;
 const TRUNCATION_SUFFIX: &str = "...";
 
 pub const HISTORY_UPDATED_EVENT: &str = "clipboard-history-updated";
+pub const LANGUAGE_CHANGED_EVENT: &str = "app-language-changed";
 pub const NAVIGATE_EVENT: &str = "app:navigate";
 pub const HISTORY_PAGE: &str = "history";
 
@@ -79,7 +81,13 @@ pub fn show_page<R: Runtime>(app: &AppHandle<R>, page: &str) -> Result<(), Strin
 }
 
 pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let language = resolved_language(app)?;
+    let strings = native_strings(language);
+
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
+        window
+            .set_title(strings.settings)
+            .map_err(|error| error.to_string())?;
         window.show().map_err(|error| error.to_string())?;
         let _ = window.unminimize();
         let _ = window.set_focus();
@@ -87,10 +95,10 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
     }
 
     WebviewWindowBuilder::new(app, SETTINGS_WINDOW_LABEL, WebviewUrl::default())
-        .title("Settings")
-        .inner_size(520.0, 410.0)
-        .min_inner_size(520.0, 410.0)
-        .max_inner_size(520.0, 410.0)
+        .title(strings.settings)
+        .inner_size(560.0, 500.0)
+        .min_inner_size(560.0, 500.0)
+        .max_inner_size(560.0, 500.0)
         .resizable(false)
         .maximizable(false)
         .center()
@@ -100,8 +108,26 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
     Ok(())
 }
 
+pub(crate) fn sync_window_titles<R: Runtime>(
+    app: &AppHandle<R>,
+    language: Language,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
+        window
+            .set_title(native_strings(language).settings)
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
 pub fn notify_history_changed<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     app.emit(HISTORY_UPDATED_EVENT, ())
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn notify_language_changed<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    app.emit(LANGUAGE_CHANGED_EVENT, ())
         .map_err(|error| error.to_string())
 }
 
@@ -180,31 +206,37 @@ fn restore_event<R: Runtime>(app: &AppHandle<R>, content_hash: &str) -> Result<(
 }
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
-    let events = {
+    let (events, language) = {
         let state = app.state::<AppState>();
         let db = state.db.lock().unwrap();
-        db.get_all_events().map_err(|error| error.to_string())?
+        (
+            db.get_all_events().map_err(|error| error.to_string())?,
+            db.get_language()
+                .map_err(|error| error.to_string())?
+                .resolve(),
+        )
     };
+    let strings = native_strings(language);
 
-    let recent_items = MenuItemBuilder::with_id(HEADER_ID, "Recent clipboard items")
+    let recent_items = MenuItemBuilder::with_id(HEADER_ID, strings.recent_clipboard_items)
         .enabled(false)
         .build(app)
         .map_err(|error| error.to_string())?;
-    let empty_state = MenuItemBuilder::with_id(EMPTY_STATE_ID, "No clipboard items yet")
+    let empty_state = MenuItemBuilder::with_id(EMPTY_STATE_ID, strings.no_clipboard_items)
         .enabled(false)
         .build(app)
         .map_err(|error| error.to_string())?;
-    let open_history = MenuItemBuilder::with_id(OPEN_HISTORY_ID, "Open history")
+    let open_history = MenuItemBuilder::with_id(OPEN_HISTORY_ID, strings.open_history)
         .build(app)
         .map_err(|error| error.to_string())?;
-    let open_settings = MenuItemBuilder::with_id(OPEN_SETTINGS_ID, "Open settings")
+    let open_settings = MenuItemBuilder::with_id(OPEN_SETTINGS_ID, strings.open_settings)
         .build(app)
         .map_err(|error| error.to_string())?;
-    let clear_history = MenuItemBuilder::with_id(CLEAR_HISTORY_ID, "Clear history")
+    let clear_history = MenuItemBuilder::with_id(CLEAR_HISTORY_ID, strings.clear_history)
         .enabled(!events.is_empty())
         .build(app)
         .map_err(|error| error.to_string())?;
-    let quit = MenuItemBuilder::with_id(QUIT_ID, "Quit Copy Stack")
+    let quit = MenuItemBuilder::with_id(QUIT_ID, strings.quit_copy_stack)
         .build(app)
         .map_err(|error| error.to_string())?;
 
@@ -214,8 +246,8 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
         builder = builder.item(&empty_state);
     } else {
         for event in &events {
-            let menu_label = event_menu_label(event);
-            let full_label = event_menu_full_label(event);
+            let menu_label = event_menu_label(event, language);
+            let full_label = event_menu_full_label(event, language);
             let event_item_id = format!("{}{}", EVENT_ITEM_PREFIX, event.content_hash.as_str());
 
             if menu_label == full_label {
@@ -251,21 +283,22 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
         .map_err(|error| error.to_string())
 }
 
-fn event_menu_label(event: &StoredEvent) -> String {
-    truncate_label(event_menu_full_label(event))
+fn event_menu_label(event: &StoredEvent, language: Language) -> String {
+    truncate_label(event_menu_full_label(event, language))
 }
 
-fn event_menu_full_label(event: &StoredEvent) -> String {
+fn event_menu_full_label(event: &StoredEvent, language: Language) -> String {
     if let Some(file_display) = Database::parse_file_display(&event.display) {
         return file_display
             .items
             .iter()
-            .map(file_menu_item_label)
+            .enumerate()
+            .map(|(index, item)| file_menu_item_label(item, index, language))
             .collect::<Vec<_>>()
             .join("  ");
     }
 
-    let label = display_label(event);
+    let label = display_label(event, language);
     match event.data_type.as_str() {
         "file" | "files" => format!("📄 {}", label),
         "folder" | "folders" => format!("📁 {}", label),
@@ -273,19 +306,47 @@ fn event_menu_full_label(event: &StoredEvent) -> String {
     }
 }
 
-fn file_menu_item_label(item: &FileDisplayItem) -> String {
+fn file_menu_item_label(item: &FileDisplayItem, index: usize, language: Language) -> String {
+    let strings = native_strings(language);
     let icon = match item.item_type.as_str() {
         "folder" => "📁",
         _ => "📄",
     };
-    format!("{} {}", icon, item.name)
+    let name = if item.name.is_empty() {
+        let fallback = if item.item_type == "folder" {
+            strings.folder
+        } else {
+            strings.file
+        };
+        format!("{} {}", fallback, index + 1)
+    } else {
+        item.name.clone()
+    };
+    format!("{} {}", icon, name)
 }
 
-fn display_label(event: &StoredEvent) -> String {
+fn display_label(event: &StoredEvent, language: Language) -> String {
+    let strings = native_strings(language);
     let label = String::from_utf8_lossy(&event.display);
     let normalized = label.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.is_empty() || label.contains('\u{fffd}') {
-        event.data_type.to_uppercase()
+        match event.data_type.as_str() {
+            "file" => strings.file.to_string(),
+            "folder" => strings.folder.to_string(),
+            "files" => strings.files.to_string(),
+            "folders" => strings.folders.to_string(),
+            "files and folders" => strings.files_and_folders.to_string(),
+            "video" => strings.video.to_string(),
+            _ => event.data_type.to_uppercase(),
+        }
+    } else if event.data_type == "video" && normalized == "Video" {
+        strings.video.to_string()
+    } else if event.data_type == "files" && normalized == "Files" {
+        strings.files.to_string()
+    } else if event.data_type == "folders" && normalized == "Folders" {
+        strings.folders.to_string()
+    } else if event.data_type == "files and folders" && normalized == "Files and folders" {
+        strings.files_and_folders.to_string()
     } else {
         normalized
     }
@@ -356,5 +417,43 @@ mod tests {
 
         assert!(display_width(&label) <= 40);
         assert!(label.ends_with(TRUNCATION_SUFFIX));
+    }
+
+    #[test]
+    fn generated_file_names_are_localized_at_presentation_time() {
+        let file = FileDisplayItem {
+            item_type: "file".to_string(),
+            name: String::new(),
+        };
+        let folder = FileDisplayItem {
+            item_type: "folder".to_string(),
+            name: String::new(),
+        };
+
+        assert_eq!(
+            file_menu_item_label(&file, 0, Language::SimplifiedChinese),
+            "📄 文件 1"
+        );
+        assert_eq!(
+            file_menu_item_label(&folder, 1, Language::TraditionalChinese),
+            "📁 資料夾 2"
+        );
+    }
+
+    #[test]
+    fn aggregate_file_fallbacks_are_localized() {
+        let event = StoredEvent {
+            content_hash: "hash".to_string(),
+            data_type: "files and folders".to_string(),
+            display: Vec::new(),
+            html_preview: None,
+            rich_preview: Vec::new(),
+            timestamp: 0,
+        };
+
+        assert_eq!(
+            display_label(&event, Language::TraditionalChinese),
+            "檔案和資料夾"
+        );
     }
 }
