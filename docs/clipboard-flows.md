@@ -7,6 +7,8 @@ Backend-to-frontend events:
 - `clipboard-history-updated`: history changed; frontend should call
   `get_copy_events`.
 - `app:navigate`: tray requested a view; payload is `history` or `settings`.
+- `app-language-changed`: language preference or resolution changed; every
+  frontend window should reload `get_app_settings`.
 
 The current app does not use `new-copy-event`.
 
@@ -166,6 +168,35 @@ shown and restored as plain text only. Visible old rows with the same effective
 text are deduplicated without changing the underlying rows until that text is
 captured again in compact mode.
 
+## Change Language
+
+```mermaid
+sequenceDiagram
+  participant UI as Settings UI
+  participant Backend as Tauri Backend
+  participant DB as SQLite
+  participant Native as App Menu and Window
+  participant Tray as Tray Menu
+  participant Windows as Open Webviews
+
+  UI->>Backend: invoke set_language(language)
+  Backend->>DB: persist language preference
+  Backend->>Backend: resolve manual value or system locale
+  Backend->>Native: rebuild app menu and settings title
+  Backend->>Tray: rebuild localized tray menu
+  Backend->>Windows: emit app-language-changed
+  Windows->>Backend: invoke get_app_settings
+  Backend->>Windows: return language and resolved_language
+  Backend->>UI: return updated AppSettings
+```
+
+The command accepts `system`, `en`, `zh-CN`, or `zh-TW`. With `system`, the
+backend uses `sys-locale` to choose a concrete supported language and falls back
+to English when necessary. The initiating settings window applies the returned
+`AppSettings`; the event keeps other open webviews synchronized. Native menu
+and tray labels update without restarting the app. Stored clipboard content is
+not translated.
+
 ## Payload Flow
 
 Stored payloads are binary-encoded Rust values:
@@ -196,4 +227,6 @@ event back to `ClipboardListener::set_clipboard_event(...)`.
 - If a tray action changes history, emit `clipboard-history-updated`.
 - If a frontend command changes history but does not emit, reload explicitly
   after the command resolves.
+- If language changes, rebuild native labels, emit `app-language-changed`, and
+  reload `AppSettings` rather than copying a resolved locale between webviews.
 - Keep restore suppression behavior intentional when writing to the clipboard.

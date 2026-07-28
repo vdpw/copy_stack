@@ -47,7 +47,10 @@ Columns:
   `folders`, `files and folders`, or `text`.
 - `display`: backend-selected preview bytes. Current text labels are stored as
   UTF-8 bytes. File and folder events store UTF-8 JSON with format
-  `copy_stack.file-items.v1` and one `{type, name}` entry per copied item.
+  `copy_stack.file-items.v1` and one `{type, name}` entry per copied item. A
+  blank `name` means no safe filename was available; the frontend and tray
+  generate a localized fallback from `type` and item position at presentation
+  time.
   PNG image events store the PNG bytes used by the frontend thumbnail preview.
 - `timestamp`: Unix timestamp in milliseconds. This is also the ordering key.
 
@@ -73,6 +76,8 @@ Current keys:
 - `show_in_menu_bar`, default `true`.
 - `move_restored_item_to_top`, default `false`.
 - `compact_mode`, default `false`.
+- `language`, default `system`; valid values are `system`, `en`, `zh-CN`, and
+  `zh-TW`.
 
 Settings are stored as strings and parsed by helper methods.
 
@@ -86,7 +91,8 @@ Settings are stored as strings and parsed by helper methods.
    the current schema when needed.
 3. Creates indexes.
 4. Creates `settings`.
-5. Inserts default setting rows if they do not exist.
+5. Inserts default setting rows, including `language = system`, if they do not
+   exist.
 6. Calls `rebuild_history_metadata()`.
 
 ## Metadata Rebuild
@@ -156,6 +162,24 @@ The raw clipboard event remains the source of truth for restore operations.
 `display` preview when no ordered mixed preview can be built.
 Application-private formats are retained for restore only when the event also
 has a supported public representation; they are not decoded for previews.
+
+## Language Preference
+
+Only the user's preference is persisted in the `language` setting. `system`
+means that the backend resolves the operating system locale at runtime through
+`sys-locale`; the other values are explicit overrides. Existing databases gain
+the default row through `INSERT OR IGNORE`, so this setting does not require a
+schema migration.
+
+`Database::get_language()` treats a missing or invalid stored value as
+`system`. `AppSettings` exposes two related fields:
+
+- `language`: the stored preference (`system`, `en`, `zh-CN`, or `zh-TW`).
+- `resolved_language`: the concrete language used by the current process
+  (`en`, `zh-CN`, or `zh-TW`).
+
+`resolved_language` is derived when settings are read and is not a separate
+database key. Unsupported system locales resolve to English.
 
 ## JSONL History Mirror
 
@@ -230,10 +254,11 @@ priorities:
 6. One `items` element with `public.file-url`: hash the file URL `data`; store
    a structured file display payload with the item `type` (`file` or `folder`)
    and display `name`. The name comes from raw `public.utf8-plain-text` split on
-   carriage returns when possible, then a safe basename fallback, then `File N`
-   or `Folder N`; opaque reference ids such as `id=...` are never used as
-   display names. A file URL ending with `/` is classified as `folder`;
-   otherwise it is classified as `file`.
+   carriage returns when possible, then a safe basename fallback. When neither
+   is available, `name` is blank so the frontend and tray can generate a
+   localized `File N` or `Folder N` label; opaque reference ids such as
+   `id=...` are never used as display names. A file URL ending with `/` is
+   classified as `folder`; otherwise it is classified as `file`.
 7. Multiple `items` elements where every item has `public.file-url`: ignore
    other data types for classification, concatenate all `public.file-url` data
    values in item order, and hash the concatenated bytes. Store a structured

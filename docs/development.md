@@ -108,15 +108,16 @@ pnpm format
 
 ## Verification Matrix
 
-| Change type                              | Required checks                                                                                  |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Frontend-only UI or TypeScript           | `pnpm type-check`, `pnpm lint`                                                                   |
-| Rust-only backend                        | `cargo check --manifest-path src-tauri/Cargo.toml`                                               |
-| Tauri command contract                   | `cargo check --manifest-path src-tauri/Cargo.toml`, `pnpm type-check`, manual `pnpm desktop:dev` |
-| Clipboard capture or restore             | `cargo check --manifest-path src-tauri/Cargo.toml`, `pnpm type-check`, manual `pnpm desktop:dev` |
-| Persistence, ordering, dedupe, retention | `cargo check --manifest-path src-tauri/Cargo.toml`, manual test with an existing database        |
-| Release workflow                         | `pnpm type-check`, `pnpm lint`, `pnpm desktop:build` when local signing/platform setup allows    |
-| Documentation-only                       | Review links and paths; no build is normally required                                            |
+| Change type                              | Required checks                                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Frontend-only UI or TypeScript           | `pnpm type-check`, `pnpm lint`                                                                                |
+| Rust-only backend                        | `cargo check --manifest-path src-tauri/Cargo.toml`                                                            |
+| Tauri command contract                   | `cargo check --manifest-path src-tauri/Cargo.toml`, `pnpm type-check`, manual `pnpm desktop:dev`              |
+| Clipboard capture or restore             | `cargo check --manifest-path src-tauri/Cargo.toml`, `pnpm type-check`, manual `pnpm desktop:dev`              |
+| Persistence, ordering, dedupe, retention | `cargo check --manifest-path src-tauri/Cargo.toml`, manual test with an existing database                     |
+| Localization or language settings        | `cargo check --manifest-path src-tauri/Cargo.toml`, `pnpm type-check`, `pnpm lint`, manual `pnpm desktop:dev` |
+| Release workflow                         | `pnpm type-check`, `pnpm lint`, `pnpm desktop:build` when local signing/platform setup allows                 |
+| Documentation-only                       | Review links and paths; no build is normally required                                                         |
 
 ## Manual QA Checklist
 
@@ -135,6 +136,26 @@ Use `pnpm desktop:dev` for behavior changes.
     trimmed after confirmation.
 11. Toggle menu bar visibility.
 12. Close the main window and confirm the app keeps running.
+
+For localization changes, also verify:
+
+1. Start with Language set to System Default and confirm the UI matches a
+   supported operating system locale. Unsupported locales should fall back to
+   English.
+2. Select English, Simplified Chinese, and Traditional Chinese in turn.
+3. For each language, inspect History, Settings, empty/loading states, buttons,
+   confirmation text, accessibility labels, event-type labels, and timestamp
+   formatting.
+4. Confirm the settings-window title, macOS application menu, and tray menu
+   update immediately without restarting.
+5. Keep both the History and Settings webviews open while changing language and
+   confirm `app-language-changed` synchronizes both.
+6. Relaunch the app and confirm an explicit override persists.
+7. Switch back to System Default, relaunch, and confirm the `language` row
+   remains `system` while `resolved_language` is a concrete `en`, `zh-CN`, or
+   `zh-TW` value.
+8. Confirm clipboard content, file names, and stored history are not translated
+   or otherwise modified by a language change.
 
 ## Local Database Handling
 
@@ -205,3 +226,16 @@ Do not commit:
 3. Emit `clipboard-history-updated` if another frontend reload path is needed.
 4. Sync the tray after history or visibility changes.
 5. Validate manually with `pnpm desktop:dev`.
+
+### Add Or Change Localized UI
+
+1. Update the `Messages` interface and all `en`, `zh-CN`, and `zh-TW` entries in
+   `src/i18n.ts`.
+2. Update `NativeStrings` and all three Rust catalogs in
+   `src-tauri/src/i18n.rs` when native menu or window text changes.
+3. Keep frontend preference codes, backend preference parsing, and persisted
+   setting values synchronized.
+4. If the selected language can change at runtime, rebuild affected native UI
+   and emit `app-language-changed`.
+5. Run the localization checks from the verification matrix and the manual QA
+   list above.

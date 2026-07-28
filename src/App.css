@@ -35,7 +35,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -57,7 +58,8 @@ button {
   user-select: none;
 }
 
-.app-shell input {
+.app-shell input,
+.app-shell select {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -536,6 +538,27 @@ button {
 .storage-input:focus {
   outline: 3px solid rgba(0, 122, 255, 0.22);
   border-color: rgba(0, 122, 255, 0.52);
+}
+
+.language-select {
+  width: 166px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(60, 60, 67, 0.22);
+  border-radius: 7px;
+  padding: 6px 28px 6px 9px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1d1d1f;
+  cursor: pointer;
+}
+
+.language-select:focus {
+  outline: 3px solid rgba(0, 122, 255, 0.22);
+  border-color: rgba(0, 122, 255, 0.52);
+}
+
+.language-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .settings-error {

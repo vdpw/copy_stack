@@ -11,12 +11,15 @@
 - Timestamps with `chrono`.
 - Content hashing with `sha2`.
 - Clipboard capture and restore through `copy_event_listener`.
+- System locale detection through `sys-locale`.
 
 ## Main Files
 
 - `src-tauri/src/main.rs`: binary entry point.
 - `src-tauri/src/lib.rs`: Tauri app setup, shared state, command handlers,
   listener event handling, restore suppression, and command registration.
+- `src-tauri/src/i18n.rs`: supported languages and preferences, system locale
+  resolution, and native menu/tray string catalogs.
 - `src-tauri/src/store/database.rs`: database wrapper and all persistence logic.
 - `src-tauri/src/tray.rs`: menu bar setup, tray menu sync, tray action handling,
   and frontend event emission.
@@ -41,11 +44,13 @@
 2. Hides the main window instead of closing it.
 3. Creates the database.
 4. Stores `AppState` in Tauri managed state.
-5. Runs retention cleanup.
-6. Writes the optional history JSONL mirror when enabled.
-7. Sets up and syncs the tray menu.
-8. Spawns a thread to consume clipboard events from `rx`.
-9. Registers Tauri commands.
+5. Resolves the persisted language preference and installs the localized native
+   application menu.
+6. Runs retention cleanup.
+7. Writes the optional history JSONL mirror when enabled.
+8. Sets up and syncs the localized tray menu.
+9. Spawns a thread to consume clipboard events from `rx`.
+10. Registers Tauri commands.
 
 ## Startup Flags
 
@@ -126,7 +131,11 @@ registered as a command, although the current frontend does not call it.
 ### `get_app_settings`
 
 Returns `max_items`, `show_in_menu_bar`, `move_restored_item_to_top`, and
-`compact_mode`.
+`compact_mode`, plus:
+
+- `language`: the persisted preference (`system`, `en`, `zh-CN`, or `zh-TW`).
+- `resolved_language`: the concrete language currently selected after resolving
+  `system` (`en`, `zh-CN`, or `zh-TW`).
 
 ### `set_max_items`
 
@@ -146,6 +155,33 @@ Stores restore ordering behavior.
 Stores compact-mode behavior, rebuilds the tray menu, and notifies frontend
 windows to reload history. It does not destructively rewrite older full
 events; those rows are projected to plain text while the setting is enabled.
+
+### `set_language`
+
+Validates and stores a `system`, `en`, `zh-CN`, or `zh-TW` preference. It then
+resolves the concrete language, replaces the native application menu, updates
+an existing settings-window title, rebuilds the tray menu, and emits
+`app-language-changed` to all frontend windows. The command returns the complete
+updated `AppSettings`, including both `language` and `resolved_language`.
+
+Unsupported command values return an error without changing the setting.
+
+## Language Resolution
+
+The application supports English (`en`), Simplified Chinese (`zh-CN`), and
+Traditional Chinese (`zh-TW`). A manual preference resolves directly to its
+matching language. The default `system` preference asks `sys-locale` for the
+operating system's ordered locale list and selects the first supported locale.
+
+Locale matching is case-insensitive and accepts hyphenated or underscored tags.
+`zh-Hant` and Chinese locales for Taiwan, Hong Kong, or Macao resolve to
+`zh-TW`; other Chinese locales resolve to `zh-CN`. English variants resolve to
+`en`. If none of the reported locales is supported, the backend falls back to
+English.
+
+The Rust catalog in `src-tauri/src/i18n.rs` owns native strings. The TypeScript
+catalog in `src/i18n.ts` owns webview strings; keep their supported language
+codes aligned.
 
 ## Clipboard Event Consumption
 
@@ -178,12 +214,15 @@ hash matches.
 `src-tauri/src/tray.rs` owns all tray behavior:
 
 - Creates the tray icon with id `main`.
-- Rebuilds the menu from database history during `sync`.
+- Rebuilds the menu from database history and the resolved language during
+  `sync`.
 - Applies the `show_in_menu_bar` setting through `tray.set_visible(...)`.
 - Emits `app:navigate` when the user selects History or Settings.
 - Clears history from the menu.
 - Restores a selected event from the menu.
 - Emits `clipboard-history-updated` when the frontend must reload.
+- Emits `app-language-changed` after a language update so open webviews reload
+  `AppSettings`.
 
 Tray menu item ids use stable prefixes:
 
@@ -195,24 +234,37 @@ Tray menu item ids use stable prefixes:
 
 ## Tray Labels
 
-Tray labels decode the stored `display` bytes from the database classifier. The
-top-level menu label truncates long results to 40 display-width characters,
+Structural tray labels such as Recent clipboard items, Open history, Settings,
+Clear history, the empty state, and Quit are selected from the native catalog.
+Language changes rebuild the menu immediately. Clipboard content labels remain
+the user's stored content rather than translated text.
+
+Clipboard labels decode the stored `display` bytes from the database classifier.
+The top-level menu label truncates long results to 40 display-width characters,
 counting CJK/full-width characters as 2 columns and ASCII characters as 1.
-Overflow uses `...`. If truncation is needed, the event is rendered as a submenu
-whose child item shows the full label and restores the clip when selected. Plain
-text displays are normalized as one label. File and folder displays parse the
-`copy_stack.file-items.v1` JSON payload and prefix each item name with a file or
-folder marker. File item names come from the raw `public.utf8-plain-text`
-filename list split on carriage returns, with generic `File N` / `Folder N`
-fallbacks. Opaque reference ids such as `id=...` are never used as display
+Overflow uses `...`. If truncation is needed, the event is rendered as a
+submenu whose child item shows the full label and restores the clip when
+selected. Plain text displays are normalized as one label. File and folder
+displays parse the `copy_stack.file-items.v1` JSON payload and prefix each item
+name with a file or folder marker. File item names come from the raw
+`public.utf8-plain-text` filename list split on carriage returns, with generic
+file/folder labels generated in the resolved language when no safe name is
+available. Opaque reference ids such as `id=...` are never used as display
 names. This keeps the tray and React history previews aligned while allowing
 binary thumbnails to be stored in the same column later.
+
+On macOS, `lib.rs` also builds localized application menu headings and
+predefined actions. Startup replaces the initial system-localized menu with the
+persisted preference after the database is available, and `set_language`
+replaces it again immediately.
 
 ## Backend Change Checklist
 
 - Register new commands in `tauri::generate_handler!`.
 - Update frontend `invoke(...)` calls for command changes.
 - Keep emitted event names synchronized with frontend listeners.
+- Keep the Rust native catalog and TypeScript catalog language codes
+  synchronized.
 - Avoid holding `state.db` locks while doing unrelated work.
 - Run `cargo fmt --manifest-path src-tauri/Cargo.toml`.
 - Run `cargo check --manifest-path src-tauri/Cargo.toml`.
