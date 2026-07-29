@@ -64,9 +64,9 @@ verification.
 This evidence was collected against version `0.1.0` on an Apple M3 Pro MacBook
 Pro (`arm64`, macOS 26.5.2). All clipboard fixtures used synthetic text and
 markers. The app ran with `COPY_STACK_QA_DATA_DIR` pointing to a private
-directory under `/private/tmp`; the real Copy Stack database was not opened.
-The system pasteboard was backed up to a `0600` file and restored after the
-sequence.
+directory under macOS's per-user temporary area; the real Copy Stack database
+was not opened. The system pasteboard was backed up to a `0600` file and
+restored after the sequence.
 
 | Check                                | Result and redacted evidence                                                                                                                                                                                                                                                    |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -79,10 +79,13 @@ sequence.
 | Single instance                      | Normal and malformed-argument second launches exited successfully while the original debug listener and database owner continued running. The malformed launch reported only a stable startup-options message.                                                                  |
 | Filesystem/mirror fault coverage     | Automated tests used SQLite-created rollback journal, WAL, and SHM files and verified/repaired `0600` modes. Mirror pre/post-commit injection, stale-generation interleaving, atomic replacement, symlink/hardlink rejection, and bounded shutdown passed.                      |
 
-The Mac was locked during the final visual pass, so Computer Use could not
-inspect or operate the window. This local record therefore does **not** claim
-completion of visual source badges, History restore clicks, Settings/autostart
-toggle state, or focus appearance. Native Intel clipboard, login/logout/reboot,
-app-relocation, offline WebView, TextExpander/Universal Clipboard, and packaged
-window QA also remain release-blocking manual rows unless a release owner
-explicitly approves an exception.
+The Mac was locked during the final 2026-07-28 visual pass, so Computer Use
+could not inspect or operate the window then. A read-only visual pass on
+2026-07-29 opened Settings from an isolated debug bundle and confirmed the
+authoritative launch-at-login state rendered as off. It did not change that
+persistent OS preference, so enable/disable read-back remains unclaimed.
+Visual source badges, History restore clicks, and focus appearance also remain
+unclaimed. Native Intel clipboard, login/logout/reboot, app-relocation, offline
+WebView, TextExpander/Universal Clipboard, and packaged window QA remain
+release-blocking manual rows unless a release owner explicitly approves an
+exception.

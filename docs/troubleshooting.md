@@ -85,6 +85,12 @@ files, insecure directories, and missing owner permissions. It does not switch
 to a less-private fallback. Fix the target ownership/type/permissions or move a
 sanitized backup aside and retry.
 
+For isolated debug QA, use a directory returned by bare `mktemp -d` on macOS.
+A fixed child directly under `/tmp` or `/private/tmp` is rejected because its
+immediate parent is public. Confirm the terminal reports `database initialized`
+before interacting with the QA build; otherwise stop instead of continuing in a
+failed startup state.
+
 Do not delete or upload a real clipboard database while troubleshooting.
 
 ## Migration Fails Or Repeats
