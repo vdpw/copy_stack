@@ -1,8 +1,10 @@
 use crate::i18n::{native_strings, Language};
-use crate::store::{Database, FileDisplayItem, StoredEvent};
+use crate::pasteboard_protocol::prepare_event_for_restore;
+use crate::store::{Database, FileDisplayItem, TrayEvent};
 use crate::{
-    clear_restore_suppression_if_matches, queue_restore_suppression, resolved_language,
-    restore_event_to_clipboard, write_history_jsonl_if_enabled, AppState,
+    clear_restore_suppression_if_matches, queue_restore_suppression,
+    report_restore_post_processing_failure, report_tray_operation_failure, resolved_language,
+    restore_event_to_clipboard, schedule_history_mirror_for_tray, AppState,
 };
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::TrayIconBuilder;
@@ -20,6 +22,14 @@ const HEADER_ID: &str = "label::recent-items";
 const EMPTY_STATE_ID: &str = "label::empty";
 const MAX_MENU_LABEL_WIDTH: usize = 40;
 const TRUNCATION_SUFFIX: &str = "...";
+const ERROR_APP_STATE_UNAVAILABLE: &str = "app_state_unavailable";
+const ERROR_CLIPBOARD_ITEM_UNAVAILABLE: &str = "clipboard_item_unavailable";
+const ERROR_CLIPBOARD_RESTORE_FAILED: &str = "clipboard_restore_failed";
+const ERROR_HISTORY_OPERATION_FAILED: &str = "history_operation_failed";
+const ERROR_MAIN_WINDOW_UNAVAILABLE: &str = "main_window_unavailable";
+const ERROR_MENU_BUILD_FAILED: &str = "menu_build_failed";
+const ERROR_TRAY_OPERATION_FAILED: &str = "tray_operation_failed";
+const ERROR_WINDOW_OPERATION_FAILED: &str = "window_operation_failed";
 
 pub const HISTORY_UPDATED_EVENT: &str = "clipboard-history-updated";
 pub const LANGUAGE_CHANGED_EVENT: &str = "app-language-changed";
@@ -35,6 +45,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
             if let Err(_error) = handle_menu_event(app, event.id().as_ref()) {
+                report_tray_operation_failure(app);
                 debug_error!("tray menu action failed: {}", _error);
             }
         });
@@ -45,56 +56,73 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         tray_builder = tray_builder.title("Copy Stack");
     }
 
-    tray_builder.build(app).map_err(|error| error.to_string())?;
+    tray_builder
+        .build(app)
+        .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())?;
     sync(app)
 }
 
 pub fn sync<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let tray = app
         .tray_by_id(TRAY_ID)
-        .ok_or_else(|| "Tray icon not found".to_string())?;
+        .ok_or_else(|| ERROR_TRAY_OPERATION_FAILED.to_string())?;
     let menu = build_menu(app)?;
     tray.set_menu(Some(menu))
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())?;
 
     let show_in_menu_bar = {
         let state = app.state::<AppState>();
-        let db = state.db.lock().unwrap();
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| ERROR_APP_STATE_UNAVAILABLE.to_string())?;
         db.get_show_in_menu_bar()
-            .map_err(|error| error.to_string())?
+            .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?
     };
     tray.set_visible(show_in_menu_bar)
-        .map_err(|error| error.to_string())
+        .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())
 }
 
 pub fn show_page<R: Runtime>(app: &AppHandle<R>, page: &str) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
-        .ok_or_else(|| "Main window not found".to_string())?;
+        .ok_or_else(|| ERROR_MAIN_WINDOW_UNAVAILABLE.to_string())?;
 
-    window.show().map_err(|error| error.to_string())?;
-    let _ = window.unminimize();
-    let _ = window.set_focus();
+    window
+        .show()
+        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
+    window
+        .unminimize()
+        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
+    window
+        .set_focus()
+        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
 
     app.emit(NAVIGATE_EVENT, page.to_string())
-        .map_err(|error| error.to_string())
+        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())
 }
 
 pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let language = resolved_language(app)?;
+    let language = resolved_language(app).map_err(|_| ERROR_APP_STATE_UNAVAILABLE.to_string())?;
     let strings = native_strings(language);
 
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         window
             .set_title(strings.settings)
-            .map_err(|error| error.to_string())?;
-        window.show().map_err(|error| error.to_string())?;
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
+        window
+            .show()
+            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
+        window
+            .unminimize()
+            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
+        window
+            .set_focus()
+            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(app, SETTINGS_WINDOW_LABEL, WebviewUrl::default())
+    let window = WebviewWindowBuilder::new(app, SETTINGS_WINDOW_LABEL, WebviewUrl::default())
         .title(strings.settings)
         .inner_size(560.0, 500.0)
         .min_inner_size(560.0, 500.0)
@@ -103,7 +131,13 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
         .maximizable(false)
         .center()
         .build()
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
+    window
+        .unminimize()
+        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
+    window
+        .set_focus()
+        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
 
     Ok(())
 }
@@ -115,7 +149,7 @@ pub(crate) fn sync_window_titles<R: Runtime>(
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         window
             .set_title(native_strings(language).settings)
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
     }
 
     Ok(())
@@ -123,12 +157,12 @@ pub(crate) fn sync_window_titles<R: Runtime>(
 
 pub fn notify_history_changed<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     app.emit(HISTORY_UPDATED_EVENT, ())
-        .map_err(|error| error.to_string())
+        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())
 }
 
 pub(crate) fn notify_language_changed<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     app.emit(LANGUAGE_CHANGED_EVENT, ())
-        .map_err(|error| error.to_string())
+        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())
 }
 
 fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) -> Result<(), String> {
@@ -136,16 +170,17 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) -> Result<()
         OPEN_HISTORY_ID => show_page(app, HISTORY_PAGE),
         OPEN_SETTINGS_ID => show_settings_window(app),
         CLEAR_HISTORY_ID => {
+            let state = app.state::<AppState>();
             {
-                let state = app.state::<AppState>();
-                let db = state.db.lock().unwrap();
-                db.clear_all_events().map_err(|error| error.to_string())?;
-                write_history_jsonl_if_enabled(
-                    &db,
-                    state.history_jsonl.as_ref(),
-                    "tray clear history",
-                );
+                let db = state
+                    .db
+                    .lock()
+                    .map_err(|_| ERROR_APP_STATE_UNAVAILABLE.to_string())?;
+                db.clear_all_events()
+                    .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?;
             }
+            schedule_history_mirror_for_tray(&state)
+                .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?;
             notify_history_changed(app)?;
             sync(app)
         }
@@ -162,44 +197,61 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) -> Result<()
 }
 
 fn restore_event<R: Runtime>(app: &AppHandle<R>, content_hash: &str) -> Result<(), String> {
-    let (event, restore_content_hash, move_restored_item_to_top) = {
+    let (seed, move_restored_item_to_top) = {
         let state = app.state::<AppState>();
-        let db = state.db.lock().unwrap();
-        let event = db
-            .get_event_by_content_hash(content_hash)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("Clipboard item not found: {}", content_hash))?;
-        let restore_content_hash = db
-            .event_content_hash(&event)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "Stored event has no restorable text".to_string())?;
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| ERROR_APP_STATE_UNAVAILABLE.to_string())?;
+        let seed = db
+            .get_restore_seed(content_hash)
+            .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?
+            .ok_or_else(|| ERROR_CLIPBOARD_ITEM_UNAVAILABLE.to_string())?;
         let move_restored_item_to_top = db
             .get_move_restored_item_to_top()
-            .map_err(|error| error.to_string())?;
-        (event, restore_content_hash, move_restored_item_to_top)
+            .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?;
+        (seed, move_restored_item_to_top)
     };
+    let restore_content_hash = seed.content_hash.clone();
+    let source_bundle_id = seed.source_bundle_id.clone();
+    let is_remote_clipboard = seed.is_remote_clipboard;
+    let event = seed
+        .into_event()
+        .map_err(|_| ERROR_CLIPBOARD_ITEM_UNAVAILABLE.to_string())?
+        .ok_or_else(|| ERROR_CLIPBOARD_ITEM_UNAVAILABLE.to_string())?;
+    let event = prepare_event_for_restore(event, source_bundle_id.as_deref(), is_remote_clipboard)
+        .map_err(|_| ERROR_CLIPBOARD_ITEM_UNAVAILABLE.to_string())?;
 
     if !move_restored_item_to_top {
         let state = app.state::<AppState>();
         queue_restore_suppression(&state, restore_content_hash.clone());
     }
 
-    if let Err(error) = restore_event_to_clipboard(event) {
+    if restore_event_to_clipboard(event).is_err() {
         let state = app.state::<AppState>();
         clear_restore_suppression_if_matches(&state, &restore_content_hash);
-        return Err(error);
+        return Err(ERROR_CLIPBOARD_RESTORE_FAILED.to_string());
     }
 
     if move_restored_item_to_top {
-        {
-            let state = app.state::<AppState>();
-            let db = state.db.lock().unwrap();
-            db.move_event_to_top(content_hash)
-                .map_err(|error| error.to_string())?;
-            write_history_jsonl_if_enabled(&db, state.history_jsonl.as_ref(), "tray restore");
+        let state = app.state::<AppState>();
+        let post_processing_result = (|| -> Result<(), String> {
+            {
+                let db = state
+                    .db
+                    .lock()
+                    .map_err(|_| ERROR_APP_STATE_UNAVAILABLE.to_string())?;
+                db.move_event_to_top(content_hash)
+                    .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?;
+            }
+            schedule_history_mirror_for_tray(&state)
+                .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?;
+            notify_history_changed(app)?;
+            sync(app)
+        })();
+        if post_processing_result.is_err() {
+            report_restore_post_processing_failure(app, &state);
         }
-        notify_history_changed(app)?;
-        sync(app)?;
     }
 
     Ok(())
@@ -208,11 +260,15 @@ fn restore_event<R: Runtime>(app: &AppHandle<R>, content_hash: &str) -> Result<(
 fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
     let (events, language) = {
         let state = app.state::<AppState>();
-        let db = state.db.lock().unwrap();
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| ERROR_APP_STATE_UNAVAILABLE.to_string())?;
         (
-            db.get_all_events().map_err(|error| error.to_string())?,
+            db.get_tray_events()
+                .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?,
             db.get_language()
-                .map_err(|error| error.to_string())?
+                .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?
                 .resolve(),
         )
     };
@@ -221,24 +277,24 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
     let recent_items = MenuItemBuilder::with_id(HEADER_ID, strings.recent_clipboard_items)
         .enabled(false)
         .build(app)
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
     let empty_state = MenuItemBuilder::with_id(EMPTY_STATE_ID, strings.no_clipboard_items)
         .enabled(false)
         .build(app)
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
     let open_history = MenuItemBuilder::with_id(OPEN_HISTORY_ID, strings.open_history)
         .build(app)
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
     let open_settings = MenuItemBuilder::with_id(OPEN_SETTINGS_ID, strings.open_settings)
         .build(app)
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
     let clear_history = MenuItemBuilder::with_id(CLEAR_HISTORY_ID, strings.clear_history)
         .enabled(!events.is_empty())
         .build(app)
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
     let quit = MenuItemBuilder::with_id(QUIT_ID, strings.quit_copy_stack)
         .build(app)
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
 
     let mut builder = MenuBuilder::new(app).item(&recent_items).separator();
 
@@ -253,12 +309,12 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
             if menu_label == full_label {
                 let item = MenuItemBuilder::with_id(event_item_id, menu_label)
                     .build(app)
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
                 builder = builder.item(&item);
             } else {
                 let full_item = MenuItemBuilder::with_id(event_item_id, full_label)
                     .build(app)
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
                 let preview_menu = SubmenuBuilder::with_id(
                     app,
                     format!("{}{}", EVENT_PREVIEW_PREFIX, event.content_hash.as_str()),
@@ -266,7 +322,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
                 )
                 .item(&full_item)
                 .build()
-                .map_err(|error| error.to_string())?;
+                .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
                 builder = builder.item(&preview_menu);
             }
         }
@@ -280,14 +336,14 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
         .separator()
         .item(&quit)
         .build()
-        .map_err(|error| error.to_string())
+        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())
 }
 
-fn event_menu_label(event: &StoredEvent, language: Language) -> String {
+fn event_menu_label(event: &TrayEvent, language: Language) -> String {
     truncate_label(event_menu_full_label(event, language))
 }
 
-fn event_menu_full_label(event: &StoredEvent, language: Language) -> String {
+fn event_menu_full_label(event: &TrayEvent, language: Language) -> String {
     if let Some(file_display) = Database::parse_file_display(&event.display) {
         return file_display
             .items
@@ -325,7 +381,7 @@ fn file_menu_item_label(item: &FileDisplayItem, index: usize, language: Language
     format!("{} {}", icon, name)
 }
 
-fn display_label(event: &StoredEvent, language: Language) -> String {
+fn display_label(event: &TrayEvent, language: Language) -> String {
     let strings = native_strings(language);
     let label = String::from_utf8_lossy(&event.display);
     let normalized = label.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -442,18 +498,35 @@ mod tests {
 
     #[test]
     fn aggregate_file_fallbacks_are_localized() {
-        let event = StoredEvent {
+        let event = TrayEvent {
             content_hash: "hash".to_string(),
             data_type: "files and folders".to_string(),
             display: Vec::new(),
-            html_preview: None,
-            rich_preview: Vec::new(),
-            timestamp: 0,
         };
 
         assert_eq!(
             display_label(&event, Language::TraditionalChinese),
             "檔案和資料夾"
+        );
+    }
+
+    #[test]
+    fn first_and_twentieth_tray_labels_preserve_boundary_items() {
+        let events = (1..=20)
+            .map(|index| TrayEvent {
+                content_hash: format!("{index:064x}"),
+                data_type: "text".to_string(),
+                display: format!("clipboard item {index}").into_bytes(),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            event_menu_label(&events[0], Language::English),
+            "clipboard item 1"
+        );
+        assert_eq!(
+            event_menu_label(&events[19], Language::English),
+            "clipboard item 20"
         );
     }
 }

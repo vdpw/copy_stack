@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-max-history-bytes"
+description = "Enables the set_max_history_bytes command without any pre-configured scope."
+commands.allow = ["set_max_history_bytes"]
+
+[[permission]]
+identifier = "deny-set-max-history-bytes"
+description = "Denies the set_max_history_bytes command without any pre-configured scope."
+commands.deny = ["set_max_history_bytes"]

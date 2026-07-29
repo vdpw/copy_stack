@@ -4,134 +4,143 @@
 
 ```mermaid
 flowchart TD
-  OS["System Clipboard"] --> Listener["copy_event_listener thread"]
-  Listener --> Channel["std::sync::mpsc channel"]
-  Channel --> Tauri["Tauri backend src-tauri/src/lib.rs"]
-  Tauri --> DB["SQLite $HOME/.copy_stack/copy_stack.db"]
-  Tauri --> JSONL["Optional history JSONL mirror"]
-  Tauri --> Tray["Tauri tray menu src-tauri/src/tray.rs"]
-  Tauri --> Events["Tauri window events"]
-  UI["React app src/App.tsx"] --> Commands["Tauri invoke commands"]
-  Commands --> Tauri
-  Events --> UI
-  Tray --> Tauri
-  Tauri --> OS
+  OS["macOS NSPasteboard"] --> Listener["copy_event_listener thread"]
+  Listener --> Channel["mpsc channel"]
+  Channel --> Policy["protocol + resource policy"]
+  Policy --> DB["SQLite private store"]
+  DB --> Summaries["cursor summaries / tray LIMIT 20"]
+  DB --> Seeds["owned detail / restore seeds"]
+  Seeds --> Detail["detail decode outside DB lock"]
+  DB --> Mirror["coalescing JSONL worker<br/>independent read connection"]
+  Summaries --> Tray["native menu bar"]
+  Summaries --> UI["React History"]
+  Detail --> UI
+  UI --> Commands["capability-scoped Tauri commands"]
+  Commands --> DB
+  Commands --> OS
 ```
 
 ## Runtime Lifecycle
 
-1. `src-tauri/src/main.rs` creates an `mpsc` channel.
-2. `main.rs` starts a clipboard listener thread using
-   `ClipboardListener::new().with_interval(500)`.
-3. The listener sends captured `copy_event_listener::event::Event` values to
-   the backend over the channel.
-4. `main.rs` parses app-specific startup flags.
-5. `copy_stack_lib::run(rx, startup_options)` starts the Tauri runtime.
-6. `src-tauri/src/lib.rs` initializes SQLite, shared app state, startup cleanup,
-   the tray menu, and a thread that consumes clipboard events from `rx`.
-7. The React frontend mounts, calls `get_copy_events` and `get_app_settings`,
-   and subscribes to backend events.
+1. `main.rs` parses project startup flags and calls `run(startup_options)`.
+2. The Tauri builder registers `tauri-plugin-single-instance` before every
+   other plugin. A later process asks the first process to show, unminimize, and
+   focus its main window, then exits before app setup.
+3. The autostart plugin is registered with the internal
+   `--copy-stack-autostart` argument. Autostart remains off until the user
+   enables the operating system login item.
+4. First-instance setup applies the launch visibility policy. Manual launches
+   show the main window; login launches keep it hidden.
+5. Setup opens the private SQLite database, applies only required transactional
+   schema/classifier migrations, and runs count/byte retention.
+6. If requested by startup flags, setup starts the JSONL worker and schedules a
+   row-free refresh after cleanup; the worker reads committed rows on its own
+   connection.
+7. Setup creates managed state, localized native menus, the menu bar, and the
+   clipboard listener and storage threads.
+8. On application exit, the JSONL worker is asked to flush its latest
+   generation and stop within two seconds. A timeout is recorded as a redacted
+   diagnostic rather than blocking exit indefinitely.
+
+A current `PRAGMA user_version` and classifier metadata version take the fast
+path: startup validates schema/index shape but does not decode, reclassify, or
+rewrite every history row.
 
 ## Backend State
 
-The Tauri app stores shared state in `AppState`:
+`AppState` contains:
 
-- `db: Mutex<Database>` owns a `rusqlite::Connection`.
-- `pending_restore_suppression: Mutex<Option<PendingRestoreSuppression>>`
-  prevents app-initiated clipboard restores from being captured back into
-  history when restore ordering should be preserved.
-- `history_jsonl: Option<HistoryJsonlConfig>` stores the optional startup
-  configuration for mirroring history rows to JSONL.
+- `db: Mutex<Database>`: one `rusqlite::Connection`;
+- `pending_restore_suppression`: one short-lived content identity used to
+  ignore the listener echo of an app restore;
+- `history_mirror: Option<HistoryMirror>`: the background JSONL scheduler and
+  worker;
+- `diagnostics: DiagnosticLog`: at most 32 redacted diagnostic records.
 
-The database connection is serialized through the mutex. Any command that reads
-or mutates history or settings locks `state.db`.
+Database access remains serialized, but expensive work is separated from the
+lock:
 
-## Frontend Boundary
+- list and menu queries select only persisted summary columns;
+- detail and restore commands copy an owned seed under the lock, then decode
+  event data and inspect media after releasing it;
+- JSONL refresh signals are sent after a committed mutation. One coalescing
+  worker reads the latest rows through an independent read-only connection,
+  then decodes, serializes, flushes, syncs, and atomically renames them.
 
-The frontend uses Tauri APIs only through:
+## Frontend Structure
 
-- `invoke(...)` from `@tauri-apps/api/core`
-- `listen(...)` from `@tauri-apps/api/event`
+- `src/App.tsx`: chooses the `main` or `settings` surface and coordinates
+  language/error presentation.
+- `src/features/history/`: history list, cards, media presentation, and the
+  bounded detail cache.
+- `src/features/settings/`: settings presentation.
+- `src/hooks/useClipboardHistory.ts`: 50-item cursor paging and refresh
+  generation control.
+- `src/hooks/useHistoryDetails.ts`: on-expansion detail loading.
+- `src/hooks/useAppSettings.ts`: authoritative settings/autostart reads and
+  optimistic mutation rollback.
+- `src/api/tauri.ts`: typed command invocation and safe error normalization.
+- `src/lib/htmlPreview.ts`: allowlist sanitizer and isolated preview document.
+- `src/types.ts`: the TypeScript side of serialized Rust contracts.
 
-The important frontend files are:
-
-- `src/main.tsx`: mounts React.
-- `src/App.tsx`: owns UI state, invokes Tauri commands, listens for backend
-  events, decodes stored clipboard payload previews, and renders History and
-  Settings.
-- `src/App.css`: responsive layout and visual styling.
-
-## Backend Boundary
-
-The important backend files are:
-
-- `src-tauri/src/main.rs`: starts clipboard monitoring and launches Tauri.
-- `src-tauri/src/lib.rs`: Tauri setup, app state, command handlers, listener
-  event persistence, restore suppression, and command registration.
-- `src-tauri/src/store/database.rs`: SQLite path, schema initialization,
-  migrations, settings, content hashing, dedupe, ordering, and retention.
-- `src-tauri/src/tray.rs`: tray setup, tray menu reconstruction, tray actions,
-  menu labels, and Tauri frontend notifications.
-- `src-tauri/tauri.conf.json`: window, build, bundle, and icon configuration.
-
-`src-tauri/src/event/` contains older standalone event structs. The active
-clipboard storage path uses `copy_event_listener::event::Event`.
+The main window keeps scroll and expansion state across live refreshes. The
+settings window loads counts and byte totals from `get_app_settings`; it does
+not fetch clipboard history.
 
 ## Command Contract
 
-Commands registered in `tauri::generate_handler!` are callable from React:
+Registered commands are:
 
-- `get_copy_events`
-- `delete_copy_event`
-- `clear_all_events`
-- `copy_to_clipboard`
-- `get_event_by_content_hash`
-- `get_app_settings`
-- `set_max_items`
-- `set_show_in_menu_bar`
-- `set_move_restored_item_to_top`
+- history window: `get_copy_events_page`, `get_history_detail`,
+  `delete_copy_event`, `clear_all_events`, `copy_to_clipboard`,
+  `get_app_settings`, and `get_safe_diagnostics`;
+- settings window: `get_app_settings`, `get_safe_diagnostics`,
+  `get_autostart_status`, `set_autostart_enabled`, `set_max_items`,
+  `set_max_history_bytes`, `set_show_in_menu_bar`,
+  `set_move_restored_item_to_top`, `set_compact_mode`, and `set_language`.
 
-When adding, removing, or renaming a command, update both the Rust handler list
-and all frontend `invoke(...)` calls.
+`src-tauri/capabilities/main.json` and `settings.json` grant these commands per
+window. The settings window cannot query history or details, and the main
+window cannot mutate autostart. There is no broad `core:default` grant and the
+unused opener plugin is not installed.
 
 ## Event Contract
 
-Backend-to-frontend events are emitted from `src-tauri/src/tray.rs`:
+- `clipboard-history-updated`: reload the first history page while preserving
+  view state.
+- `app:navigate`: show History when the native menu requests it.
+- `app-language-changed`: reload settings so all webviews use the backend's
+  resolved language.
+- `capture-rejected`: show a localized notice for a resource-limit rejection;
+  the payload contains only a resource code and size bucket.
 
-- `clipboard-history-updated`: frontend reloads history from `get_copy_events`.
-- `app:navigate`: frontend switches to `history` or `settings`.
+The app does not use `new-copy-event`.
 
-The current frontend does not consume `new-copy-event`.
+## Ordering And Paging
 
-## History Ordering
-
-Ordering is a backend and database concern. The UI renders rows in the order
-returned by `get_copy_events`. SQLite returns rows with:
+History is ordered by:
 
 ```sql
 ORDER BY timestamp DESC, content_hash ASC
 ```
 
-Do not implement a separate frontend-only ordering rule unless the database
-contract also changes.
+The opaque `v1` cursor contains the last row's timestamp and lowercase content
+hash. Subsequent pages use the same tuple comparison, avoiding offset drift and
+handling equal timestamps deterministically. The default page size is 50 and
+the backend clamps every request to 100. The current schema has no `sort_order`
+column; legacy `sort_order` is translated during migration only.
 
-## Restore Suppression
+## Security Boundaries
 
-Restoring a saved item writes to the system clipboard. The listener can observe
-that write as a new clipboard event. When `move_restored_item_to_top` is false,
-the backend queues a content hash for up to five seconds and skips the matching
-listener event once. This preserves the item's current order while still writing
-the clipboard.
+Production CSP denies external connections and unsafe script/style execution
+and disables objects, forms, base URLs, and embedding. The unused Tauri asset
+protocol is disabled. Bounded local image bytes become revocable in-memory
+`blob:` URLs, while video details expose only a display label and media type,
+never a full local path.
 
-When `move_restored_item_to_top` is true, restore operations update the row's
-Unix millisecond `timestamp`, sync the tray, and notify the UI.
-
-## Failure Boundaries
-
-- Clipboard listener errors are outside the current app-level error model.
-- Tauri command errors are returned as `String` and usually logged only in
-  development mode on the frontend.
-- Database schema initialization runs on startup and can mutate existing data to
-  rebuild hashes, remove duplicates, and backfill ordering.
-- Tray sync failures are logged in debug builds and can leave the visible tray
-  stale until the next successful sync.
+HTML previews are input-, node-, and depth-bounded, rebuilt from an element and
+attribute allowlist, stripped of every resource URL, placed in a sandboxed
+iframe, and receive inner `default-src 'none'; img-src 'none'` policy. The outer
+production policy also disallows `data:` images. Command errors expose only
+stable code, operation, and retryability. Native/manual verification
+requirements remain tracked in `docs/security-release-checklist.md`.

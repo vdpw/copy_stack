@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Minimal event permissions for the clipboard history window",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-startup-error",
+    "allow-get-copy-events-page",
+    "allow-get-history-detail",
+    "allow-delete-copy-event",
+    "allow-clear-all-events",
+    "allow-copy-to-clipboard",
+    "allow-get-app-settings",
+    "allow-get-safe-diagnostics"
+  ]
+}

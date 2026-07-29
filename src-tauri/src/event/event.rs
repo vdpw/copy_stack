@@ -4,6 +4,10 @@ use copy_event_listener::event::{
 use serde::{Deserialize, Serialize};
 
 const EVENT_BLOB_MAGIC: &[u8; 4] = b"CSB1";
+pub const MAX_EVENT_BLOB_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_EVENT_ITEMS: usize = 64;
+pub const MAX_EVENT_DATA_PER_ITEM: usize = 128;
+pub const MAX_EVENT_TYPE_BYTES: usize = 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClipboardEvent {
@@ -22,7 +26,9 @@ pub struct ClipboardData {
 }
 
 pub fn encode_event_blob(event: &ListenerEvent) -> Result<Vec<u8>, String> {
-    let mut output = Vec::new();
+    validate_event_shape(event)?;
+
+    let mut output = Vec::with_capacity(encoded_event_size(event)?);
     output.extend_from_slice(EVENT_BLOB_MAGIC);
     write_u32(&mut output, checked_len(event.items.len(), "items")?);
 
@@ -41,26 +47,46 @@ pub fn encode_event_blob(event: &ListenerEvent) -> Result<Vec<u8>, String> {
         }
     }
 
+    if output.len() > MAX_EVENT_BLOB_BYTES {
+        return Err("event blob exceeds the configured byte limit".to_string());
+    }
+
     Ok(output)
 }
 
 pub fn decode_event_blob(blob: &[u8]) -> Result<ListenerEvent, String> {
+    if blob.len() > MAX_EVENT_BLOB_BYTES {
+        return Err("event blob exceeds the configured byte limit".to_string());
+    }
+
     let mut reader = BlobReader::new(blob);
     reader.expect_magic(EVENT_BLOB_MAGIC)?;
 
     let item_count = reader.read_u32()? as usize;
+    if item_count > MAX_EVENT_ITEMS {
+        return Err("event blob contains too many items".to_string());
+    }
     let mut items = Vec::with_capacity(item_count);
 
     for _ in 0..item_count {
         let data_count = reader.read_u32()? as usize;
+        if data_count > MAX_EVENT_DATA_PER_ITEM {
+            return Err("event blob item contains too many data flavors".to_string());
+        }
         let mut data_list = Vec::with_capacity(data_count);
 
         for _ in 0..data_count {
             let data_type_length = reader.read_u32()? as usize;
+            if data_type_length > MAX_EVENT_TYPE_BYTES {
+                return Err("event blob data type exceeds the configured byte limit".to_string());
+            }
             let data_type = String::from_utf8(reader.read_bytes(data_type_length)?.to_vec())
                 .map_err(|error| format!("invalid data type bytes: {}", error))?;
             let data_length = usize::try_from(reader.read_u64()?)
                 .map_err(|_| "data length exceeds usize".to_string())?;
+            if data_length > MAX_EVENT_BLOB_BYTES {
+                return Err("event blob data flavor exceeds the configured byte limit".to_string());
+            }
             let data = reader.read_bytes(data_length)?.to_vec();
             data_list.push(ListenerData {
                 r#type: data_type,
@@ -76,7 +102,64 @@ pub fn decode_event_blob(blob: &[u8]) -> Result<ListenerEvent, String> {
 }
 
 pub fn event_from_legacy_json(event_data: &str) -> serde_json::Result<ListenerEvent> {
+    if event_data.len() > MAX_EVENT_BLOB_BYTES {
+        return Err(serde_json::Error::io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "legacy event exceeds the configured byte limit",
+        )));
+    }
     serde_json::from_str::<ClipboardEvent>(event_data).map(ListenerEvent::from)
+}
+
+pub fn event_encoded_size(event: &ListenerEvent) -> Result<usize, String> {
+    validate_event_shape(event)?;
+    encoded_event_size(event)
+}
+
+fn validate_event_shape(event: &ListenerEvent) -> Result<(), String> {
+    if event.items.len() > MAX_EVENT_ITEMS {
+        return Err("clipboard event contains too many items".to_string());
+    }
+
+    for item in &event.items {
+        if item.data_list.len() > MAX_EVENT_DATA_PER_ITEM {
+            return Err("clipboard item contains too many data flavors".to_string());
+        }
+        for data in &item.data_list {
+            if data.r#type.len() > MAX_EVENT_TYPE_BYTES {
+                return Err("clipboard data type exceeds the configured byte limit".to_string());
+            }
+        }
+    }
+
+    let encoded_size = encoded_event_size(event)?;
+    if encoded_size > MAX_EVENT_BLOB_BYTES {
+        return Err("clipboard event exceeds the configured byte limit".to_string());
+    }
+    Ok(())
+}
+
+fn encoded_event_size(event: &ListenerEvent) -> Result<usize, String> {
+    let mut size = EVENT_BLOB_MAGIC
+        .len()
+        .checked_add(4)
+        .ok_or_else(|| "event size overflow".to_string())?;
+
+    for item in &event.items {
+        size = size
+            .checked_add(4)
+            .ok_or_else(|| "event size overflow".to_string())?;
+        for data in &item.data_list {
+            size = size
+                .checked_add(4)
+                .and_then(|value| value.checked_add(data.r#type.len()))
+                .and_then(|value| value.checked_add(8))
+                .and_then(|value| value.checked_add(data.data.len()))
+                .ok_or_else(|| "event size overflow".to_string())?;
+        }
+    }
+
+    Ok(size)
 }
 
 fn checked_len(len: usize, label: &str) -> Result<u32, String> {
@@ -244,6 +327,60 @@ mod tests {
         blob.pop();
 
         assert!(decode_event_blob(&blob).is_err());
+    }
+
+    #[test]
+    fn event_blob_rejects_unbounded_collection_counts_before_allocating() {
+        let mut blob = EVENT_BLOB_MAGIC.to_vec();
+        write_u32(&mut blob, (MAX_EVENT_ITEMS + 1) as u32);
+
+        let error = decode_event_blob(&blob).expect_err("oversized item count should fail");
+        assert!(error.contains("too many items"));
+
+        let mut blob = EVENT_BLOB_MAGIC.to_vec();
+        write_u32(&mut blob, 1);
+        write_u32(&mut blob, (MAX_EVENT_DATA_PER_ITEM + 1) as u32);
+
+        let error = decode_event_blob(&blob).expect_err("oversized data count should fail");
+        assert!(error.contains("too many data flavors"));
+    }
+
+    #[test]
+    fn event_blob_rejects_oversized_type_and_data_lengths_before_copying() {
+        let mut oversized_type = EVENT_BLOB_MAGIC.to_vec();
+        write_u32(&mut oversized_type, 1);
+        write_u32(&mut oversized_type, 1);
+        write_u32(&mut oversized_type, (MAX_EVENT_TYPE_BYTES + 1) as u32);
+
+        let error =
+            decode_event_blob(&oversized_type).expect_err("oversized type length should fail");
+        assert!(error.contains("data type exceeds"));
+
+        let mut oversized_data = EVENT_BLOB_MAGIC.to_vec();
+        write_u32(&mut oversized_data, 1);
+        write_u32(&mut oversized_data, 1);
+        write_u32(&mut oversized_data, 1);
+        oversized_data.push(b'x');
+        write_u64(&mut oversized_data, (MAX_EVENT_BLOB_BYTES + 1) as u64);
+
+        let error =
+            decode_event_blob(&oversized_data).expect_err("oversized data length should fail");
+        assert!(error.contains("data flavor exceeds"));
+    }
+
+    #[test]
+    fn encoding_rejects_events_over_the_resource_budget() {
+        let event = ListenerEvent {
+            items: vec![ListenerItem {
+                data_list: vec![ListenerData {
+                    r#type: "public.png".to_string(),
+                    data: vec![0; MAX_EVENT_BLOB_BYTES],
+                }],
+            }],
+        };
+
+        let error = encode_event_blob(&event).expect_err("oversized event should fail");
+        assert!(error.contains("configured byte limit"));
     }
 
     #[test]

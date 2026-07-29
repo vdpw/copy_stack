@@ -1,167 +1,125 @@
 # Release Workflow
 
-## Release Trigger
+## Trigger And Native Targets
 
-Releases are handled by `.github/workflows/release.yml`.
-
-The workflow runs on pushed tags matching:
-
-```text
-v*
-```
-
-Example:
+`.github/workflows/release.yml` runs for pushed `v*` tags.
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-## Build Targets
+The matrix builds each target on matching native hardware:
 
-The current workflow builds macOS packages for:
+| Target | GitHub runner |
+| --- | --- |
+| `aarch64-apple-darwin` | `macos-15` |
+| `x86_64-apple-darwin` | `macos-15-intel` |
 
-- `aarch64-apple-darwin`
-- `x86_64-apple-darwin`
+Normal branch/PR CI also runs its complete automated verification matrix on
+both native runners. Native compilation and unit tests improve architecture
+coverage; they do not replace the manual Apple Silicon/Intel runtime evidence
+required below.
 
-It runs on `macos-latest`.
+## Automated Release Gate
 
-## Workflow Steps
+Each release job:
 
-1. Check out the repository.
-2. Install pnpm 10.33.0.
-3. Install Node.js LTS with pnpm cache.
-4. Install stable Rust with both macOS targets.
-5. Cache Rust dependencies.
-6. Replace the local `copy_event_listener` path dependency with the published
-   crate `copy_event_listener = "0.1.2"`.
-7. Run `cargo update` for `copy_event_listener`.
-8. Install frontend dependencies with `pnpm install --frozen-lockfile`.
-9. Run `pnpm type-check`.
-10. Run `pnpm lint`.
-11. Publish ad-hoc signed macOS artifacts with `tauri-apps/tauri-action@v0`.
+1. checks out the repository;
+2. installs pnpm 10.33.0, Node LTS, Rust, and the matching target;
+3. resolves and updates the published `copy_event_listener` package;
+4. installs the frozen pnpm lockfile;
+5. runs frontend type-check, lint, and tests;
+6. runs `pnpm security-check`;
+7. checks Rust formatting and runs Rust tests;
+8. invokes `tauri-apps/tauri-action@v0`, whose configured build runs the
+   frontend production build and packages the matching native target;
+9. publishes generated release notes and artifacts.
 
-## Ad-Hoc Signed macOS Releases
-
-The project currently publishes ad-hoc signed macOS builds because it is not
-enrolled in the Apple Developer Program. The release workflow sets:
-
-```yaml
-APPLE_SIGNING_IDENTITY: "-"
-```
-
-This does not notarize the app and does not identify a verified Apple
-developer. It only gives the app bundle a local ad-hoc code signature, which is
-especially important for Apple Silicon downloads.
-
-Ad-hoc signed apps downloaded from GitHub can still trigger macOS Gatekeeper
-warnings. Users who trust the release should usually be able to approve it with
-one of these macOS flows:
-
-1. Right-click `Copy Stack.app`, choose `Open`, then confirm.
-2. Open `System Settings > Privacy & Security`, then choose `Open Anyway`.
-
-If macOS still shows:
-
-```text
-"Copy Stack.app" is damaged and can't be opened. You should move it to the Trash.
-```
-
-then remove the quarantine attribute after dragging the app into
-`/Applications`:
-
-```bash
-xattr -dr com.apple.quarantine "/Applications/Copy Stack.app"
-open "/Applications/Copy Stack.app"
-```
-
-Users can also build from source with the development tooling instead of using a
-downloaded artifact.
-
-## Local Dependency Replacement
-
-Development uses:
-
-```toml
-copy_event_listener = { path = "../../copy_event_listener" }
-```
-
-GitHub Actions replaces it with:
+The checked-in manifest already uses:
 
 ```toml
 copy_event_listener = "0.1.2"
 ```
 
-Do not commit the release workflow's temporary replacement unless the project is
-intentionally moving away from local path development.
+Local development and release builds do not require a sibling
+`copy_event_listener` checkout.
 
-## Version Locations
+The security gate checks strict production CSP, empty static asset scope,
+prototype freezing, per-window capabilities, absence of opener permissions,
+audited dependency floors, and both native CI/release runner entries.
 
-Check these before a release:
+## Ad-Hoc Signing
 
-- `package.json`
-- `src-tauri/Cargo.toml`
-- `src-tauri/tauri.conf.json`
+The project is not currently enrolled for Apple Developer signing/notarization.
+Jobs set:
 
-The release name uses the pushed tag:
-
-```text
-Copy Stack ${{ github.ref_name }}
+```yaml
+APPLE_SIGNING_IDENTITY: "-"
 ```
 
-## Prerelease Tags
+This creates an ad-hoc signature but does not establish a verified developer or
+notarize the app. Gatekeeper may require Right-click → Open or
+System Settings → Privacy & Security → Open Anyway.
 
-The workflow marks a release as prerelease if the tag contains:
+For a trusted downloaded artifact that still reports damage after being moved
+to `/Applications`, verify the signature before considering quarantine removal:
 
-- `-alpha`
-- `-beta`
-- `-rc`
+```bash
+codesign --verify --deep --strict --verbose=4 "/Applications/Copy Stack.app"
+xattr -dr com.apple.quarantine "/Applications/Copy Stack.app"
+open "/Applications/Copy Stack.app"
+```
 
-## Release Checklist
+## Required Pre-Tag Evidence
 
-Before pushing a release tag:
+Run the automated gate in `docs/security-release-checklist.md`, the relevant
+performance harness cases in `docs/performance.md`, and the full manual desktop
+matrix.
 
-1. Confirm versions are correct.
-2. Run `pnpm type-check`.
-3. Run `pnpm lint`.
-4. Run `cargo check --manifest-path src-tauri/Cargo.toml`.
-5. Run `pnpm desktop:build` locally when platform signing and dependencies
-   allow.
-6. Validate clipboard capture, restore, tray menu, settings, and retention with
-   `pnpm desktop:dev`.
-7. Confirm `copy_event_listener = "0.1.2"` is still the intended published crate
-   for release builds.
-8. After the release uploads, download the `.dmg` on a clean macOS machine and
-   verify that the app can be approved through `Privacy & Security > Open
-   Anyway`.
-9. If `Open Anyway` does not appear, verify the ad-hoc signature and then test
-   the quarantine fallback:
+At minimum, record native Apple Silicon and Intel evidence for:
 
-   ```bash
-   codesign --verify --deep --strict --verbose=4 "/Applications/Copy Stack.app"
-   xattr -dr com.apple.quarantine "/Applications/Copy Stack.app"
-   open "/Applications/Copy Stack.app"
-   ```
+- clean install and existing-database migration, including a second startup
+  with no metadata rebuild;
+- `0700` directory and `0600` database/sidecar/mirror permissions;
+- manual launch, launch at login, app relocation, and duplicate launch;
+- protocol skip combinations, source/remote badges, and canonical restore from
+  both entry points;
+- resource rejection/degradation and malicious HTML;
+- 1000-row paging/lazy detail and menu `LIMIT 20`;
+- offline use and unwritable/unsafe private paths;
+- slow/failing JSONL destination, last-snapshot integrity, and bounded exit.
 
-## Release Artifacts
+The checklist file is a test plan, not proof that these scenarios have already
+passed. Attach dated, redacted results to the release record. If one
+architecture cannot be exercised, keep the release blocked or obtain and
+document an explicit release exception.
 
-`tauri-apps/tauri-action@v0` creates GitHub release artifacts for the configured
-targets and icons in `src-tauri/tauri.conf.json`.
+## Versions And Prereleases
 
-The workflow uses:
+Check version consistency in:
 
-- `releaseDraft: false`
-- `generateReleaseNotes: true`
-- `GITHUB_TOKEN` from repository secrets
+- `package.json`;
+- `src-tauri/Cargo.toml`;
+- `src-tauri/tauri.conf.json`.
 
-## Release Risk Areas
+Tags containing `-alpha`, `-beta`, or `-rc` are published as prereleases.
+Others are normal releases. The workflow publishes immediately
+(`releaseDraft: false`) and generates release notes.
 
-- The published `copy_event_listener` crate can differ from the local path
-  checkout used during development.
-- macOS packaging can fail because of signing, target, or Tauri dependency
-  issues.
-- Ad-hoc signed releases are not notarized. Gatekeeper can still require user
-  approval after browser download, but the app should not look like a malformed
-  or damaged bundle.
-- Frontend checks do not validate clipboard behavior; manual desktop QA is
-  still required before tagging.
+## Post-Publish Verification
+
+Download each produced artifact on matching native hardware rather than relying
+only on the build job. Verify installation/approval, app launch, one synthetic
+capture and restore, menu bar operation, single-instance activation, and
+launch-at-login state.
+
+## Release Risks
+
+- Published listener behavior can change when its pinned version changes.
+- Ad-hoc builds are not notarized and can require explicit Gatekeeper approval.
+- Unit tests do not exercise real NSPasteboard, LaunchAgent state, app movement,
+  WebView security behavior, or filesystem fault timing.
+- Cross-compilation or native compilation alone is not runtime verification.
+- Clipboard databases, mirrors, paths, source identifiers, and bodies must not
+  appear in release logs or attachments; use synthetic redacted evidence.

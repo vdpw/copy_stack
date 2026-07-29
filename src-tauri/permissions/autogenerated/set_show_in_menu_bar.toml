@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-show-in-menu-bar"
+description = "Enables the set_show_in_menu_bar command without any pre-configured scope."
+commands.allow = ["set_show_in_menu_bar"]
+
+[[permission]]
+identifier = "deny-set-show-in-menu-bar"
+description = "Denies the set_show_in_menu_bar command without any pre-configured scope."
+commands.deny = ["set_show_in_menu_bar"]

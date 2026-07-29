@@ -26,7 +26,18 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'none'; manifest-src 'self'",
+      "devCsp": "default-src 'self' http://localhost:5173; connect-src ipc: http://ipc.localhost http://localhost:5173 ws://localhost:5173; img-src 'self' blob: http://localhost:5173; media-src 'self' blob:; style-src 'self' 'unsafe-inline' http://localhost:5173; script-src 'self' 'unsafe-eval' http://localhost:5173; frame-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; worker-src 'none'; manifest-src 'self'",
+      "freezePrototype": true,
+      "assetProtocol": {
+        "enable": false,
+        "scope": []
+      },
+      "headers": {
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "X-Content-Type-Options": "nosniff"
+      },
+      "capabilities": ["main-window", "settings-window"]
     }
   },
   "bundle": {

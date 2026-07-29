@@ -68,13 +68,14 @@ The frontend should not prepend or reorder rows optimistically. Instead:
 
 - backend clipboard writes update SQLite first;
 - backend emits a refresh signal after persistence changes;
-- frontend reloads the event list from `get_copy_events`.
+- frontend reloads the first page from `get_copy_events_page`.
 
 This guarantees the visible order always matches the persisted order.
 
 ## Migration
 
-Existing databases need a lightweight migration:
+Existing databases use a versioned transactional migration only when the SQL
+schema or classifier metadata version is older:
 
 - rewrite legacy `id` and `sort_order` tables into the current
   `content_hash`/`event_data`/`data_type`/`display`/`timestamp` schema;
@@ -83,4 +84,11 @@ Existing databases need a lightweight migration:
 - remove older duplicates that collapse to the same normalized hash.
 - remove unsupported rows that only survived through an old fallback pick.
 
-After migration, all future ordering and deduplication operations follow the persisted rules above.
+Legacy `sort_order` is migration input only. The migration translates that exact
+relative order into adjacent timestamps and then removes the column. Current
+databases use `PRAGMA user_version` plus classifier metadata and do not rebuild
+history on every startup.
+
+After migration, all future ordering and deduplication operations follow the
+persisted rules above. History reads use stable
+`(timestamp, content_hash)` cursors rather than offsets.
