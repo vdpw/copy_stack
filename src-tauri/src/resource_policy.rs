@@ -64,6 +64,7 @@ pub struct CaptureResourceRejection {
     pub size_bucket: SizeBucket,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapturePreparation {
     Accepted,
@@ -73,6 +74,7 @@ pub enum CapturePreparation {
 #[derive(Clone, Debug)]
 pub struct PreparedCaptureEvent {
     pub event: Event,
+    #[cfg(test)]
     pub preparation: CapturePreparation,
 }
 
@@ -109,6 +111,7 @@ pub fn prepare_capture_event(
     let Some(rejection) = rejection else {
         return Ok(PreparedCaptureEvent {
             event,
+            #[cfg(test)]
             preparation: CapturePreparation::Accepted,
         });
     };
@@ -116,6 +119,7 @@ pub fn prepare_capture_event(
     if let Some(event) = safe_plain_text_projection(&event) {
         return Ok(PreparedCaptureEvent {
             event,
+            #[cfg(test)]
             preparation: CapturePreparation::DegradedToPlainText,
         });
     }

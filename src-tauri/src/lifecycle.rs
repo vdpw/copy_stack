@@ -15,6 +15,7 @@ pub(crate) enum LifecycleError {
 }
 
 impl LifecycleError {
+    #[cfg(debug_assertions)]
     pub(crate) const fn code(self) -> &'static str {
         match self {
             Self::MainWindowUnavailable => "MAIN_WINDOW_UNAVAILABLE",

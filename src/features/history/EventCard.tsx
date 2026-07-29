@@ -220,8 +220,9 @@ export function EventCard({
   const text = decodeSummaryDisplay(summary, fallbackLabel, messages.video);
   const fileItems = parseFileDisplay(text);
   const richSegments = detail?.rich_preview ?? [];
-  const typeLabel =
-    (expanded && richTypeLabel(messages, richSegments)) ?? fallbackLabel;
+  const typeLabel = expanded
+    ? (richTypeLabel(messages, richSegments) ?? fallbackLabel)
+    : fallbackLabel;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Enter" && event.key !== " ") {

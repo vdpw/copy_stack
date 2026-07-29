@@ -29,6 +29,7 @@ pub const PRIVATE_FILE_MODE: u32 = 0o600;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PrivateFsErrorKind {
     InvalidPath,
+    #[cfg(not(unix))]
     UnsupportedPlatform,
     NotFound,
     Symlink,
@@ -55,10 +56,6 @@ impl PrivateFsError {
         self.kind
     }
 
-    pub fn operation(&self) -> &'static str {
-        self.operation
-    }
-
     fn new(operation: &'static str, subject: &'static str, kind: PrivateFsErrorKind) -> Self {
         Self {
             operation,
@@ -81,6 +78,7 @@ impl fmt::Display for PrivateFsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let reason = match self.kind {
             PrivateFsErrorKind::InvalidPath => "the path is invalid",
+            #[cfg(not(unix))]
             PrivateFsErrorKind::UnsupportedPlatform => {
                 "private filesystem enforcement is unsupported on this platform"
             }

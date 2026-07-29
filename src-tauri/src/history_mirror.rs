@@ -39,6 +39,7 @@ pub struct HistorySnapshotRow {
     pub is_remote_clipboard: bool,
 }
 
+#[cfg(test)]
 impl HistorySnapshotRow {
     pub fn new(
         content_hash: String,
@@ -85,6 +86,7 @@ impl HistoryMirrorConfig {
         }
     }
 
+    #[cfg(test)]
     pub fn with_debounce(mut self, debounce: Duration) -> Self {
         self.debounce = debounce;
         self
@@ -101,6 +103,7 @@ pub enum HistoryMirrorErrorKind {
     WorkerStopped,
     GenerationExhausted,
     TimedOut,
+    #[cfg(test)]
     InjectedFailure,
 }
 
@@ -111,12 +114,9 @@ pub struct HistoryMirrorError {
 }
 
 impl HistoryMirrorError {
+    #[cfg(test)]
     pub fn kind(&self) -> HistoryMirrorErrorKind {
         self.kind
-    }
-
-    pub fn stage(&self) -> &'static str {
-        self.stage
     }
 
     fn new(kind: HistoryMirrorErrorKind, stage: &'static str) -> Self {
@@ -143,6 +143,7 @@ impl fmt::Display for HistoryMirrorError {
                 "the snapshot generation counter is exhausted"
             }
             HistoryMirrorErrorKind::TimedOut => "the bounded wait timed out",
+            #[cfg(test)]
             HistoryMirrorErrorKind::InjectedFailure => "a test failure was injected",
         };
         write!(
@@ -180,6 +181,7 @@ impl fmt::Debug for HistoryMirror {
 }
 
 impl HistoryMirror {
+    #[cfg(test)]
     pub fn start(config: HistoryMirrorConfig) -> Result<Self, HistoryMirrorError> {
         Self::start_with_source(config, SnapshotSource::ScheduledRows, Arc::new(NoopHook))
     }
@@ -210,6 +212,7 @@ impl HistoryMirror {
     ///
     /// This method performs no event decoding, serialization, or file I/O.
     /// Call it only after the associated database mutation has committed.
+    #[cfg(test)]
     pub fn schedule(&self, rows: Vec<HistorySnapshotRow>) -> Result<u64, HistoryMirrorError> {
         if !matches!(&self.shared.source, SnapshotSource::ScheduledRows) {
             return Err(HistoryMirrorError::new(
@@ -275,6 +278,7 @@ impl HistoryMirror {
 
     /// Forces the latest requested generation past debounce and waits at most
     /// `timeout` for it to be written or to fail.
+    #[cfg(test)]
     pub fn flush(&self, timeout: Duration) -> Result<(), HistoryMirrorError> {
         let target = self.shared.latest_requested.load(Ordering::Acquire);
         if target == 0 {
@@ -462,6 +466,7 @@ struct Shared {
 }
 
 enum SnapshotSource {
+    #[cfg(test)]
     ScheduledRows,
     Database(PathBuf),
 }
@@ -623,6 +628,7 @@ fn write_snapshot_inner(
                         return Err(error);
                     }
                 }
+                #[cfg(test)]
                 SnapshotSource::ScheduledRows => {
                     return Err(HistoryMirrorError::new(
                         HistoryMirrorErrorKind::SnapshotRead,

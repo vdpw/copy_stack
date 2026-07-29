@@ -103,5 +103,5 @@ launch at login, paging, and mirror fault behavior.
 
 - Product name: Copy Stack.
 - Package name: `copy_stack`.
-- Tauri identifier: `com.copy-stack.app`.
+- Tauri identifier: `com.copy-stack.desktop`.
 - Clipboard event type: `copy_event_listener::event::Event`.
