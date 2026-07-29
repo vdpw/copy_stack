@@ -1714,10 +1714,12 @@ impl Database {
         Self::visit_history_snapshot_rows_in(&connection, visitor)
     }
 
+    #[cfg(test)]
     pub fn history_snapshot_rows(&self) -> Result<Vec<crate::history_mirror::HistorySnapshotRow>> {
         Self::history_snapshot_rows_in(&self.conn)
     }
 
+    #[cfg(test)]
     fn history_snapshot_rows_in(
         connection: &Connection,
     ) -> Result<Vec<crate::history_mirror::HistorySnapshotRow>> {

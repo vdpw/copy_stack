@@ -1005,10 +1005,10 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
 pub fn run(startup_options: StartupOptions) -> Result<(), String> {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Err(error) = lifecycle::activate_main_window(app) {
+            if let Err(_error) = lifecycle::activate_main_window(app) {
                 debug_error!(
                     "[copy_stack] second-instance activation failed: {}",
-                    error.code()
+                    _error.code()
                 );
             }
         }))
