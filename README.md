@@ -1,16 +1,19 @@
 # Copy Stack - Desktop Clipboard Manager
 
-A modern, cross-platform clipboard manager built with Tauri, React, and Rust. Copy Stack runs in your system tray and keeps track of your clipboard history, making it easy to access previously copied content.
+A modern macOS clipboard manager built with Tauri, React, and Rust. Copy Stack
+runs in the menu bar and keeps a private local history of eligible clipboard
+content, making it easy to restore previously copied items.
 
 ## Features
 
-- 🖥️ **Desktop Application**: Native desktop app with system tray integration
-- 📋 **Clipboard History**: Automatically tracks your clipboard content
-- 🎨 **Modern UI**: Beautiful, responsive interface with glassmorphism design
-- 🔄 **Real-time Updates**: Instantly shows new clipboard entries
-- 🖥️ **Desktop Window**: Clean desktop interface with modern design
-- 🗑️ **Easy Management**: Delete individual entries or clear all history
-- 🔍 **Quick Copy**: One-click copy of any previous clipboard entry
+- 🖥️ **macOS Desktop App**: Native Tauri app with a localized menu bar
+- 📋 **Private Clipboard History**: Stores eligible clipboard content locally
+- ⚡ **Bounded History UI**: Loads 50-item pages and rich details on demand
+- 🔄 **Real-time Updates**: Refreshes after accepted clipboard changes
+- 🔍 **Quick Restore**: Restores an item from History or the menu bar
+- 🗑️ **Bounded Storage**: Enforces both item-count and byte budgets
+- 🚀 **Native Lifecycle**: Supports single-instance activation and opt-in
+  launch at login
 
 ## Screenshots
 
@@ -21,7 +24,7 @@ The app features a modern gradient background with glassmorphism cards and a cle
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) (v18 or higher)
-- [pnpm](https://pnpm.io/) (recommended) or npm
+- [pnpm](https://pnpm.io/)
 - [Rust](https://rustup.rs/) (for Tauri development)
 
 ### Development Setup
@@ -64,10 +67,28 @@ pnpm build
 ### Desktop Application
 
 1. **Launch**: Start the application and it will open in a desktop window
-2. **Copy History**: All your clipboard operations are automatically tracked
+2. **Copy History**: Supported user-copied content is automatically tracked
 3. **Quick Copy**: Click the copy button on any entry to copy it back to your clipboard
 4. **Manage**: Delete individual entries or clear all history
 5. **Refresh**: Use the refresh button to reload the clipboard history
+
+## Clipboard Privacy
+
+Copy Stack follows the [NSPasteboard.org](https://nspasteboard.org/) conventions
+used by macOS clipboard tools:
+
+- Content marked transient or automatically generated is excluded from history.
+- Content marked confidential, including supported password-manager markers, is
+  not stored, previewed, added to the tray, or exported to the optional JSONL
+  history mirror.
+- Source bundle identifiers and Apple remote-clipboard provenance are
+  informational metadata only and do not change content deduplication.
+- Restoring history writes the standard `org.nspasteboard.source` marker with
+  the original source or an explicit empty value when the source is unknown.
+
+History is stored locally in SQLite. The optional JSONL history mirror can
+contain accepted clipboard contents and should be protected like the database.
+Do not share either file without reviewing and sanitizing it first.
 
 ## Development
 
@@ -78,20 +99,26 @@ Detailed project docs live in [`docs/index.md`](docs/index.md). The root
 the detailed docs for architecture, frontend, backend, persistence, clipboard
 flows, development, release, and troubleshooting.
 
+Performance work starts with [`docs/performance.md`](docs/performance.md).
+Release security and the required macOS manual matrix are in
+[`docs/security-release-checklist.md`](docs/security-release-checklist.md).
+
 ### Project Structure
 
 ```
 copy_stack/
 ├── src/                 # React frontend
-│   ├── App.tsx         # Main application component
-│   ├── App.css         # Styles
+│   ├── features/       # History and Settings surfaces
+│   ├── hooks/          # Paged history, lazy details, and settings state
+│   ├── api/            # Typed Tauri command/error boundary
+│   ├── App.tsx         # Window-level composition
 │   └── main.tsx        # Entry point
 ├── src-tauri/          # Rust backend
 │   ├── src/
-│   │   ├── main.rs     # Application entry point
-│   │   ├── lib.rs      # Tauri commands and setup
-│   │   ├── event/      # Event handling
-│   │   └── store/      # Database operations
+│   │   ├── lib.rs      # Lifecycle, commands, and capture pipeline
+│   │   ├── store/      # Versioned SQLite persistence and paging
+│   │   ├── history_mirror.rs
+│   │   └── private_fs.rs
 │   └── tauri.conf.json # Tauri configuration
 └── package.json        # Node.js dependencies
 ```
@@ -110,7 +137,10 @@ copy_stack/
 - `pnpm desktop:build` - Build desktop application
 - `pnpm dev` - Start web development server
 - `pnpm build` - Build web application
-- `pnpm preview` - Preview web build
+- `pnpm type-check` - Type-check the frontend
+- `pnpm lint` - Lint the frontend
+- `pnpm test` - Run frontend unit tests
+- `pnpm security-check` - Verify security configuration guardrails
 
 ## Configuration
 
@@ -147,7 +177,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 1. **Build fails**: Ensure you have Rust and Tauri CLI installed
 2. **Window not displaying**: Check your display settings and window manager
-3. **Clipboard not detected**: Run the desktop app with `pnpm desktop:dev`, confirm the local `copy_event_listener` dependency is available, and check debug logs from the Rust process
+3. **Clipboard not detected**: Run the desktop app with `pnpm desktop:dev`,
+   confirm the published `copy_event_listener = "0.1.2"` dependency resolves,
+   and check the redacted debug control-flow logs
 
 ### Platform Support
 

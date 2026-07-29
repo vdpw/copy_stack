@@ -11,7 +11,7 @@ permissions:
 jobs:
   publish-tauri:
     name: Build and publish ad-hoc signed macOS ${{ matrix.target }}
-    runs-on: macos-latest
+    runs-on: ${{ matrix.runner }}
     env:
       APPLE_SIGNING_IDENTITY: "-"
     strategy:
@@ -19,8 +19,10 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
+            runner: macos-15
             args: --target aarch64-apple-darwin
           - target: x86_64-apple-darwin
+            runner: macos-15-intel
             args: --target x86_64-apple-darwin
 
     steps:
@@ -41,17 +43,15 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
 
       - name: Cache Rust dependencies
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
 
-      - name: Use published clipboard listener crate
-        run: |
-          perl -0pi -e 's#copy_event_listener = \{ path = "../../copy_event_listener" \}#copy_event_listener = "0.1.2"#' src-tauri/Cargo.toml
-          cargo update --manifest-path src-tauri/Cargo.toml -p copy_event_listener
+      - name: Resolve published clipboard listener crate
+        run: cargo update --manifest-path src-tauri/Cargo.toml -p copy_event_listener
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -61,6 +61,18 @@ jobs:
 
       - name: Lint frontend
         run: pnpm lint
+
+      - name: Test frontend
+        run: pnpm test
+
+      - name: Verify security configuration
+        run: pnpm security-check
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Publish Tauri release
         uses: tauri-apps/tauri-action@v0

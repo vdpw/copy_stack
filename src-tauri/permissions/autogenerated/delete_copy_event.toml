@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-copy-event"
+description = "Enables the delete_copy_event command without any pre-configured scope."
+commands.allow = ["delete_copy_event"]
+
+[[permission]]
+identifier = "deny-delete-copy-event"
+description = "Denies the delete_copy_event command without any pre-configured scope."
+commands.deny = ["delete_copy_event"]

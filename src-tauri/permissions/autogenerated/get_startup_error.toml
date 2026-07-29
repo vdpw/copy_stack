@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-startup-error"
+description = "Enables the get_startup_error command without any pre-configured scope."
+commands.allow = ["get_startup_error"]
+
+[[permission]]
+identifier = "deny-get-startup-error"
+description = "Denies the get_startup_error command without any pre-configured scope."
+commands.deny = ["get_startup_error"]

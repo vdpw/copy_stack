@@ -22,6 +22,7 @@ export default [
         document: "readonly",
         window: "readonly",
         HTMLElement: "readonly",
+        navigator: "readonly",
         crypto: "readonly",
         TextDecoder: "readonly",
         console: "readonly",
@@ -70,4 +71,4 @@ export default [
       "*.d.ts",
     ],
   },
-]; 
+];

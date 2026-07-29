@@ -1,351 +1,277 @@
-# Persistence And Data Model
+# Persistence
 
-## Database Location
+## Location And Private Files
 
-The database path is built in `Database::database_path()`:
+The database is:
 
 ```text
 $HOME/.copy_stack/copy_stack.db
 ```
 
-The app creates `$HOME/.copy_stack` if needed. Older docs may mention
-`copy_stack.db` in the repo root; the active code now stores the database under
-the user's home directory.
+On the supported Unix/macOS path, startup:
 
-## Database Owner
+- creates or tightens `.copy_stack` to `0700`;
+- creates or tightens the database and existing `-wal`, `-shm`, and `-journal`
+  sidecars to `0600`;
+- refuses symlinks, non-regular files, wrong-owner files, files with multiple
+  hard links, insecure directories, and path identity changes;
+- never falls back to a world-readable temporary or current directory.
 
-`src-tauri/src/store/database.rs` owns schema creation, settings, history
-queries, deduplication, ordering, retention, and lightweight migrations.
+Existing permission bits are only removed. Missing owner permissions are not
+silently granted.
 
-The `Database` struct wraps one `rusqlite::Connection`. Tauri stores it in
-`AppState.db: Mutex<Database>`.
+## Current Schema
 
-## Tables
-
-### `clipboard_events`
+Schema version is stored in `PRAGMA user_version`. Classifier/derived-metadata
+version is stored separately in `app_metadata`, because classifier policy can
+change without an unrelated SQL shape change.
 
 ```sql
-CREATE TABLE IF NOT EXISTS clipboard_events (
+CREATE TABLE clipboard_events (
   content_hash TEXT PRIMARY KEY,
   event_data BLOB NOT NULL,
   data_type TEXT NOT NULL,
   display BLOB NOT NULL,
-  timestamp INTEGER NOT NULL
+  summary_display BLOB NOT NULL,
+  summary_truncated INTEGER NOT NULL,
+  compact_content_hash TEXT,
+  compact_display BLOB,
+  source_bundle_id TEXT,
+  is_remote_clipboard INTEGER NOT NULL,
+  byte_count INTEGER NOT NULL,
+  timestamp INTEGER NOT NULL,
+  metadata_version INTEGER NOT NULL
 );
-```
 
-Columns:
-
-- `content_hash`: normalized SHA-256 hash used as the stable row key and
-  deduplication key.
-- `event_data`: compact binary clipboard event payload. The binary format stores
-  each item, data type, and raw `data` bytes directly. Accepted events may
-  include private or platform-specific clipboard flavors alongside their
-  supported public representation.
-- `data_type`: backend classification used by the UI and tray, currently
-  `rtf`, `html`, image extensions, `video`, `file`, `folder`, `files`,
-  `folders`, `files and folders`, or `text`.
-- `display`: backend-selected preview bytes. Current text labels are stored as
-  UTF-8 bytes. File and folder events store UTF-8 JSON with format
-  `copy_stack.file-items.v1` and one `{type, name}` entry per copied item. A
-  blank `name` means no safe filename was available; the frontend and tray
-  generate a localized fallback from `type` and item position at presentation
-  time.
-  PNG image events store the PNG bytes used by the frontend thumbnail preview.
-- `timestamp`: Unix timestamp in milliseconds. This is also the ordering key.
-
-Indexes:
-
-```sql
-CREATE INDEX IF NOT EXISTS idx_clipboard_events_timestamp
-ON clipboard_events(timestamp DESC);
-```
-
-### `settings`
-
-```sql
-CREATE TABLE IF NOT EXISTS settings (
+CREATE TABLE settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE app_metadata (
+  key TEXT PRIMARY KEY,
+  value INTEGER NOT NULL
+);
 ```
 
-Current keys:
+Indexes support `(timestamp DESC, content_hash ASC)` paging and canonical
+compact-text selection. The current schema does not contain `id`, `sort_order`,
+or the removed legacy `source_app` heuristic.
 
-- `max_items`, default `100`.
-- `show_in_menu_bar`, default `true`.
-- `move_restored_item_to_top`, default `false`.
-- `compact_mode`, default `false`.
-- `language`, default `system`; valid values are `system`, `en`, `zh-CN`, and
+## Stored Fields
+
+- `content_hash`: lowercase SHA-256 identity of the selected public
+  representation.
+- `event_data`: bounded binary encoding of the accepted event used for restore.
+- `data_type` / `display`: classified display metadata bounded by the selected
+  content-type capture policy.
+- `summary_display`: at most 512 bytes for History and the menu bar.
+- `summary_truncated`: tells the UI that the summary is incomplete.
+- `compact_content_hash` / `compact_display`: effective plain-text projection
+  for non-destructive compact-mode reads.
+- `source_bundle_id`: exact valid UTF-8 source marker, including an explicit
+  empty string; `NULL` means missing/invalid.
+- `is_remote_clipboard`: Apple remote-clipboard marker presence.
+- `byte_count`: accounted event, display, summary, compact-display, and source
+  bytes for retention. It is not a measurement of SQLite page overhead.
+- `timestamp`: Unix milliseconds and the persisted ordering key.
+- `metadata_version`: classifier metadata version used to derive the row.
+
+## Settings
+
+- `max_items`: default `100`, accepted UI range 1–1000.
+- `max_history_bytes`: default `268435456` (256 MiB).
+- `show_in_menu_bar`: default `true`.
+- `move_restored_item_to_top`: default `false`.
+- `compact_mode`: default `false`.
+- `language`: default `system`; other valid values are `en`, `zh-CN`, and
   `zh-TW`.
 
-Settings are stored as strings and parsed by helper methods.
+Autostart is not stored here. The operating system login item is authoritative.
 
-## Schema Initialization
+## Versioned Initialization And Migration
 
-`initialize_schema()` runs on every startup. It:
+Initialization is one transaction:
 
-1. Creates `clipboard_events` with `content_hash` as the primary key for clean
-   databases.
-2. Migrates legacy `id`/`sort_order`/RFC3339 timestamp/JSON payload tables into
-   the current schema when needed.
-3. Creates indexes.
-4. Creates `settings`.
-5. Inserts default setting rows, including `language = system`, if they do not
-   exist.
-6. Calls `rebuild_history_metadata()`.
+1. read and reject unsupported future schema or classifier versions;
+2. create settings and metadata tables and insert missing defaults;
+3. inspect the history table shape and version gates;
+4. create a clean current table, rebuild a legacy/outdated table, or take the
+   current fast path;
+5. create and validate required indexes and table shape;
+6. write classifier version and `PRAGMA user_version`;
+7. commit.
 
-## Metadata Rebuild
+The current fast path does not decode, reclassify, deduplicate, or rewrite all
+history rows on every launch.
 
-`rebuild_history_metadata()` keeps databases compatible with the current
-content-hash key and dedupe model.
+When a gated rebuild is required, a replacement table is created inside the
+same transaction. Legacy JSON event payloads are converted to the bounded binary
+format. Legacy `sort_order` is read only to preserve exact relative order, then
+translated into adjacent timestamp ranks. Every row is reassessed by current
+NSPasteboard policy and classification:
 
-Then it:
+- concealed, transient, autogenerated, and unsupported rows are dropped;
+- normalized duplicates collapse while preserving the first row in migrated
+  order;
+- source/remote metadata is derived from the event, never from legacy
+  `source_app`;
+- summaries, compact projections, byte counts, and metadata versions are
+  rebuilt.
 
-1. Reads all rows.
-2. Recomputes a content hash from `event_data`.
-3. Keeps the first row for each hash.
-4. Rewrites the table with `content_hash`, binary `event_data`, `data_type`,
-   binary `display`, and integer `timestamp`.
+Row accounting and table/index validation run before the original table is
+replaced. Any migration error rolls back the entire transaction; fault-injection
+tests cover failures at multiple replacement stages.
 
-This means opening an older database can delete duplicate rows that collapse to
-the same normalized content hash. Rows that cannot be classified by the current
-supported clipboard rules are also dropped instead of being kept through the old
-raw-payload fallback.
+## Capture And Upsert
 
-## Event Insertion
+Protocol and resource policy run before persistence. `prepare_history_event`
+then applies compact-mode projection when enabled, selects the supported
+representation, encodes the event, derives summary/protocol/compact metadata,
+and returns an owned prepared row.
 
-`insert_event(event)`:
+Full-mode upsert:
 
-1. When compact mode is enabled, extracts one valid
-   `public.utf8-plain-text` value, rejects blank/invalid text and
-   image/file/video/embedded-media events, and discards all non-text flavors.
-2. Encodes the resulting event to the binary clipboard payload format.
-3. Classifies the event into `content_hash`, `data_type`, and `display`;
-   returns without storing when no supported public representation exists.
-4. If a row with the same hash exists, updates `event_data`, `data_type`, and
-   `display` while preserving the existing `timestamp`.
-5. If it does not exist, computes the next history timestamp in Unix
-   milliseconds and inserts a new row keyed by `content_hash`.
-6. Runs `cleanup_old_events()` after new inserts.
+- updates payload and derived metadata for an existing `content_hash` without
+  moving it;
+- otherwise inserts at
+  `max(current_unix_millis, MAX(timestamp) + 1)`.
 
-Duplicate clipboard content refreshes the stored payload without creating
-another row or changing list order.
+Compact-mode upsert canonicalizes all rows with the same effective text into
+one text-only row while preserving the newest matching timestamp.
 
-In compact mode, deduplication also checks older stored events by their
-effective plain text. Re-copying text that already exists only as RTF/HTML
-consolidates those matching rows into one text-only row while preserving the
-newest matching timestamp.
+Every successful upsert enforces both retention limits in the same transaction.
 
-## Preview Payloads
+## Hashing And Supported Content
 
-`get_copy_events` decodes stored `event_data` into a `rich_preview` array for
-user-facing previews. Standard rich clips expose `public.utf8-plain-text` with
-the object replacement character (`U+FFFC`) where inline images appear. The
-backend splits that text into segments and replaces each placeholder with a
-thumbnail segment loaded from a supported `public.file-url` image, preserving
-source order such as text-image, image-text, and text-image-text.
+Representation priority is:
 
-Single local video file URLs produce a video segment with label, media type, and
-decoded local path so the UI can render a thumbnail without storing video bytes
-in the command payload. Single local image file URLs produce an image segment
-by reading the referenced file; this supplies the thumbnail when `display`
-contains only an extension label.
+1. `public.rtf`;
+2. `public.png`;
+3. `public.html`;
+4. one local video `public.file-url`;
+5. one local image `public.file-url`;
+6. one generic file/folder URL;
+7. multiple items when every item has a file URL;
+8. one `public.utf8-plain-text` item.
 
-When `public.html` is present, `get_copy_events` also returns its decoded value
-as `html_preview`. This is display-only and omitted in compact mode. The
-frontend sanitizes and isolates it before rendering; the stored event remains
-unchanged.
+Formatted and image hashes use the selected bytes. File/folder/video/image URL
+hashes use the file URL bytes; multi-file identity concatenates URL bytes in
+item order. Plain text uses its raw UTF-8 bytes. Private/protocol flavors do not
+participate in identity, so source and remote metadata changes update one row
+rather than creating duplicates.
 
-The raw clipboard event remains the source of truth for restore operations.
-`rich_preview` is display-only and falls back to the existing `data_type` /
-`display` preview when no ordered mixed preview can be built.
-Application-private formats are retained for restore only when the event also
-has a supported public representation; they are not decoded for previews.
+Events with no supported public representation are not persisted.
 
-## Language Preference
+## Summary Paging
 
-Only the user's preference is persisted in the `language` setting. `system`
-means that the backend resolves the operating system locale at runtime through
-`sys-locale`; the other values are explicit overrides. Existing databases gain
-the default row through `INSERT OR IGNORE`, so this setting does not require a
-schema migration.
+`get_history_page` selects persisted summary columns only. It does not select or
+decode `event_data` and does not read local media.
 
-`Database::get_language()` treats a missing or invalid stored value as
-`system`. `AppSettings` exposes two related fields:
+- default page size: 50;
+- hard maximum: 100;
+- cursor: `v1:<timestamp>:<lowercase-content-hash>`;
+- order: `timestamp DESC, content_hash ASC`;
+- response totals: visible item count and accounted history bytes.
 
-- `language`: the stored preference (`system`, `en`, `zh-CN`, or `zh-TW`).
-- `resolved_language`: the concrete language used by the current process
-  (`en`, `zh-CN`, or `zh-TW`).
+Cursor filtering compares the ordering tuple, so equal timestamps do not repeat
+or skip rows. Compact-mode paging selects the newest row for each effective
+text, including across page boundaries.
 
-`resolved_language` is derived when settings are read and is not a separate
-database key. Unsupported system locales resolve to English.
+## Lazy Detail And Restore Seeds
 
-## JSONL History Mirror
+`get_history_detail_seed` and `get_restore_seed` copy one row under the
+database lock. Event decoding and local media inspection happen after the lock
+is released.
 
-When the app starts with `--copy-stack-history-jsonl <path>`, it rewrites that
-file as a JSONL snapshot of the current `clipboard_events` table. Each line is
-one database row ordered the same way as `get_copy_events`:
+Detail construction is display-only and bounded to 32 segments and 8 MiB.
+Local images must be ordinary files whose identity remains stable before,
+during, and after a bounded read. PNG previews also enforce a 20-million-pixel
+header limit. Video bytes and local paths are never copied through IPC; video
+detail contains only a display label and media type.
 
-```json
-{
-  "content_hash": "...",
-  "data_type": "text",
-  "timestamp": 1710000000000,
-  "display": {
-    "byte_len": 11,
-    "truncated": true,
-    "encoding": "utf8",
-    "value": "hell"
-  },
-  "event_data": {
-    "items": [
-      {
-        "data_list": [
-          {
-            "type": "public.utf8-plain-text",
-            "data": {
-              "byte_len": 11,
-              "truncated": true,
-              "encoding": "utf8",
-              "value": "hell"
-            }
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-`event_data` is decoded from the binary blob into clipboard items and data
-flavors. Each byte field is represented as `{byte_len, truncated, encoding,
-value}`. Valid UTF-8 is written as `encoding: "utf8"`; binary data is written as
-lowercase hex. Values longer than
-`--copy-stack-history-jsonl-max-data-bytes` are truncated before serialization;
-the default limit is `4096` bytes per field.
-
-The mirror is rewritten after startup cleanup and after history mutations. It
-is intended for local inspection/debugging and can contain sensitive clipboard
-data.
-
-## Content Hashing
-
-Deduplication uses a backend classifier that derives normalized content hashes
-only from supported clipboard representations. The classifier applies these
-priorities:
-
-1. `public.rtf`: hash that `data` value; use `public.utf8-plain-text` as
-   `display` when present; classify as `rtf`.
-2. `public.png`: hash that `data` value; use the PNG bytes as `display`;
-   classify as `png`.
-3. `public.html`: hash that `data` value; use `public.utf8-plain-text` as
-   `display` when present; classify as `html`; expose its decoded value as
-   `html_preview` outside compact mode.
-4. One `items` element with `public.file-url` for a local video path: hash the
-   file URL `data`; classify as `video`; use the decoded file basename as
-   `display`. This handles app-originated video copies that also expose an empty
-   `public.tiff` flavor.
-5. One `items` element with `public.file-url` for a local image path: hash the
-   file URL `data`; classify with the lowercased file extension such as `png`,
-   `jpg`, `tiff`, or `heic`; use the uppercased extension as `display`.
-   This covers local-app image copies that expose `public.file-url` and may also
-   include `public.tiff`.
-6. One `items` element with `public.file-url`: hash the file URL `data`; store
-   a structured file display payload with the item `type` (`file` or `folder`)
-   and display `name`. The name comes from raw `public.utf8-plain-text` split on
-   carriage returns when possible, then a safe basename fallback. When neither
-   is available, `name` is blank so the frontend and tray can generate a
-   localized `File N` or `Folder N` label; opaque reference ids such as
-   `id=...` are never used as display names. A file URL ending with `/` is
-   classified as `folder`; otherwise it is classified as `file`.
-7. Multiple `items` elements where every item has `public.file-url`: ignore
-   other data types for classification, concatenate all `public.file-url` data
-   values in item order, and hash the concatenated bytes. Store a structured
-   file display payload with one `{type, name}` entry per item using the same
-   safe display name rules as single file URLs. Classify as `files` when no
-   file URL ends with `/`, `folders` when all file URLs end with `/`, and
-   `files and folders` when the event contains both.
-8. Plain text copies: when there is exactly one `items` element with
-   `public.utf8-plain-text`, hash that raw `data` value and store the same bytes
-   as `display`; classify as `text`. Other data types in the same item are
-   retained in `event_data` but not used for the plain text hash.
-9. Unsupported copies: return no classification and do not insert a database
-   row. This includes events that contain only application-private or opaque
-   dynamic clipboard types.
-
-Legacy rows that only survived because of the old arbitrary fallback are
-reclassified with the current rules during metadata rebuild.
-
-## Compact Mode
-
-Compact mode uses `public.utf8-plain-text` as the only accepted representation.
-The text must be valid UTF-8 and non-blank. RTF and HTML selections are kept
-when they include a safe plain-text representation, but only that text is
-persisted. Events with file URLs, image/video clipboard flavors, inline
-attachment placeholders, HTML media elements, or RTF picture data are filtered.
-
-Older rows are not destructively rewritten when the setting is toggled. History
-and tray reads project eligible rows to `data_type: "text"` with no rich
-preview, hide ineligible rows, and deduplicate visible rows by effective text.
-Restore commands likewise emit a newly built plain-text clipboard event.
-Disabling compact mode exposes the original full older rows again.
+Restore uses the original encoded event (or its compact projection) plus stored
+source/remote metadata. Canonical protocol markers are applied immediately
+before the pasteboard write.
 
 ## Ordering
 
-`timestamp` is the ordering field. New rows and explicit move-to-top updates use
-the greater of the current Unix millisecond timestamp and `MAX(timestamp) + 1`
-so history order remains stable even when events arrive in the same millisecond.
-Duplicate insert updates preserve the existing timestamp.
-
-```sql
-SELECT COALESCE(MAX(timestamp), 0) FROM clipboard_events
-```
-
-History reads use:
+History order is:
 
 ```sql
 ORDER BY timestamp DESC, content_hash ASC
 ```
 
-Restoring an item moves it to the top only when
-`move_restored_item_to_top` is true. Otherwise the backend suppresses the
-listener echo and leaves ordering unchanged.
+New inserts and explicit restore-to-top updates use a monotonic timestamp.
+Duplicate capture updates preserve the old timestamp. When restore-to-top is
+disabled, listener suppression preserves order.
 
-## Retention
+## Count And Byte Retention
 
-`cleanup_old_events()` reads `max_items` from settings and deletes excess rows
-from the bottom of history:
+Cleanup first removes oldest rows beyond `max_items`, then recomputes accounted
+bytes and removes oldest remaining rows until total `byte_count` is at or below
+`max_history_bytes`.
 
-```sql
-DELETE FROM clipboard_events WHERE content_hash IN (
-  SELECT content_hash FROM clipboard_events
-  ORDER BY timestamp ASC, content_hash DESC
-  LIMIT ?1
-)
-```
+Cleanup runs:
 
-Retention runs on startup, after `set_max_items`, and after inserting a new row.
+- during first-instance startup;
+- in every successful upsert transaction;
+- after changing either retention limit.
+
+The settings response exposes both current totals so Settings never needs to
+load or count the full history list.
+
+## Asynchronous Atomic JSONL Mirror
+
+`--copy-stack-history-jsonl <path>` enables a sensitive local snapshot. After a
+committed mutation, the application releases its database lock and schedules a
+row-free refresh signal. After debounce, the mirror worker opens its own
+read-only SQLite connection and reads the latest committed rows. Mutations
+therefore never clone full-history BLOBs or perform mirror I/O under the shared
+database lock, and a delayed signal cannot reintroduce stale rows.
+
+The worker:
+
+1. coalesces rapid mutations for 200 ms using monotonic generations;
+2. validates and reads the private database through an independent connection;
+3. applies the current full or compact-mode projection;
+4. validates a private absolute destination and secure parent;
+5. creates an exclusive `0600` temporary file in the destination directory;
+6. decodes rows and writes one JSON object per line;
+7. flushes and syncs the temporary file;
+8. commits only if the generation is still newest;
+9. atomically renames and syncs the parent directory.
+
+A failure or superseded write leaves the previous complete snapshot intact.
+Application exit requests a final flush and worker shutdown with a two-second
+bound.
+
+Each byte field is serialized as `{byte_len, truncated, encoding, value}`.
+Valid UTF-8 uses `utf8`; other bytes use lowercase hex. The per-field value is
+truncated to the configured byte count (default 4096). Accepted records may also
+include `source_bundle_id` and `is_remote_clipboard`. Policy-skipped events have
+no database row and therefore no JSONL line.
 
 ## Manual Inspection
 
-Useful local commands:
-
 ```bash
-sqlite3 "$HOME/.copy_stack/copy_stack.db" ".schema"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, hex(substr(display, 1, 24)), timestamp FROM clipboard_events ORDER BY timestamp DESC LIMIT 20;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "PRAGMA user_version;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM app_metadata ORDER BY key;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, byte_count, timestamp FROM clipboard_events ORDER BY timestamp DESC, content_hash ASC LIMIT 20;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings ORDER BY key;"
+stat -f '%Sp %N' "$HOME/.copy_stack" "$HOME/.copy_stack/copy_stack.db"
 ```
 
-Do not commit copied database files. Clipboard payloads can contain sensitive
-user data.
+Do not attach a real database or JSONL mirror to tests, logs, issues, or release
+evidence. Use synthetic fixtures.
 
 ## Persistence Change Checklist
 
-- Test with an existing database, not only a clean database.
-- Preserve or deliberately migrate legacy `event_data` JSON compatibility.
-- Keep dedupe behavior aligned with `docs/design/copy-event-ordering.md`.
-- Keep tray and frontend refresh behavior aligned with persisted ordering.
-- Keep the optional JSONL mirror aligned with history mutations.
-- Run `cargo check --manifest-path src-tauri/Cargo.toml`.
-- Run `pnpm type-check` if API payload shapes consumed by React changed.
+- Test a clean database, legacy migration, rollback injection, and a second
+  current-version startup.
+- Preserve protocol filtering and derive metadata only from the event.
+- Preserve cursor ordering and summary-only list/menu queries.
+- Keep item and byte cleanup transactional.
+- Schedule mirror I/O only after commit and outside the database lock.
+- Run Rust tests, the performance harness where relevant, and the manual
+  database/private-file scenarios in the release checklist.

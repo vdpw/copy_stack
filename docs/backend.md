@@ -1,271 +1,232 @@
 # Backend Guide
 
-## Stack
+## Stack And Modules
 
-- Rust 2021.
-- Tauri 2 with tray icon support.
-- `tauri-plugin-opener`.
-- SQLite through `rusqlite` with the bundled SQLite feature.
-- JSON API payloads with `serde`; persisted clipboard events use a compact
-  binary blob format.
-- Timestamps with `chrono`.
-- Content hashing with `sha2`.
-- Clipboard capture and restore through `copy_event_listener`.
-- System locale detection through `sys-locale`.
+- Rust 2021 and Tauri 2.
+- `tauri-plugin-single-instance` for first-process ownership and activation.
+- `tauri-plugin-autostart` for the operating system login item.
+- SQLite through bundled `rusqlite`.
+- Clipboard capture/restore through published `copy_event_listener = "0.1.2"`.
+- `serde`, `chrono`, `sha2`, and `sys-locale`.
 
-## Main Files
+Important modules:
 
-- `src-tauri/src/main.rs`: binary entry point.
-- `src-tauri/src/lib.rs`: Tauri app setup, shared state, command handlers,
-  listener event handling, restore suppression, and command registration.
-- `src-tauri/src/i18n.rs`: supported languages and preferences, system locale
-  resolution, and native menu/tray string catalogs.
-- `src-tauri/src/store/database.rs`: database wrapper and all persistence logic.
-- `src-tauri/src/tray.rs`: menu bar setup, tray menu sync, tray action handling,
-  and frontend event emission.
-- `src-tauri/src/store/mod.rs`: re-exports store types.
-- `src-tauri/src/event/`: frontend payload structs and binary event blob
-  encode/decode helpers.
+- `main.rs`: parse startup arguments and enter the library runtime.
+- `lib.rs`: Tauri setup, command handlers, capture pipeline, shared state, and
+  exit handling.
+- `lifecycle.rs`: testable initial visibility, duplicate-launch activation, and
+  verified autostart policies.
+- `pasteboard_protocol.rs`: event-wide NSPasteboard marker assessment and
+  canonical restore.
+- `resource_policy.rs`: capture, preview, IPC, and history byte budgets.
+- `command_error.rs`: structured errors and bounded redacted diagnostics.
+- `private_fs.rs`: Unix ownership/type/link checks and `0700`/`0600` storage.
+- `history_mirror.rs`: coalescing asynchronous atomic JSONL snapshots.
+- `store/classification.rs`: pure representation priority, content identity,
+  file-display parsing, and compact projection.
+- `store/preview.rs`: bounded HTML/rich/media detail generation from owned
+  seeds, with no SQLite dependency and no local path in IPC payloads.
+- `store/database.rs`: SQLite orchestration, migrations, paging, seeds,
+  retention, and compatibility delegates to focused store modules.
+- `store/settings.rs`, `store/schema.rs`, and `store/models.rs`: typed settings,
+  versioned schema declarations, and command-facing payloads.
+- `tray.rs`: summary-only menu construction and tray actions.
 
-## Application Startup
+## Startup And Process Ownership
 
-`main.rs` performs the native startup work:
+`main.rs` does not open the database or create clipboard threads. It parses:
 
-1. Creates an `mpsc` channel.
-2. Spawns a clipboard listener thread.
-3. Configures the listener interval to 500 milliseconds.
-4. Sends each captured `copy_event_listener::event::Event` through the channel.
-5. Parses app-specific startup flags.
-6. Calls `copy_stack_lib::run(rx, startup_options)`.
+- `--copy-stack-history-jsonl <path>` (or `=<path>`);
+- `--copy-stack-history-jsonl-max-data-bytes <bytes>` (default `4096`);
+- the internal `--copy-stack-autostart` flag.
 
-`lib.rs` then builds the Tauri app:
+`lib.rs` registers the single-instance plugin first. A duplicate process calls
+only the existing-process callback, which shows, unminimizes, and focuses the
+main window. It does not create another database connection, tray, listener, or
+consumer.
 
-1. Installs the opener plugin.
-2. Hides the main window instead of closing it.
-3. Creates the database.
-4. Stores `AppState` in Tauri managed state.
-5. Resolves the persisted language preference and installs the localized native
-   application menu.
-6. Runs retention cleanup.
-7. Writes the optional history JSONL mirror when enabled.
-8. Sets up and syncs the localized tray menu.
-9. Spawns a thread to consume clipboard events from `rx`.
-10. Registers Tauri commands.
+First-instance setup:
 
-## Startup Flags
+1. registers autostart without enabling it;
+2. shows the main window for a manual launch or hides it for an autostart
+   launch;
+3. prepares the private database path and opens SQLite;
+4. applies required schema/classifier migrations and retention;
+5. starts and seeds the optional history-mirror worker;
+6. installs shared state and localized native UI;
+7. creates the tray;
+8. starts the clipboard listener and storage threads.
 
-The binary accepts project-specific flags and ignores unrelated arguments:
+Autostart state is authoritative in the operating system and is not duplicated
+in SQLite. A write is always followed by a read-back; disagreement is a
+verification error. The default remains disabled until the user opts in.
 
-- `--copy-stack-history-jsonl <path>` or
-  `--copy-stack-history-jsonl=<path>` enables a JSONL mirror of
-  `clipboard_events`.
-- `--copy-stack-history-jsonl-max-data-bytes <bytes>` or
-  `--copy-stack-history-jsonl-max-data-bytes=<bytes>` controls the maximum bytes
-  written for each clipboard byte field. The default is `4096`.
-
-When enabled, the app rewrites the JSONL file after startup cleanup and after
-history mutations such as inserts, deletes, clears, retention trims, and
-restore-to-top updates. The file can contain clipboard contents and should be
-treated like the SQLite database.
-
-## Shared State
+## Shared State And Locking
 
 ```rust
 pub struct AppState {
-    pub(crate) db: Mutex<Database>,
-    pub(crate) pending_restore_suppression: Mutex<Option<PendingRestoreSuppression>>,
-    pub(crate) history_jsonl: Option<HistoryJsonlConfig>,
+    db: Mutex<Database>,
+    pending_restore_suppression: Mutex<Option<PendingRestoreSuppression>>,
+    history_mirror: Option<HistoryMirror>,
+    tray_refresh: Option<TrayRefreshScheduler>,
+    diagnostics: DiagnosticLog,
 }
 ```
 
-`Database` wraps a single `rusqlite::Connection`, so access is serialized behind
-the mutex. Keep locks scoped tightly, especially before calling tray sync or
-frontend event emission.
+The database lock protects one `rusqlite::Connection`. Keep it limited to SQL
+and copying owned seeds:
+
+- `get_copy_events_page` and tray sync select only summary columns;
+- `get_history_detail` reads a seed, releases the lock, then decodes and reads
+  validated local media;
+- restore commands read a seed and release the lock before decoding and
+  writing the pasteboard;
+- mirror scheduling sends a row-free refresh signal after commit; after
+  debounce the worker reads current committed rows through its own read-only
+  SQLite connection and performs decoding and filesystem I/O there.
+
+Mutex poison and database failures are mapped to structured errors rather than
+panicking across the command boundary.
 
 ## Command Handlers
 
-### `get_copy_events`
+### History reads
 
-Returns stored event metadata ordered by `timestamp DESC, content_hash ASC`.
-Rows include `content_hash`, backend-selected `data_type` and binary `display`,
-optional `html_preview`, ordered `rich_preview` segments for mixed text/image
-clips, and `timestamp`. They do not include raw `event_data`.
+`get_copy_events_page(cursor?, page_size?)` returns a stable cursor page of
+bounded `HistorySummary` values. Default size is 50 and maximum size is 100.
+The response also carries total visible count and total accounted bytes.
 
-Standalone image file URLs also produce a `rich_preview` image segment by
-reading the referenced local file. This allows file-originated image clips,
-whose `display` value is only an extension label, to render a thumbnail.
-When a stored event contains `public.html`, its decoded text is returned as
-`html_preview` for the frontend's sandboxed expanded-card renderer.
+`get_history_detail(content_hash)` reads one owned seed, builds at most 32
+preview segments outside the lock, and enforces an 8 MiB serialized response
+budget. Bounded image bytes are returned for in-memory `blob:` previews. Video
+details return only a display label and media type; the asset protocol stays
+disabled and full local paths never cross IPC.
 
-Application-private clipboard formats are not decoded for previews, and the
-backend does not inspect another application's cache directories. Private
-flavors remain in a raw stored event when that event also contains a supported
-public representation so restore operations can reproduce the original
-clipboard payload. Events containing only private or otherwise unsupported
-flavors are discarded before persistence.
+### History mutations and restore
 
-### `delete_copy_event`
+`delete_copy_event` and `clear_all_events` commit SQLite first, release the
+lock, schedule an optional mirror refresh, and sync the tray. The frontend
+reloads after these commands.
 
-Deletes one row by content hash, then syncs the tray.
+`copy_to_clipboard` uses the same canonical restore helper as the tray:
 
-### `clear_all_events`
+1. load the stored body and protocol metadata;
+2. project to text when compact mode is enabled;
+3. remove all old source/remote markers;
+4. add exactly one source marker and, when stored, one remote marker;
+5. write the event after releasing the database lock.
 
-Deletes all history, then syncs the tray.
+When restore-to-top is off, a five-second one-shot suppression prevents the
+listener echo from changing order. When it is on, the row receives a new
+timestamp, the mirror is scheduled, the tray is synced, and
+`clipboard-history-updated` is emitted.
 
-### `copy_to_clipboard`
+Once the operating-system pasteboard write succeeds, restore returns success.
+Any later ordering, mirror, tray, or notification failure is reported as the
+non-retryable `restore_post_processing_failed` event, so a UI retry cannot
+repeat an already-completed external write.
 
-Loads a stored event and writes it back to the system clipboard. When restore
-ordering is enabled, it also moves the row to the top, syncs the tray, and
-notifies the frontend. When ordering is disabled, it leaves the history and
-tray untouched after the clipboard write.
+### Settings and diagnostics
 
-When restore ordering is disabled, it queues restore suppression before writing
-to the clipboard so the listener does not immediately reprocess that same
-content.
+`get_app_settings` returns:
 
-### `get_event_by_content_hash`
+- `max_items` and `max_history_bytes`;
+- `history_count`, `history_bytes`, and `history_limit_bytes`;
+- `max_event_bytes`;
+- menu visibility, restore ordering, compact mode;
+- persisted and resolved language.
 
-Returns the decoded `copy_event_listener::event::Event` for a row. This is
-registered as a command, although the current frontend does not call it.
+Mutators are `set_max_items`, `set_max_history_bytes`,
+`set_show_in_menu_bar`, `set_move_restored_item_to_top`, `set_compact_mode`,
+and `set_language`. Item limits accept 1–1000. The byte command accepts
+16 MiB–4 GiB. Lower limits run cleanup before notifying History and the tray.
 
-### `get_app_settings`
+`get_autostart_status` and `set_autostart_enabled` operate on the OS login item
+and return verified state.
 
-Returns `max_items`, `show_in_menu_bar`, `move_restored_item_to_top`, and
-`compact_mode`, plus:
+`get_safe_diagnostics` returns at most 32 records. Each record contains only
+timestamp, app version, platform, architecture, enumerated error code,
+operation, and retryability.
 
-- `language`: the persisted preference (`system`, `en`, `zh-CN`, or `zh-TW`).
-- `resolved_language`: the concrete language currently selected after resolving
-  `system` (`en`, `zh-CN`, or `zh-TW`).
+## Capture Pipeline
 
-### `set_max_items`
+For every listener event:
 
-Stores the new limit, trims old events, syncs the tray, and notifies frontend
-windows to reload history.
+1. reject an empty event;
+2. assess protocol markers across every item;
+3. stop immediately for concealed, transient, or autogenerated content;
+4. apply resource budgets;
+5. if an oversized rich event has a valid bounded plain-text representation,
+   degrade to that text while preserving source/remote markers; otherwise emit
+   `capture-rejected` with only resource kind and size bucket;
+6. read compact-mode state;
+7. classify and encode the accepted event once;
+8. apply restore suppression by normalized content identity;
+9. insert/update and enforce retention transactionally;
+10. schedule the optional row-free mirror refresh after commit;
+11. coalesce rapid capture-driven tray refreshes, rebuild the summary-only
+    tray, and emit `clipboard-history-updated`.
 
-### `set_show_in_menu_bar`
+Protocol policy always precedes content hashing, preview generation, resource
+classification, persistence, mirror export, and UI/tray presentation. See
+`docs/design/nspasteboard-protocol.md`.
 
-Stores tray visibility and syncs the tray.
+## Resource Budgets
 
-### `set_move_restored_item_to_top`
+- encoded event: 32 MiB, 64 items, 128 data entries per item, and 1024 bytes
+  per type name;
+- plain text: 4 MiB;
+- HTML: 2 MiB;
+- RTF: 4 MiB;
+- image capture flavor: 16 MiB;
+- file URL: 64 KiB;
+- persisted display: bounded by the selected content-type capture limit; list
+  summary: 512 bytes;
+- preview image: 4 MiB and PNG dimension cap: 20 million pixels;
+- detail: 32 segments and 8 MiB serialized;
+- default accounted history budget: 256 MiB.
 
-Stores restore ordering behavior.
+Length fields are checked before allocation while decoding persisted event
+blobs.
 
-### `set_compact_mode`
+## JSONL Worker
 
-Stores compact-mode behavior, rebuilds the tray menu, and notifies frontend
-windows to reload history. It does not destructively rewrite older full
-events; those rows are projected to plain text while the setting is enabled.
+With the JSONL flag enabled, mutations schedule monotonically numbered row-free
+refresh signals. Scheduling does no history scan, BLOB clone, decode,
+serialization, or file I/O. A 200 ms debounce coalesces bursts. The worker then
+opens an independent read-only SQLite connection and loads the latest committed
+state, so delayed or reordered signals cannot carry a stale snapshot.
 
-### `set_language`
+The worker validates the private destination, creates an exclusive `0600`
+same-directory temporary file, writes rows in history order, flushes and
+`fsync`s it, rechecks generation, atomically renames it, and syncs the parent
+directory. A failed or superseded generation never truncates the last valid
+snapshot. Exit flush/shutdown is bounded to two seconds.
 
-Validates and stores a `system`, `en`, `zh-CN`, or `zh-TW` preference. It then
-resolves the concrete language, replaces the native application menu, updates
-an existing settings-window title, rebuilds the tray menu, and emits
-`app-language-changed` to all frontend windows. The command returns the complete
-updated `AppSettings`, including both `language` and `resolved_language`.
+The mirror is a sensitive copy of accepted history, including protocol metadata
+and truncated body fields. It is not a log and must not be committed or shared
+without sanitization.
 
-Unsupported command values return an error without changing the setting.
+Compact mode applies the same deduplicated text-only projection to History, the
+tray, restore, and JSONL. Toggling compact mode schedules a mirror refresh.
 
-## Language Resolution
+## CSP And Capabilities
 
-The application supports English (`en`), Simplified Chinese (`zh-CN`), and
-Traditional Chinese (`zh-TW`). A manual preference resolves directly to its
-matching language. The default `system` preference asks `sys-locale` for the
-operating system's ordered locale list and selects the first supported locale.
+Production CSP denies external connections, unsafe script/style execution,
+objects, forms, base URLs, and embedding. Development-only localhost/eval/style
+allowances live in `devCsp`. Prototype freezing is enabled.
 
-Locale matching is case-insensitive and accepts hyphenated or underscored tags.
-`zh-Hant` and Chinese locales for Taiwan, Hong Kong, or Macao resolve to
-`zh-TW`; other Chinese locales resolve to `zh-CN`. English variants resolve to
-`en`. If none of the reported locales is supported, the backend falls back to
-English.
-
-The Rust catalog in `src-tauri/src/i18n.rs` owns native strings. The TypeScript
-catalog in `src/i18n.ts` owns webview strings; keep their supported language
-codes aligned.
-
-## Clipboard Event Consumption
-
-The background consumer thread in `lib.rs` receives events from the channel.
-For each event:
-
-1. When compact mode is enabled, extract a valid standalone plain-text event
-   and filter events containing image, file, video, or embedded-media data.
-2. Classify it into `content_hash`, `data_type`, and `display`.
-3. Compare it with pending restore suppression.
-4. Skip the event if it is the one app-initiated restore that should preserve
-   order.
-5. Insert or update the event through `Database::insert_event`.
-6. Rewrite the optional history JSONL mirror when enabled.
-7. Sync the tray menu.
-8. Emit `clipboard-history-updated` so the frontend reloads from SQLite.
-
-## Restore Suppression
-
-`RESTORE_SUPPRESSION_TTL` is five seconds. Suppression is used only when
-`move_restored_item_to_top` is false. It stores the content hash of the event
-being restored and consumes that suppression on the first matching listener
-event.
-
-If writing to the clipboard fails, the pending suppression is cleared when the
-hash matches.
-
-## Tray Menu
-
-`src-tauri/src/tray.rs` owns all tray behavior:
-
-- Creates the tray icon with id `main`.
-- Rebuilds the menu from database history and the resolved language during
-  `sync`.
-- Applies the `show_in_menu_bar` setting through `tray.set_visible(...)`.
-- Emits `app:navigate` when the user selects History or Settings.
-- Clears history from the menu.
-- Restores a selected event from the menu.
-- Emits `clipboard-history-updated` when the frontend must reload.
-- Emits `app-language-changed` after a language update so open webviews reload
-  `AppSettings`.
-
-Tray menu item ids use stable prefixes:
-
-- `event::<content-hash>` for clipboard items.
-- `action::open-history`
-- `action::open-settings`
-- `action::clear-history`
-- `action::quit`
-
-## Tray Labels
-
-Structural tray labels such as Recent clipboard items, Open history, Settings,
-Clear history, the empty state, and Quit are selected from the native catalog.
-Language changes rebuild the menu immediately. Clipboard content labels remain
-the user's stored content rather than translated text.
-
-Clipboard labels decode the stored `display` bytes from the database classifier.
-The top-level menu label truncates long results to 40 display-width characters,
-counting CJK/full-width characters as 2 columns and ASCII characters as 1.
-Overflow uses `...`. If truncation is needed, the event is rendered as a
-submenu whose child item shows the full label and restores the clip when
-selected. Plain text displays are normalized as one label. File and folder
-displays parse the `copy_stack.file-items.v1` JSON payload and prefix each item
-name with a file or folder marker. File item names come from the raw
-`public.utf8-plain-text` filename list split on carriage returns, with generic
-file/folder labels generated in the resolved language when no safe name is
-available. Opaque reference ids such as `id=...` are never used as display
-names. This keeps the tray and React history previews aligned while allowing
-binary thumbnails to be stored in the same column later.
-
-On macOS, `lib.rs` also builds localized application menu headings and
-predefined actions. Startup replaces the initial system-localized menu with the
-persisted preference after the database is available, and `set_language`
-replaces it again immediately.
+`main.json` grants only history commands and event listening.
+`settings.json` grants only settings/autostart commands and event listening.
+The unused opener dependency and permission are absent.
 
 ## Backend Change Checklist
 
-- Register new commands in `tauri::generate_handler!`.
-- Update frontend `invoke(...)` calls for command changes.
-- Keep emitted event names synchronized with frontend listeners.
-- Keep the Rust native catalog and TypeScript catalog language codes
-  synchronized.
-- Avoid holding `state.db` locks while doing unrelated work.
-- Run `cargo fmt --manifest-path src-tauri/Cargo.toml`.
-- Run `cargo check --manifest-path src-tauri/Cargo.toml`.
-- For cross-stack changes, also run `pnpm type-check`.
+- Keep protocol assessment before all content inspection.
+- Keep summary queries and local media I/O outside one another's lock scope.
+- Schedule the mirror only after a successful database commit.
+- Return stable structured command errors; never forward raw errors or paths.
+- Update Rust/TypeScript types, autogenerated command permissions,
+  capabilities, and docs together.
+- Run Rust format/check/test, frontend checks for contract changes, and the
+  relevant manual matrix in `docs/security-release-checklist.md`.

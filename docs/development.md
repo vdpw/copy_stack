@@ -2,53 +2,45 @@
 
 ## Prerequisites
 
-- Node.js 18 or newer.
-- `pnpm`.
+- Node.js 18 or newer and pnpm.
 - Rust stable.
-- Platform dependencies required by Tauri.
-- The local `copy_event_listener` project checked out at
-  `../../copy_event_listener` relative to `src-tauri/Cargo.toml`.
+- macOS/Tauri build dependencies.
 
-The local dependency path is required for normal development:
+The checked-in Rust manifest uses the published crate:
 
 ```toml
-copy_event_listener = { path = "../../copy_event_listener" }
+copy_event_listener = "0.1.2"
 ```
 
-The release workflow replaces it with the published crate before packaging.
+No sibling checkout or local path dependency is required. The release workflow
+keeps a defensive legacy path-to-published replacement step, but it is a no-op
+for the current manifest.
 
-## Install
+Rust Tauri is pinned to `2.11.4` and `tauri-build` to `2.6.3`; keep the pair
+compatible during patch upgrades.
+
+## Install And Run
 
 ```bash
 pnpm install
-```
-
-## Run
-
-Web-only development:
-
-```bash
 pnpm dev
-```
-
-Desktop development:
-
-```bash
 pnpm desktop:dev
 ```
 
-`desktop:dev` runs Tauri, which starts Vite through the Tauri config. Vite uses
-port `5173` with `strictPort: true`.
+Vite uses port 5173 with `strictPort: true`.
 
-Optional history JSONL mirror flags are parsed by the app binary:
+To keep manual debug QA away from the user's real history, point the debug
+build at a dedicated absolute directory:
 
 ```bash
---copy-stack-history-jsonl /tmp/copy_stack_history.jsonl
---copy-stack-history-jsonl-max-data-bytes 4096
+COPY_STACK_QA_DATA_DIR=/private/tmp/copy-stack-qa pnpm desktop:dev
 ```
 
-With `desktop:dev`, pass a second `--` through to Tauri so the flags reach the
-app instead of being treated as Tauri runner arguments:
+This override is compiled only with debug assertions. Relative paths are
+rejected, the resulting `copy_stack.db` still passes the private-file checks,
+and release builds continue to use `$HOME/.copy_stack`.
+
+Optional JSONL flags:
 
 ```bash
 pnpm desktop:dev -- \
@@ -57,185 +49,151 @@ pnpm desktop:dev -- \
   --copy-stack-history-jsonl-max-data-bytes 4096
 ```
 
-The JSONL file is rewritten as a snapshot after startup cleanup and after
-history mutations.
+The mirror is a coalesced asynchronous snapshot, not a synchronous append log.
+It can contain accepted clipboard bodies and protocol metadata.
 
-## Build
+`--copy-stack-autostart` is reserved for the OS login item. Use it manually only
+to test hidden-at-login policy.
 
-Web build:
-
-```bash
-pnpm build
-```
-
-Desktop build:
-
-```bash
-pnpm desktop:build
-```
-
-## Checks
-
-Frontend type-check:
+## Build And Automated Checks
 
 ```bash
 pnpm type-check
-```
-
-Frontend lint:
-
-```bash
 pnpm lint
-```
-
-Rust check:
-
-```bash
+pnpm test
+pnpm build
+pnpm security-check
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm desktop:build
 ```
 
-Rust format:
+The normal CI matrix runs frontend checks/build, the security guardrail, Rust
+format/check/test, and dependency resolution natively on both `macos-15`
+(Apple Silicon) and `macos-15-intel` (Intel). This catches architecture-specific
+compile and unit-test failures, but it is not evidence that native UI,
+NSPasteboard, login-item, permissions, or fault scenarios were exercised.
+
+## Performance Harness
+
+Run deterministic 100/1000-item text and mixed fixtures in release mode:
 
 ```bash
-cargo fmt --manifest-path src-tauri/Cargo.toml
+scripts/perf-history.sh
 ```
 
-Frontend and docs format:
-
-```bash
-pnpm format
-```
+The harness uses synthetic private temporary data and prints JSON timing,
+payload, storage, and row-count records. See `docs/performance.md`; do not turn
+machine-dependent timings into ordinary unit-test thresholds.
 
 ## Verification Matrix
 
-| Change type                              | Required checks                                                                                               |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Frontend-only UI or TypeScript           | `pnpm type-check`, `pnpm lint`                                                                                |
-| Rust-only backend                        | `cargo check --manifest-path src-tauri/Cargo.toml`                                                            |
-| Tauri command contract                   | `cargo check --manifest-path src-tauri/Cargo.toml`, `pnpm type-check`, manual `pnpm desktop:dev`              |
-| Clipboard capture or restore             | `cargo check --manifest-path src-tauri/Cargo.toml`, `pnpm type-check`, manual `pnpm desktop:dev`              |
-| Persistence, ordering, dedupe, retention | `cargo check --manifest-path src-tauri/Cargo.toml`, manual test with an existing database                     |
-| Localization or language settings        | `cargo check --manifest-path src-tauri/Cargo.toml`, `pnpm type-check`, `pnpm lint`, manual `pnpm desktop:dev` |
-| Release workflow                         | `pnpm type-check`, `pnpm lint`, `pnpm desktop:build` when local signing/platform setup allows                 |
-| Documentation-only                       | Review links and paths; no build is normally required                                                         |
+| Change | Required verification |
+| --- | --- |
+| Frontend | type-check, lint, frontend tests, build |
+| Rust backend | Rust format, check, and tests |
+| Command/event contract | frontend and Rust checks plus desktop QA |
+| Capture/restore/protocol | Rust tests plus real macOS NSPasteboard QA |
+| Persistence/migration/retention | Rust tests, legacy DB/rollback QA, second-start fast path |
+| Paging/detail/tray performance | structural tests, performance harness, desktop scroll/detail QA |
+| Private files/JSONL | Rust fault tests and native permission/failure QA |
+| CSP/capabilities/errors | `pnpm security-check`, frontend tests, offline/malicious-preview QA |
+| Single instance/autostart | lifecycle tests and packaged/manual macOS QA |
+| Release | every automated gate and completed security release matrix |
+| Documentation only | links, paths, command names, and `git diff --check` |
 
-## Manual QA Checklist
+## Required Manual Desktop QA
 
-Use `pnpm desktop:dev` for behavior changes.
+The following is a checklist, not a record of completed testing:
 
-1. Launch the app.
-2. Copy new text from outside the app.
-3. Confirm the item appears in History and in the tray menu.
-4. Copy the same text again and confirm it does not create a duplicate.
-5. Restore an item from the main window.
-6. Toggle restore ordering and confirm restore behavior matches the setting.
-7. Restore an item from the tray menu.
-8. Delete one item and confirm the tray updates.
-9. Clear all history from the app and from the tray.
-10. Reduce `max_items` below the current count and confirm old items are
-    trimmed after confirmation.
-11. Toggle menu bar visibility.
-12. Close the main window and confirm the app keeps running.
+1. Copy synthetic text and confirm History and the menu bar update.
+2. Copy the same text again and confirm no duplicate and no order change.
+3. Page through at least 100 items; expand formatted/image/video details and
+   confirm detail is requested only on expansion.
+4. Trigger a live update while scrolled and with cards expanded; verify the
+   scroll anchor and expansion state remain stable.
+5. Restore from History and the menu bar with both ordering settings.
+6. Inspect the restored type list and confirm exactly one canonical source
+   marker and remote marker only when applicable.
+7. Exercise every synthetic NSPasteboard marker combination in
+   `docs/design/nspasteboard-protocol.md`; skipped content must not appear in
+   SQLite, History, tray, diagnostics, or JSONL.
+8. Exercise oversized formatted/image/event fixtures. Confirm safe text
+   degradation or a localized rejection notice, with no oversized IPC payload.
+9. Lower item and byte limits and confirm oldest rows are trimmed.
+10. Delete one item and clear all from both History and the menu bar.
+11. Toggle compact mode, menu visibility, restore ordering, and all languages.
+12. Start a duplicate process and confirm the existing window activates while
+    only one owner/listener/tray remains.
+13. Enable and disable launch at login and reopen Settings to verify OS state.
+14. Launch with the autostart flag and confirm the main window stays hidden
+    while capture and the menu bar remain active.
+15. Verify `.copy_stack` is `0700` and database/sidecars/mirror are `0600`.
+16. Inject unsafe/unwritable private paths and slow/failing JSONL writes; verify
+    safe errors, committed database mutations, complete last snapshot, and
+    bounded exit.
+17. Run offline and confirm history, settings, restore, and previews make no
+    external request.
+18. Run malicious HTML preview fixtures and verify scripts, navigation, forms,
+    external resources, and unsafe URLs do not execute.
 
-For localization changes, also verify:
+Record the full Apple Silicon and Intel evidence matrix in
+`docs/security-release-checklist.md` before release. Native dual-architecture CI
+does not mark that manual matrix complete.
 
-1. Start with Language set to System Default and confirm the UI matches a
-   supported operating system locale. Unsupported locales should fall back to
-   English.
-2. Select English, Simplified Chinese, and Traditional Chinese in turn.
-3. For each language, inspect History, Settings, empty/loading states, buttons,
-   confirmation text, accessibility labels, event-type labels, and timestamp
-   formatting.
-4. Confirm the settings-window title, macOS application menu, and tray menu
-   update immediately without restarting.
-5. Keep both the History and Settings webviews open while changing language and
-   confirm `app-language-changed` synchronizes both.
-6. Relaunch the app and confirm an explicit override persists.
-7. Switch back to System Default, relaunch, and confirm the `language` row
-   remains `system` while `resolved_language` is a concrete `en`, `zh-CN`, or
-   `zh-TW` value.
-8. Confirm clipboard content, file names, and stored history are not translated
-   or otherwise modified by a language change.
-
-## Local Database Handling
-
-The database lives at:
-
-```text
-$HOME/.copy_stack/copy_stack.db
-```
-
-Use an existing database when testing migrations, deduplication, ordering, or
-retention. Do not rely only on a clean database.
-
-Useful inspection commands:
+## Local Database Inspection
 
 ```bash
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "PRAGMA user_version;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM app_metadata ORDER BY key;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings ORDER BY key;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, hex(substr(display, 1, 24)), timestamp FROM clipboard_events ORDER BY timestamp DESC LIMIT 10;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, byte_count, timestamp FROM clipboard_events ORDER BY timestamp DESC, content_hash ASC LIMIT 10;"
+stat -f '%Sp %N' "$HOME/.copy_stack" "$HOME/.copy_stack/copy_stack.db"
 ```
 
-Clipboard history can contain sensitive data. Do not commit copied databases or
-JSONL mirrors, or paste payloads into issues, logs, docs, or test fixtures
-unless they are sanitized.
+Use sanitized copies for migration testing. Never commit or attach real
+databases, sidecars, JSONL mirrors, clipboard payloads, source identifiers, or
+user file paths.
 
 ## Generated And Local Files
 
-Do not commit:
-
-- `node_modules/`
-- `dist/`
-- `dist-ssr/`
-- `src-tauri/target/`
-- `src-tauri/gen/`
-- SQLite database files
-- local logs
-- history JSONL mirrors
+Do not commit `node_modules/`, `dist/`, `src-tauri/target/`,
+`src-tauri/gen/`, SQLite files, logs, mirror files, or performance output
+containing non-synthetic paths.
 
 ## Common Change Patterns
 
-### Add A Tauri Command
+### Command Or Payload
 
-1. Add the command function in `src-tauri/src/lib.rs`.
-2. Add it to `tauri::generate_handler!`.
-3. Call it from the frontend with `invoke(...)`.
-4. Update `docs/backend.md` and `docs/frontend.md`.
-5. Run Rust and frontend checks.
+Update the Rust command/type, `src/types.ts`, invoking hook, autogenerated
+permission, window capability, and relevant docs. Keep list summaries separate
+from detail payloads.
 
-### Change Event Payload Shape
+### Persistence Or Ordering
 
-1. Update Rust serialization or upstream event handling.
-2. Update TypeScript interfaces in `src/App.tsx`.
-3. Update preview decoding if needed.
-4. Test with stored rows in an existing database.
-5. Update `docs/frontend.md`, `docs/persistence.md`, and
-   `docs/clipboard-flows.md`.
+Read both design records. Bump the schema or classifier metadata version as
+appropriate, make migration transactional, verify rollback and a second current
+startup, and preserve cursor ordering.
 
-### Change Ordering Or Deduplication
+### Capture Or Restore
 
-1. Read `docs/design/copy-event-ordering.md`.
-2. Update `src-tauri/src/store/database.rs`.
-3. Verify migration behavior with an existing database.
-4. Confirm UI and tray order match SQLite order.
-5. Update persistence and flow docs.
+Keep event-wide protocol assessment first. Reuse the canonical restore helper
+for History and tray paths. Test compact/full mode and both restore-order
+settings on real NSPasteboard.
 
-### Change Tray Behavior
+### Tray
 
-1. Update `src-tauri/src/tray.rs`.
-2. Check whether the action mutates history.
-3. Emit `clipboard-history-updated` if another frontend reload path is needed.
-4. Sync the tray after history or visibility changes.
-5. Validate manually with `pnpm desktop:dev`.
+Keep the hard 20-item summary query and do not introduce event decoding or local
+media reads during menu construction.
 
-### Add Or Change Localized UI
+### Localized UI
 
-1. Update the `Messages` interface and all `en`, `zh-CN`, and `zh-TW` entries in
-   `src/i18n.ts`.
-2. Update `NativeStrings` and all three Rust catalogs in
-   `src-tauri/src/i18n.rs` when native menu or window text changes.
-3. Keep frontend preference codes, backend preference parsing, and persisted
-   setting values synchronized.
-4. If the selected language can change at runtime, rebuild affected native UI
-   and emit `app-language-changed`.
-5. Run the localization checks from the verification matrix and the manual QA
-   list above.
+Update the TypeScript `Messages` interface and all three catalogs. Update Rust
+native catalogs when menu/window text changes. Verify both open webviews and
+native menus update together.
+
+### Security Or Release
+
+Run `pnpm security-check`, review `docs/security-release-checklist.md`, and keep
+manual evidence explicitly pending until it has actually been recorded.

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-move-restored-item-to-top"
+description = "Enables the set_move_restored_item_to_top command without any pre-configured scope."
+commands.allow = ["set_move_restored_item_to_top"]
+
+[[permission]]
+identifier = "deny-set-move-restored-item-to-top"
+description = "Denies the set_move_restored_item_to_top command without any pre-configured scope."
+commands.deny = ["set_move_restored_item_to_top"]
