@@ -29,23 +29,28 @@ pnpm desktop:dev
 
 Vite uses port 5173 with `strictPort: true`.
 
-To keep manual debug QA away from the user's real history, point the debug
-build at a dedicated absolute directory:
+To keep manual debug QA away from the user's real history, create a private
+directory in macOS's per-user temporary area and point the debug build at a
+child directory:
 
 ```bash
-COPY_STACK_QA_DATA_DIR=/private/tmp/copy-stack-qa pnpm desktop:dev
+COPY_STACK_QA_RUN_DIR="$(mktemp -d)"
+COPY_STACK_QA_DATA_DIR="$COPY_STACK_QA_RUN_DIR/data" pnpm desktop:dev
 ```
 
 This override is compiled only with debug assertions. Relative paths are
 rejected, the resulting `copy_stack.db` still passes the private-file checks,
-and release builds continue to use `$HOME/.copy_stack`.
+and release builds continue to use `$HOME/.copy_stack`. Do not substitute a
+fixed child directly under `/tmp` or `/private/tmp`: their public immediate
+parent is intentionally rejected. Reuse the generated directory for one QA
+session, then remove it after the app exits.
 
 Optional JSONL flags:
 
 ```bash
-pnpm desktop:dev -- \
+COPY_STACK_QA_DATA_DIR="$COPY_STACK_QA_RUN_DIR/data" pnpm desktop:dev -- \
   -- \
-  --copy-stack-history-jsonl /tmp/copy_stack_history.jsonl \
+  --copy-stack-history-jsonl "$COPY_STACK_QA_RUN_DIR/copy_stack_history.jsonl" \
   --copy-stack-history-jsonl-max-data-bytes 4096
 ```
 
