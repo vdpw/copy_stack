@@ -73,6 +73,20 @@ private func writeSyntheticScenario(_ scenario: String) throws {
     switch scenario {
     case "plain":
         markers = []
+    case "formatted":
+        item.setString(
+            """
+            <div>
+              <strong>Synthetic release notes</strong>
+              <ul>
+                <li>Private local history</li>
+                <li>Fast clipboard restore</li>
+              </ul>
+            </div>
+            """,
+            forType: .html
+        )
+        markers = []
     case "source-empty":
         markers = [(sourceType, Data())]
     case "source-valid":

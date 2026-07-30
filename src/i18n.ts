@@ -51,9 +51,6 @@ export interface Messages {
   menuBarEnabled: string;
   menuBarDisabled: string;
   clipboardHistory: string;
-  recentEvents: string;
-  historyDescription: string;
-  refresh: string;
   clearAll: string;
   loadMore: string;
   loadingMore: string;
@@ -203,10 +200,6 @@ const translations: Record<SupportedLanguage, Messages> = {
     menuBarEnabled: "Recent clips are available from the tray menu.",
     menuBarDisabled: "The tray menu is hidden.",
     clipboardHistory: "Clipboard history",
-    recentEvents: "Recent events",
-    historyDescription:
-      "Refresh the list, restore an item, or clear the local stack.",
-    refresh: "Refresh",
     clearAll: "Clear all",
     loadMore: "Load more",
     loadingMore: "Loading more...",
@@ -310,9 +303,6 @@ const translations: Record<SupportedLanguage, Messages> = {
     menuBarEnabled: "可从菜单栏访问最近的剪贴板内容。",
     menuBarDisabled: "菜单栏图标已隐藏。",
     clipboardHistory: "剪贴板历史",
-    recentEvents: "最近记录",
-    historyDescription: "刷新列表、恢复项目或清空本地记录。",
-    refresh: "刷新",
     clearAll: "全部清空",
     loadMore: "加载更多",
     loadingMore: "正在加载...",
@@ -413,9 +403,6 @@ const translations: Record<SupportedLanguage, Messages> = {
     menuBarEnabled: "可從選單列存取最近的剪貼簿內容。",
     menuBarDisabled: "選單列圖示已隱藏。",
     clipboardHistory: "剪貼簿歷史",
-    recentEvents: "最近記錄",
-    historyDescription: "重新整理列表、還原項目或清除本機記錄。",
-    refresh: "重新整理",
     clearAll: "全部清除",
     loadMore: "載入更多",
     loadingMore: "正在載入...",

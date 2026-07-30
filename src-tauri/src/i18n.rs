@@ -86,7 +86,6 @@ impl LanguagePreference {
 }
 
 pub(crate) struct NativeStrings {
-    pub(crate) settings: &'static str,
     pub(crate) settings_ellipsis: &'static str,
     pub(crate) recent_clipboard_items: &'static str,
     pub(crate) no_clipboard_items: &'static str,
@@ -121,7 +120,6 @@ pub(crate) struct NativeStrings {
 }
 
 const ENGLISH_STRINGS: NativeStrings = NativeStrings {
-    settings: "Settings",
     settings_ellipsis: "Settings…",
     recent_clipboard_items: "Recent clipboard items",
     no_clipboard_items: "No clipboard items yet",
@@ -156,7 +154,6 @@ const ENGLISH_STRINGS: NativeStrings = NativeStrings {
 };
 
 const SIMPLIFIED_CHINESE_STRINGS: NativeStrings = NativeStrings {
-    settings: "设置",
     settings_ellipsis: "设置…",
     recent_clipboard_items: "最近的剪贴板项目",
     no_clipboard_items: "暂无剪贴板项目",
@@ -191,7 +188,6 @@ const SIMPLIFIED_CHINESE_STRINGS: NativeStrings = NativeStrings {
 };
 
 const TRADITIONAL_CHINESE_STRINGS: NativeStrings = NativeStrings {
-    settings: "設定",
     settings_ellipsis: "設定…",
     recent_clipboard_items: "最近的剪貼簿項目",
     no_clipboard_items: "尚無剪貼簿項目",
@@ -281,11 +277,17 @@ mod tests {
 
     #[test]
     fn every_native_catalog_has_localized_settings_text() {
-        assert_eq!(native_strings(Language::English).settings, "Settings");
-        assert_eq!(native_strings(Language::SimplifiedChinese).settings, "设置");
         assert_eq!(
-            native_strings(Language::TraditionalChinese).settings,
-            "設定"
+            native_strings(Language::English).settings_ellipsis,
+            "Settings…"
+        );
+        assert_eq!(
+            native_strings(Language::SimplifiedChinese).settings_ellipsis,
+            "设置…"
+        );
+        assert_eq!(
+            native_strings(Language::TraditionalChinese).settings_ellipsis,
+            "設定…"
         );
     }
 }

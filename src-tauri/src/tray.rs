@@ -3,15 +3,14 @@ use crate::pasteboard_protocol::prepare_event_for_restore;
 use crate::store::{Database, FileDisplayItem, TrayEvent};
 use crate::{
     clear_restore_suppression_if_matches, queue_restore_suppression,
-    report_restore_post_processing_failure, report_tray_operation_failure, resolved_language,
+    report_restore_post_processing_failure, report_tray_operation_failure,
     restore_event_to_clipboard, schedule_history_mirror_for_tray, AppState,
 };
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
+use tauri::{image::Image, AppHandle, Emitter, Manager, Runtime};
 
 const TRAY_ID: &str = "main";
-const SETTINGS_WINDOW_LABEL: &str = "settings";
 const EVENT_ITEM_PREFIX: &str = "event::";
 const EVENT_PREVIEW_PREFIX: &str = "preview::";
 const OPEN_HISTORY_ID: &str = "action::open-history";
@@ -35,28 +34,25 @@ pub const HISTORY_UPDATED_EVENT: &str = "clipboard-history-updated";
 pub const LANGUAGE_CHANGED_EVENT: &str = "app-language-changed";
 pub const NAVIGATE_EVENT: &str = "app:navigate";
 pub const HISTORY_PAGE: &str = "history";
+pub const SETTINGS_PAGE: &str = "settings";
 
 pub fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let menu = build_menu(app)?;
+    let icon = Image::from_bytes(include_bytes!("../icons/tray-template.png"))
+        .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())?;
 
-    let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
+    TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .tooltip("Copy Stack")
         .show_menu_on_left_click(true)
+        .icon(icon)
+        .icon_as_template(true)
         .on_menu_event(|app, event| {
             if let Err(_error) = handle_menu_event(app, event.id().as_ref()) {
                 report_tray_operation_failure(app);
                 debug_error!("tray menu action failed: {}", _error);
             }
-        });
-
-    if let Some(icon) = app.default_window_icon().cloned() {
-        tray_builder = tray_builder.icon(icon).icon_as_template(true);
-    } else {
-        tray_builder = tray_builder.title("Copy Stack");
-    }
-
-    tray_builder
+        })
         .build(app)
         .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())?;
     sync(app)
@@ -102,59 +98,6 @@ pub fn show_page<R: Runtime>(app: &AppHandle<R>, page: &str) -> Result<(), Strin
         .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())
 }
 
-pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let language = resolved_language(app).map_err(|_| ERROR_APP_STATE_UNAVAILABLE.to_string())?;
-    let strings = native_strings(language);
-
-    if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
-        window
-            .set_title(strings.settings)
-            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
-        window
-            .show()
-            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
-        window
-            .unminimize()
-            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
-        window
-            .set_focus()
-            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
-        return Ok(());
-    }
-
-    let window = WebviewWindowBuilder::new(app, SETTINGS_WINDOW_LABEL, WebviewUrl::default())
-        .title(strings.settings)
-        .inner_size(560.0, 500.0)
-        .min_inner_size(560.0, 500.0)
-        .max_inner_size(560.0, 500.0)
-        .resizable(false)
-        .maximizable(false)
-        .center()
-        .build()
-        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
-    window
-        .unminimize()
-        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
-    window
-        .set_focus()
-        .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
-
-    Ok(())
-}
-
-pub(crate) fn sync_window_titles<R: Runtime>(
-    app: &AppHandle<R>,
-    language: Language,
-) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
-        window
-            .set_title(native_strings(language).settings)
-            .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())?;
-    }
-
-    Ok(())
-}
-
 pub fn notify_history_changed<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     app.emit(HISTORY_UPDATED_EVENT, ())
         .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())
@@ -168,7 +111,7 @@ pub(crate) fn notify_language_changed<R: Runtime>(app: &AppHandle<R>) -> Result<
 fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) -> Result<(), String> {
     match menu_id {
         OPEN_HISTORY_ID => show_page(app, HISTORY_PAGE),
-        OPEN_SETTINGS_ID => show_settings_window(app),
+        OPEN_SETTINGS_ID => show_page(app, SETTINGS_PAGE),
         CLEAR_HISTORY_ID => {
             let state = app.state::<AppState>();
             {

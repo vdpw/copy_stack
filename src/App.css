@@ -46,10 +46,10 @@ button {
 
 .app-shell {
   min-height: 100vh;
-  padding: 32px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 12px;
 }
 
 .app-shell,
@@ -67,9 +67,92 @@ button {
 
 .section-kicker {
   text-transform: uppercase;
-  letter-spacing: 0.18em;
-  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  font-size: 0.66rem;
   font-weight: 700;
+}
+
+.app-navigation {
+  min-height: 44px;
+  padding: 5px 6px 5px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(20, 33, 61, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 8px 24px rgba(20, 33, 61, 0.06);
+  backdrop-filter: blur(22px);
+}
+
+.app-brand,
+.page-tabs,
+.page-tab {
+  display: flex;
+  align-items: center;
+}
+
+.app-brand {
+  min-width: 0;
+  gap: 8px;
+  color: #14213d;
+  font-size: 0.88rem;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.app-brand-mark {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f97316, #fb7185);
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 800;
+  box-shadow: 0 5px 14px rgba(249, 115, 22, 0.2);
+}
+
+.page-tabs {
+  gap: 2px;
+  padding: 3px;
+  border-radius: 11px;
+  background: rgba(20, 33, 61, 0.06);
+}
+
+.page-tab {
+  min-height: 30px;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    box-shadow 140ms ease,
+    color 140ms ease;
+}
+
+.page-tab:hover {
+  color: #14213d;
+}
+
+.page-tab-active {
+  background: rgba(255, 255, 255, 0.94);
+  color: #14213d;
+  box-shadow: 0 2px 8px rgba(20, 33, 61, 0.1);
+}
+
+.page-tab:focus-visible {
+  outline: 3px solid rgba(249, 115, 22, 0.24);
+  outline-offset: 2px;
 }
 
 .panel-header h2,
@@ -90,28 +173,29 @@ button {
 .modal-content {
   border: 1px solid rgba(20, 33, 61, 0.08);
   background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 20px 60px rgba(20, 33, 61, 0.08);
+  box-shadow: 0 10px 30px rgba(20, 33, 61, 0.07);
   backdrop-filter: blur(22px);
 }
 
 .content-panel {
-  border-radius: 28px;
-  padding: 24px;
+  min-height: calc(100vh - 88px);
+  border-radius: 20px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  min-height: 560px;
+  gap: 14px;
 }
 
 .panel-header {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
+  gap: 12px;
+  align-items: center;
 }
 
 .panel-header h2 {
-  font-size: 2rem;
+  font-size: 1.55rem;
+  line-height: 1.12;
   color: #14213d;
 }
 
@@ -125,25 +209,31 @@ button {
 .settings-error,
 .event-timestamp {
   color: #64748b;
-  line-height: 1.6;
+  line-height: 1.4;
 }
 
-.panel-actions,
+.section-description {
+  margin-top: 2px;
+  font-size: 0.84rem;
+}
+
 .event-actions,
 .modal-actions,
 .storage-input-row {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .btn {
   border-radius: 999px;
-  padding: 11px 18px;
+  min-height: 34px;
+  padding: 8px 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 7px;
+  font-size: 0.82rem;
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -166,7 +256,7 @@ button {
 .btn-primary {
   background: linear-gradient(135deg, #f97316, #fb7185);
   color: white;
-  box-shadow: 0 14px 32px rgba(249, 115, 22, 0.24);
+  box-shadow: 0 8px 20px rgba(249, 115, 22, 0.2);
 }
 
 .btn-secondary {
@@ -175,7 +265,7 @@ button {
 }
 
 .btn-secondary:not(:disabled):hover {
-  box-shadow: 0 14px 28px rgba(20, 33, 61, 0.08);
+  box-shadow: 0 7px 18px rgba(20, 33, 61, 0.08);
 }
 
 .btn-danger {
@@ -184,13 +274,13 @@ button {
 }
 
 .btn-danger:not(:disabled):hover {
-  box-shadow: 0 14px 28px rgba(185, 28, 28, 0.12);
+  box-shadow: 0 7px 18px rgba(185, 28, 28, 0.12);
 }
 
 .placeholder-card,
 .empty-state {
-  border-radius: 24px;
-  padding: 32px;
+  border-radius: 16px;
+  padding: 22px;
   text-align: center;
 }
 
@@ -201,26 +291,26 @@ button {
 .empty-state {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .empty-state h3 {
-  font-size: 1.7rem;
+  font-size: 1.35rem;
 }
 
 .events-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
 }
 
 .event-card {
-  border-radius: 22px;
-  padding: 18px 20px;
+  border-radius: 14px;
+  padding: 11px 12px;
   display: flex;
   justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
+  gap: 10px;
+  align-items: center;
   transition:
     transform 180ms ease,
     box-shadow 180ms ease,
@@ -229,8 +319,8 @@ button {
 }
 
 .event-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 26px 60px rgba(20, 33, 61, 0.12);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(20, 33, 61, 0.1);
   border-color: rgba(20, 33, 61, 0.14);
 }
 
@@ -240,6 +330,7 @@ button {
 }
 
 .event-card-expanded {
+  align-items: flex-start;
   border-color: rgba(20, 33, 61, 0.16);
 }
 
@@ -253,10 +344,10 @@ button {
 }
 
 .event-meta {
-  margin-bottom: 8px;
+  margin-bottom: 5px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   flex-wrap: wrap;
 }
 
@@ -266,11 +357,11 @@ button {
   border-radius: 999px;
   background: rgba(14, 116, 144, 0.1);
   color: #0f6175;
-  font-size: 0.72rem;
+  font-size: 0.64rem;
   font-weight: 800;
   letter-spacing: 0;
   line-height: 1;
-  padding: 6px 9px;
+  padding: 4px 7px;
   text-transform: uppercase;
 }
 
@@ -295,8 +386,8 @@ button {
 .event-preview {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: 7px;
+  margin-bottom: 4px;
 }
 
 .event-image-preview {
@@ -311,8 +402,8 @@ button {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 6px;
+  margin-bottom: 5px;
   min-width: 0;
 }
 
@@ -327,6 +418,7 @@ button {
   border: 1px solid rgba(20, 33, 61, 0.12);
   border-radius: 12px;
   background: #fff;
+  cursor: pointer;
 }
 
 .event-html-preview {
@@ -335,6 +427,9 @@ button {
   height: 280px;
   border: 0;
   background: #fff;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .event-video-preview {
@@ -453,26 +548,26 @@ button {
 .event-file-items {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   list-style: none;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 
 .event-file-item {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 7px;
   color: #14213d;
-  line-height: 1.55;
-  font-size: 0.98rem;
+  line-height: 1.4;
+  font-size: 0.9rem;
   min-width: 0;
   word-break: break-word;
 }
 
 .event-text {
   color: #14213d;
-  line-height: 1.65;
-  font-size: 0.98rem;
+  line-height: 1.45;
+  font-size: 0.9rem;
   word-break: break-word;
 }
 
@@ -487,8 +582,8 @@ button {
 .event-detail-status {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: 7px;
+  margin-bottom: 5px;
   color: #64748b;
   line-height: 1.5;
 }
@@ -499,8 +594,13 @@ button {
 }
 
 .event-actions .btn {
-  min-width: 44px;
-  padding-inline: 14px;
+  min-width: 34px;
+  min-height: 32px;
+  padding: 7px 9px;
+}
+
+.event-timestamp {
+  font-size: 0.72rem;
 }
 
 .copy-feedback-button {
@@ -513,7 +613,7 @@ button {
 
 .copy-feedback-button.btn-copy-success {
   background: linear-gradient(135deg, #16a34a, #22c55e);
-  box-shadow: 0 14px 32px rgba(34, 197, 94, 0.28);
+  box-shadow: 0 8px 20px rgba(34, 197, 94, 0.24);
   animation: copied-button-pop 360ms ease-out;
 }
 
@@ -657,44 +757,38 @@ button {
   line-height: 1.38;
 }
 
-.settings-shell {
-  min-height: 100vh;
-  padding: 18px 20px 20px;
-  background: #f5f5f7;
-  color: #1d1d1f;
-  gap: 0;
-}
-
 .preferences-panel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .preferences-header {
-  padding: 2px 2px 0;
+  padding: 0 2px;
 }
 
 .preferences-header h1 {
-  font-size: 1.25rem;
-  font-weight: 650;
-  letter-spacing: 0;
+  color: #14213d;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
 }
 
 .preference-group {
   overflow: hidden;
   border: 1px solid rgba(60, 60, 67, 0.16);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.82);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .preference-row {
-  min-height: 74px;
-  padding: 14px 16px;
+  min-height: 60px;
+  padding: 10px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 16px;
   border-bottom: 1px solid rgba(60, 60, 67, 0.12);
 }
 
@@ -712,13 +806,13 @@ button {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .preference-copy label,
 .preference-title {
   color: #1d1d1f;
-  font-size: 0.91rem;
+  font-size: 0.86rem;
   font-weight: 600;
   line-height: 1.3;
 }
@@ -726,8 +820,8 @@ button {
 .preference-copy p,
 .preference-description {
   color: rgba(60, 60, 67, 0.72);
-  font-size: 0.78rem;
-  line-height: 1.38;
+  font-size: 0.74rem;
+  line-height: 1.34;
 }
 
 .preference-description {
@@ -742,18 +836,18 @@ button {
   width: auto;
 }
 
-.settings-shell .storage-input-row {
+.settings-panel .storage-input-row {
   margin-left: auto;
   flex-wrap: nowrap;
   justify-content: flex-end;
   width: auto;
 }
 
-.settings-shell .storage-input {
+.settings-panel .storage-input {
   width: 86px;
 }
 
-.settings-shell .btn {
+.settings-panel .btn {
   min-height: 28px;
   border-radius: 7px;
   padding: 5px 11px;
@@ -762,11 +856,11 @@ button {
   box-shadow: none;
 }
 
-.settings-shell .btn:not(:disabled):hover {
+.settings-panel .btn:not(:disabled):hover {
   transform: none;
 }
 
-.settings-shell .btn-primary {
+.settings-panel .btn-primary {
   background: #007aff;
   color: #fff;
 }
@@ -837,8 +931,8 @@ button {
 
 .modal-content {
   width: min(520px, 100%);
-  border-radius: 28px;
-  padding: 24px;
+  border-radius: 18px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -851,7 +945,7 @@ button {
 }
 
 .modal-header h3 {
-  font-size: 1.6rem;
+  font-size: 1.35rem;
 }
 
 .warning-icon {
@@ -867,8 +961,8 @@ button {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: start;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 9px;
+  padding: 10px 12px;
   border: 1px solid rgba(185, 28, 28, 0.2);
   border-radius: 16px;
   background: rgba(254, 242, 242, 0.94);
@@ -938,7 +1032,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 12px 14px;
+  padding: 9px 11px;
   border: 1px solid rgba(217, 119, 6, 0.22);
   border-radius: 14px;
   background: rgba(255, 251, 235, 0.95);
@@ -961,6 +1055,13 @@ button {
   font-size: 0.86rem;
 }
 
+.history-footer-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 @media (max-width: 720px) {
   .event-video-preview,
   .event-card-expanded .event-video-preview {
@@ -978,20 +1079,15 @@ button {
   }
 
   .app-shell {
-    padding: 18px;
+    padding: 12px;
   }
 
   .content-panel {
-    border-radius: 22px;
+    min-height: calc(100vh - 80px);
+    border-radius: 16px;
+    padding: 14px;
   }
 
-  .panel-header,
-  .event-card {
-    flex-direction: column;
-  }
-
-  .panel-actions,
-  .event-actions,
   .modal-actions,
   .storage-input-row,
   .history-pagination {
@@ -1006,36 +1102,60 @@ button {
     grid-column: 3;
   }
 
-  .panel-actions .btn,
   .modal-actions .btn,
   .storage-input-row .btn,
   .storage-input {
     width: 100%;
   }
 
-  .event-actions .btn {
-    flex: 1;
-  }
-
-  .settings-shell {
-    padding: 16px;
-  }
-
-  .settings-shell .storage-input-row {
+  .settings-panel .storage-input-row {
     margin-left: auto;
     width: auto;
   }
 
-  .settings-shell .storage-input-row .btn,
-  .settings-shell .storage-input {
+  .settings-panel .storage-input-row .btn,
+  .settings-panel .storage-input {
     width: auto;
   }
 
-  .settings-shell .storage-input {
+  .settings-panel .storage-input {
     width: 86px;
   }
 
   .preference-row {
     gap: 12px;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-brand > span:last-child {
+    display: none;
+  }
+
+  .panel-header,
+  .event-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .event-actions {
+    width: 100%;
+  }
+
+  .history-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .history-footer-actions {
+    width: 100%;
+  }
+
+  .history-footer-actions .btn {
+    flex: 1;
+  }
+
+  .event-actions .btn {
+    flex: 1;
   }
 }

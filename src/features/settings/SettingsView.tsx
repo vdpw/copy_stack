@@ -40,7 +40,7 @@ export function SettingsView({
 
   if (!settings) {
     return (
-      <main className="preferences-panel">
+      <main className="content-panel preferences-panel settings-panel">
         <header className="preferences-header">
           <h1>{messages.settings}</h1>
         </header>
@@ -100,7 +100,7 @@ export function SettingsView({
 
   return (
     <>
-      <main className="preferences-panel">
+      <main className="content-panel preferences-panel settings-panel">
         <header className="preferences-header">
           <h1>{messages.settings}</h1>
         </header>

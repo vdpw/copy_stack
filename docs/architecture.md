@@ -69,8 +69,8 @@ lock:
 
 ## Frontend Structure
 
-- `src/App.tsx`: chooses the `main` or `settings` surface and coordinates
-  language/error presentation.
+- `src/App.tsx`: owns the main window's History/Settings page navigation and
+  coordinates language/error presentation.
 - `src/features/history/`: history list, cards, media presentation, and the
   bounded detail cache.
 - `src/features/settings/`: settings presentation.
@@ -83,33 +83,32 @@ lock:
 - `src/lib/htmlPreview.ts`: allowlist sanitizer and isolated preview document.
 - `src/types.ts`: the TypeScript side of serialized Rust contracts.
 
-The main window keeps scroll and expansion state across live refreshes. The
-settings window loads counts and byte totals from `get_app_settings`; it does
-not fetch clipboard history.
+The History page keeps scroll and expansion state across live refreshes. The
+Settings page loads counts and byte totals from `get_app_settings`; because the
+History view is unmounted while Settings is active, it does not fetch clipboard
+history in the background.
 
 ## Command Contract
 
-Registered commands are:
+The single main window registers the history commands
+`get_copy_events_page`, `get_history_detail`, `delete_copy_event`,
+`clear_all_events`, and `copy_to_clipboard`; the settings commands
+`get_app_settings`, `get_autostart_status`, `set_autostart_enabled`,
+`set_max_items`, `set_max_history_bytes`, `set_show_in_menu_bar`,
+`set_move_restored_item_to_top`, `set_compact_mode`, and `set_language`; plus
+the startup and diagnostic reads.
 
-- history window: `get_copy_events_page`, `get_history_detail`,
-  `delete_copy_event`, `clear_all_events`, `copy_to_clipboard`,
-  `get_app_settings`, and `get_safe_diagnostics`;
-- settings window: `get_app_settings`, `get_safe_diagnostics`,
-  `get_autostart_status`, `set_autostart_enabled`, `set_max_items`,
-  `set_max_history_bytes`, `set_show_in_menu_bar`,
-  `set_move_restored_item_to_top`, `set_compact_mode`, and `set_language`.
-
-`src-tauri/capabilities/main.json` and `settings.json` grant these commands per
-window. The settings window cannot query history or details, and the main
-window cannot mutate autostart. There is no broad `core:default` grant and the
-unused opener plugin is not installed.
+`src-tauri/capabilities/main.json` grants exactly that audited command union to
+the one webview. There is no broad `core:default` grant, separate settings
+window capability, or opener plugin.
 
 ## Event Contract
 
 - `clipboard-history-updated`: reload the first history page while preserving
   view state.
-- `app:navigate`: show History when the native menu requests it.
-- `app-language-changed`: reload settings so all webviews use the backend's
+- `app:navigate`: show and focus the main window, then select `history` or
+  `settings` when a native menu requests it.
+- `app-language-changed`: reload settings so both pages use the backend's
   resolved language.
 - `capture-rejected`: show a localized notice for a resource-limit rejection;
   the payload contains only a resource code and size bucket.
