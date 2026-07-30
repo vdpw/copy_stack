@@ -1,190 +1,164 @@
-# Copy Stack - Desktop Clipboard Manager
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="Copy Stack app icon">
+</p>
 
-A modern macOS clipboard manager built with Tauri, React, and Rust. Copy Stack
-runs in the menu bar and keeps a private local history of eligible clipboard
-content, making it easy to restore previously copied items.
+<h1 align="center">Copy Stack</h1>
 
-## Features
+<p align="center">
+  A private, native-feeling clipboard history for macOS, built with Tauri, React, and Rust.
+</p>
 
-- 🖥️ **macOS Desktop App**: Native Tauri app with a localized menu bar
-- 📋 **Private Clipboard History**: Stores eligible clipboard content locally
-- ⚡ **Bounded History UI**: Loads 50-item pages and rich details on demand
-- 🔄 **Real-time Updates**: Refreshes after accepted clipboard changes
-- 🔍 **Quick Restore**: Restores an item from History or the menu bar
-- 🗑️ **Bounded Storage**: Enforces both item-count and byte budgets
-- 🚀 **Native Lifecycle**: Supports single-instance activation and opt-in
-  launch at login
+Copy Stack runs quietly in the menu bar, records eligible clipboard content in
+a local SQLite database, and lets you restore recent items without sending
+clipboard data to a remote service.
 
 ## Screenshots
 
-The app features a modern gradient background with glassmorphism cards and a clean, intuitive interface.
+| Clipboard history                                                                                 | Settings                                                    |
+| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| ![Copy Stack clipboard history containing synthetic examples](docs/images/copy-stack-history.png) | ![Copy Stack settings](docs/images/copy-stack-settings.png) |
 
-## Installation
+> Every clipboard item shown in these screenshots is synthetic QA data.
 
-### Prerequisites
+## Highlights
 
-- [Node.js](https://nodejs.org/) (v18 or higher)
-- [pnpm](https://pnpm.io/)
-- [Rust](https://rustup.rs/) (for Tauri development)
+- **Fast history:** loads summaries in bounded pages and fetches rich previews
+  only when an item is expanded.
+- **Rich clipboard support:** handles text, formatted text, images, files,
+  folders, and bounded media metadata.
+- **Quick restore:** restores an item from either the History page or the macOS
+  menu bar.
+- **Private by default:** stores accepted content locally and gives database,
+  sidecar, and optional mirror files private permissions.
+- **Clipboard-aware filtering:** excludes transient, auto-generated,
+  concealed, and supported password-manager content before persistence.
+- **Storage controls:** enforces configurable item and byte limits and includes
+  an optional text-only compact mode.
+- **Native lifecycle:** supports single-instance activation and opt-in launch
+  at login.
+- **Localized UI:** supports English, Simplified Chinese, and Traditional
+  Chinese, including system-language detection.
 
-### Development Setup
+## Requirements
 
-1. Clone the repository:
+- macOS
+- Node.js 18 or newer
+- pnpm 10
+- Rust stable
+- Xcode Command Line Tools
+
+## Run From Source
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/vdpw/copy_stack.git
 cd copy_stack
-```
-
-2. Install dependencies:
-
-```bash
+corepack enable
 pnpm install
-```
-
-3. Start the development server:
-
-```bash
-# For desktop development
 pnpm desktop:dev
-
-# For web development only
-pnpm dev
 ```
 
-### Building for Production
+The development app uses the real macOS pasteboard. For isolated manual QA,
+follow the temporary-data workflow in
+[`docs/development.md`](docs/development.md).
+
+## Build
 
 ```bash
-# Build the desktop application
 pnpm desktop:build
-
-# Build for web only
-pnpm build
 ```
 
-## Usage
+The Tauri bundle is written below `src-tauri/target/release/bundle/`. Current
+builds are ad-hoc signed and are not notarized; see
+[`docs/release.md`](docs/release.md) before distributing an artifact.
 
-### Desktop Application
+## How It Works
 
-1. **Launch**: Start the application and it will open in a desktop window
-2. **Copy History**: Supported user-copied content is automatically tracked
-3. **Quick Copy**: Click the copy button on any entry to copy it back to your clipboard
-4. **Manage**: Delete individual entries or clear all history
-5. **Refresh**: Use the refresh button to reload the clipboard history
-
-## Clipboard Privacy
-
-Copy Stack follows the [NSPasteboard.org](https://nspasteboard.org/) conventions
-used by macOS clipboard tools:
-
-- Content marked transient or automatically generated is excluded from history.
-- Content marked confidential, including supported password-manager markers, is
-  not stored, previewed, added to the tray, or exported to the optional JSONL
-  history mirror.
-- Source bundle identifiers and Apple remote-clipboard provenance are
-  informational metadata only and do not change content deduplication.
-- Restoring history writes the standard `org.nspasteboard.source` marker with
-  the original source or an explicit empty value when the source is unknown.
-
-History is stored locally in SQLite. The optional JSONL history mirror can
-contain accepted clipboard contents and should be protected like the database.
-Do not share either file without reviewing and sanitizing it first.
-
-## Development
-
-### Documentation
-
-Detailed project docs live in [`docs/index.md`](docs/index.md). The root
-[`AGENTS.md`](AGENTS.md) file is a compact menu for coding agents and links to
-the detailed docs for architecture, frontend, backend, persistence, clipboard
-flows, development, release, and troubleshooting.
-
-Performance work starts with [`docs/performance.md`](docs/performance.md).
-Release security and the required macOS manual matrix are in
-[`docs/security-release-checklist.md`](docs/security-release-checklist.md).
-
-### Project Structure
-
+```text
+macOS pasteboard
+      │
+      ▼
+copy_event_listener
+      │  classify, normalize, filter
+      ▼
+Rust / Tauri backend ──► SQLite history
+      │                       │
+      ├──► menu bar           └──► optional atomic JSONL mirror
+      │
+      ▼
+React History + Settings
 ```
+
+History order, deduplication, retention, and restore behavior are persisted in
+SQLite rather than simulated in React. The frontend requests 50 bounded
+summaries at a time, while rich HTML and media detail is loaded on demand.
+
+## Privacy Notes
+
+The default database is:
+
+```text
+$HOME/.copy_stack/copy_stack.db
+```
+
+The data directory is restricted to the current user, but clipboard history is
+not encrypted at rest. Anyone who can access your macOS account may be able to
+read it. Concealed/password-manager, transient, and auto-generated pasteboard
+items are skipped before they reach the database, tray, diagnostics, or JSONL
+mirror.
+
+The optional JSONL mirror may contain accepted clipboard bodies. Treat it with
+the same care as the database and never attach either file to a bug report
+without reviewing and sanitizing it.
+
+## Development Commands
+
+| Command                                            | Purpose                                               |
+| -------------------------------------------------- | ----------------------------------------------------- |
+| `pnpm desktop:dev`                                 | Run the React frontend inside the Tauri desktop shell |
+| `pnpm dev`                                         | Run the Vite frontend only                            |
+| `pnpm type-check`                                  | Type-check the frontend                               |
+| `pnpm lint`                                        | Lint TypeScript and React                             |
+| `pnpm test`                                        | Run frontend tests                                    |
+| `pnpm build`                                       | Build the frontend                                    |
+| `pnpm security-check`                              | Verify security configuration guardrails              |
+| `cargo check --manifest-path src-tauri/Cargo.toml` | Check the Rust backend                                |
+| `cargo test --manifest-path src-tauri/Cargo.toml`  | Run Rust tests                                        |
+
+The documentation index at [`docs/index.md`](docs/index.md) links to the
+architecture, frontend, backend, persistence, performance, security, and
+release guides. [`AGENTS.MD`](AGENTS.MD) is the compact project menu for coding
+agents.
+
+## Project Layout
+
+```text
 copy_stack/
-├── src/                 # React frontend
-│   ├── features/       # History and Settings surfaces
-│   ├── hooks/          # Paged history, lazy details, and settings state
-│   ├── api/            # Typed Tauri command/error boundary
-│   ├── App.tsx         # Window-level composition
-│   └── main.tsx        # Entry point
-├── src-tauri/          # Rust backend
-│   ├── src/
-│   │   ├── lib.rs      # Lifecycle, commands, and capture pipeline
-│   │   ├── store/      # Versioned SQLite persistence and paging
-│   │   ├── history_mirror.rs
-│   │   └── private_fs.rs
-│   └── tauri.conf.json # Tauri configuration
-└── package.json        # Node.js dependencies
+├── src/                  React and TypeScript frontend
+│   ├── features/         History and Settings
+│   ├── hooks/            Paging, detail cache, and settings state
+│   ├── api/              Typed Tauri invocation boundary
+│   └── lib/              Display and HTML-preview safety helpers
+├── src-tauri/            Rust backend and Tauri configuration
+│   └── src/
+│       ├── store/        SQLite, classification, paging, and previews
+│       ├── tray.rs       macOS menu-bar integration
+│       └── lib.rs        Commands and application lifecycle
+├── scripts/              Synthetic QA and performance helpers
+└── docs/                 Design and development documentation
 ```
 
-### Key Technologies
+## Platform Status
 
-- **Frontend**: React 18, TypeScript, Vite
-- **Backend**: Rust, Tauri 2
-- **Database**: SQLite (via rusqlite)
-- **UI**: Custom CSS with glassmorphism design
-- **Icons**: Lucide React
-
-### Available Scripts
-
-- `pnpm desktop:dev` - Start desktop development server
-- `pnpm desktop:build` - Build desktop application
-- `pnpm dev` - Start web development server
-- `pnpm build` - Build web application
-- `pnpm type-check` - Type-check the frontend
-- `pnpm lint` - Lint the frontend
-- `pnpm test` - Run frontend unit tests
-- `pnpm security-check` - Verify security configuration guardrails
-
-## Configuration
-
-The application can be configured through the `src-tauri/tauri.conf.json` file:
-
-- Window size and behavior
-- System tray settings
-- Application metadata
-- Build settings
+Copy Stack currently targets macOS. Windows assets are generated for Tauri
+packaging compatibility, but Windows clipboard behavior is not implemented or
+supported.
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+Before opening a pull request, run the checks appropriate for your change from
+[`docs/development.md`](docs/development.md). Clipboard fixtures, screenshots,
+logs, and databases must contain synthetic data only.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Roadmap
-
-- [ ] Rich previews for more clipboard formats
-- [ ] Categories and tags
-- [ ] Windows platform support
-- [ ] Search functionality
-- [ ] Keyboard shortcuts
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Build fails**: Ensure you have Rust and Tauri CLI installed
-2. **Window not displaying**: Check your display settings and window manager
-3. **Clipboard not detected**: Run the desktop app with `pnpm desktop:dev`,
-   confirm the published `copy_event_listener = "0.1.2"` dependency resolves,
-   and check the redacted debug control-flow logs
-
-### Platform Support
-
-- ✅ macOS
-
-## Support
-
-If you encounter any issues or have questions, please open an issue on GitHub.
+Copy Stack is available under the [MIT License](LICENSE).

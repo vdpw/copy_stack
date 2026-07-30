@@ -4,7 +4,8 @@
 
 - `clipboard-history-updated`: refresh the first History page and settings
   totals.
-- `app:navigate`: native UI requested `history`.
+- `app:navigate`: native UI requested the in-window `history` or `settings`
+  page.
 - `app-language-changed`: reload authoritative language/settings.
 - `capture-rejected`: a resource-limited event could not be safely degraded;
   payload contains only resource kind and size bucket.

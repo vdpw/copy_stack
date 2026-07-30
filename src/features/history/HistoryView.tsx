@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { RefreshCw, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ElementRef } from "react";
 import {
@@ -85,7 +85,6 @@ export function HistoryView({
     loading,
     loadingMore,
     refresh: refreshHistory,
-    refreshing,
     totalCount,
   } = useClipboardHistory();
   const {
@@ -315,34 +314,7 @@ export function HistoryView({
   return (
     <div className="workspace">
       <main className="content-panel">
-        <section className="panel-header">
-          <div>
-            <p className="section-kicker">{messages.clipboardHistory}</p>
-            <h2>{messages.recentEvents}</h2>
-            <p className="section-description">{messages.historyDescription}</p>
-          </div>
-
-          <div className="panel-actions">
-            <button
-              className="btn btn-secondary"
-              disabled={refreshing}
-              onClick={() => void refreshPreservingView()}
-              type="button"
-            >
-              <RefreshCw size={16} />
-              {messages.refresh}
-            </button>
-            <button
-              className="btn btn-danger"
-              disabled={totalCount === 0}
-              onClick={() => void clearAllEvents()}
-              type="button"
-            >
-              <Trash2 size={16} />
-              {messages.clearAll}
-            </button>
-          </div>
-        </section>
+        <h1 className="sr-only">{messages.clipboardHistory}</h1>
 
         {visibleFailure && (
           <DiagnosticErrorBanner
@@ -423,16 +395,26 @@ export function HistoryView({
               <p aria-live="polite">
                 {messages.loadedHistoryCount(historyItems.length, totalCount)}
               </p>
-              {hasMore && (
+              <div className="history-footer-actions">
+                {hasMore && (
+                  <button
+                    className="btn btn-secondary"
+                    disabled={loadingMore}
+                    onClick={() => void loadMore()}
+                    type="button"
+                  >
+                    {loadingMore ? messages.loadingMore : messages.loadMore}
+                  </button>
+                )}
                 <button
-                  className="btn btn-secondary"
-                  disabled={loadingMore}
-                  onClick={() => void loadMore()}
+                  className="btn btn-danger"
+                  onClick={() => void clearAllEvents()}
                   type="button"
                 >
-                  {loadingMore ? messages.loadingMore : messages.loadMore}
+                  <Trash2 aria-hidden="true" size={15} />
+                  {messages.clearAll}
                 </button>
-              )}
+              </div>
             </div>
           </>
         )}

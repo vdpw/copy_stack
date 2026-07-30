@@ -178,13 +178,19 @@ export function sanitizeHtmlPreview(html: string): string {
 export function buildHtmlPreviewDocument(html: string): string {
   const previewStyles = `
     :root { color-scheme: light; background: #fff; }
-    * { box-sizing: border-box; max-width: 100%; }
+    * {
+      box-sizing: border-box;
+      max-width: 100%;
+      -webkit-user-select: none;
+      user-select: none;
+    }
     body {
       margin: 0;
       padding: 16px;
       overflow-wrap: anywhere;
       color: #14213d;
       background: #fff;
+      cursor: pointer;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.55;
     }

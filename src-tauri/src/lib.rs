@@ -635,7 +635,7 @@ fn replace_app_menu<R: Runtime>(app: &AppHandle<R>, language: Language) -> Resul
 
 fn handle_app_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
     if menu_id == OPEN_APP_SETTINGS_ID {
-        if let Err(_error) = tray::show_settings_window(app) {
+        if let Err(_error) = tray::show_page(app, tray::SETTINGS_PAGE) {
             report_tray_operation_failure(app);
             debug_error!("app menu action failed: {}", _error);
         }
@@ -844,8 +844,6 @@ fn set_language(
     let resolved_language = language.resolve();
 
     replace_app_menu(&app, resolved_language)
-        .map_err(|_| state_error(&state, Operation::UpdateSettings))?;
-    tray::sync_window_titles(&app, resolved_language)
         .map_err(|_| state_error(&state, Operation::UpdateSettings))?;
     tray::sync(&app).map_err(|_| state_error(&state, Operation::UpdateSettings))?;
     tray::notify_language_changed(&app)

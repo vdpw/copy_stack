@@ -82,6 +82,8 @@ describe("buildHtmlPreviewDocument", () => {
     expect(document).toContain("base-uri 'none'");
     expect(document).toContain("form-action 'none'");
     expect(document).toContain("img-src 'none'");
+    expect(document).toContain("-webkit-user-select: none");
+    expect(document).toContain("user-select: none");
     expect(document).toContain("<strong>Hello</strong>");
   });
 });

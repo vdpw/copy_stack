@@ -5,15 +5,13 @@ import { isSafePreviewImage } from "../../lib/display";
 
 export function HtmlPreview({ html, title }: { html: string; title: string }) {
   return (
-    <div
-      className="event-html-preview-shell"
-      onClick={event => event.stopPropagation()}
-    >
+    <div className="event-html-preview-shell">
       <iframe
         className="event-html-preview"
         referrerPolicy="no-referrer"
         sandbox=""
         srcDoc={buildHtmlPreviewDocument(html)}
+        tabIndex={-1}
         title={title}
       />
     </div>

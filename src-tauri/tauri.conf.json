@@ -37,7 +37,7 @@
         "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
         "X-Content-Type-Options": "nosniff"
       },
-      "capabilities": ["main-window", "settings-window"]
+      "capabilities": ["main-window"]
     }
   },
   "bundle": {

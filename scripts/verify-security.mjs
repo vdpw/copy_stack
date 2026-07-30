@@ -91,8 +91,8 @@ const capabilityFiles = (await readdir(capabilitiesDirectory)).filter(name =>
 );
 check(
   JSON.stringify([...capabilityFiles].sort()) ===
-    JSON.stringify(["main.json", "settings.json"]),
-  "Exactly the main and settings capability files must be enabled."
+    JSON.stringify(["main.json"]),
+  "Exactly the main-window capability file must be enabled."
 );
 
 const capabilitiesByName = new Map();
@@ -113,8 +113,6 @@ for (const fileName of capabilityFiles) {
 }
 
 const mainPermissions = capabilitiesByName.get("main.json")?.permissions ?? [];
-const settingsPermissions =
-  capabilitiesByName.get("settings.json")?.permissions ?? [];
 const exactPermissions = (actual, expected) =>
   JSON.stringify([...actual].sort()) === JSON.stringify([...expected].sort());
 check(
@@ -129,16 +127,6 @@ check(
     "allow-copy-to-clipboard",
     "allow-get-app-settings",
     "allow-get-safe-diagnostics",
-  ]),
-  "The main capability allowlist changed; review and update the audited snapshot."
-);
-check(
-  exactPermissions(settingsPermissions, [
-    "core:event:allow-listen",
-    "core:event:allow-unlisten",
-    "allow-get-startup-error",
-    "allow-get-app-settings",
-    "allow-get-safe-diagnostics",
     "allow-get-autostart-status",
     "allow-set-autostart-enabled",
     "allow-set-max-items",
@@ -148,31 +136,21 @@ check(
     "allow-set-compact-mode",
     "allow-set-language",
   ]),
-  "The settings capability allowlist changed; review and update the audited snapshot."
+  "The main capability allowlist changed; review and update the audited snapshot."
 );
 check(
   mainPermissions.includes("allow-get-startup-error") &&
     mainPermissions.includes("allow-get-copy-events-page") &&
     mainPermissions.includes("allow-get-history-detail") &&
-    !mainPermissions.some(permission =>
-      String(permission).includes("autostart")
-    ),
-  "The main window must have history access without autostart mutation access."
-);
-check(
-  settingsPermissions.includes("allow-get-startup-error") &&
-    settingsPermissions.includes("allow-get-app-settings") &&
-    settingsPermissions.includes("allow-set-autostart-enabled") &&
-    !settingsPermissions.includes("allow-get-copy-events-page") &&
-    !settingsPermissions.includes("allow-get-history-detail"),
-  "The settings window must not have clipboard history or detail access."
+    mainPermissions.includes("allow-get-app-settings") &&
+    mainPermissions.includes("allow-set-autostart-enabled"),
+  "The main window must have the audited history and settings page permissions."
 );
 check(
   Array.isArray(security?.capabilities) &&
-    security.capabilities.length === 2 &&
-    security.capabilities.includes("main-window") &&
-    security.capabilities.includes("settings-window"),
-  "Tauri must explicitly enable only the main and settings capabilities."
+    security.capabilities.length === 1 &&
+    security.capabilities.includes("main-window"),
+  "Tauri must explicitly enable only the main-window capability."
 );
 
 check(

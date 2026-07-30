@@ -15,9 +15,11 @@
 - `src/types.ts`: serialized command/event contracts.
 - `src/i18n.ts`: English, Simplified Chinese, and Traditional Chinese catalogs.
 
-`App.tsx` selects the `main` History surface or the separately created
-`settings` surface from the current Tauri window label. The settings window does
-not load clipboard history.
+`App.tsx` owns the main window's `history` and `settings` page state. A compact
+top-level page switcher and native `app:navigate` requests select the active
+page. Settings is rendered in the same webview without an additional category
+sidebar; when it is active, the History view is unmounted and does not load
+clipboard history.
 
 ## Commands Used By History
 
@@ -53,14 +55,15 @@ summaries expand without a detail command.
 
 Tauri maps camelCase frontend keys to snake_case Rust arguments. Update
 `src/types.ts`, the invoking hook, Rust serialization, command permissions, and
-both window capabilities together when a contract changes.
+the main-window capability together when a contract changes.
 
 ## Events
 
 - `clipboard-history-updated`: refresh the first page and settings totals while
   preserving the History scroll anchor.
-- `app:navigate`: refresh History when requested by a native menu.
-- `app-language-changed`: reload authoritative settings in every webview.
+- `app:navigate`: select `history` or `settings`; a repeated History request
+  also refreshes the visible list.
+- `app-language-changed`: reload authoritative settings in the main webview.
 - `capture-rejected`: display a localized, dismissible resource-limit notice.
 - `app-operation-error`: surface startup, capture, tray, and post-restore
   failures through the same structured error UI.
@@ -120,7 +123,9 @@ Expanded eligible cards request detail:
   tree capped at 2,048 nodes and 24 levels, strips every image/resource URL,
   and keeps only allowlisted inline formatting;
 - the sanitized document is rendered in an empty-sandbox iframe with
-  `default-src 'none'` and `img-src 'none'`;
+  `default-src 'none'` and `img-src 'none'`; the preview document disables text
+  selection and the iframe is pointer-inert so clicking its surface collapses
+  the owning History card;
 - image bytes use short-lived object URLs which are revoked on cleanup;
 - mixed text/image segments preserve clipboard order;
 - video detail is presented as metadata without loading the full video into
@@ -163,8 +168,8 @@ mutation, and attempts another authoritative read after failure. Autostart
 defaults to off.
 
 The `system` language preference is resolved by the backend to `en`, `zh-CN`,
-or `zh-TW`. `app-language-changed` keeps both webviews synchronized and native
-menus are rebuilt by Rust.
+or `zh-TW`. `app-language-changed` keeps the in-window pages synchronized and
+native menus are rebuilt by Rust.
 
 ## Error Boundary
 
@@ -187,8 +192,8 @@ source-id, hash, path, HTML, and clipboard-content errors are not displayed.
 
 ## Frontend Change Checklist
 
-- Keep Rust types, `src/types.ts`, command arguments, permissions, and window
-  capabilities synchronized.
+- Keep Rust types, `src/types.ts`, command arguments, permissions, and the
+  main-window capability synchronized.
 - Keep all three message catalogs complete.
 - Preserve cursor paging and on-demand details; do not restore an all-history
   IPC response.

@@ -30,7 +30,9 @@ Important modules:
   retention, and compatibility delegates to focused store modules.
 - `store/settings.rs`, `store/schema.rs`, and `store/models.rs`: typed settings,
   versioned schema declarations, and command-facing payloads.
-- `tray.rs`: summary-only menu construction and tray actions.
+- `tray.rs`: summary-only menu construction and tray actions; macOS uses the
+  dedicated monochrome `icons/tray-template.png` mask rather than treating the
+  opaque full-color application icon as a template.
 
 ## Startup And Process Ownership
 
@@ -216,9 +218,10 @@ Production CSP denies external connections, unsafe script/style execution,
 objects, forms, base URLs, and embedding. Development-only localhost/eval/style
 allowances live in `devCsp`. Prototype freezing is enabled.
 
-`main.json` grants only history commands and event listening.
-`settings.json` grants only settings/autostart commands and event listening.
-The unused opener dependency and permission are absent.
+`main.json` grants the audited union of history, settings, autostart, diagnostics,
+and event-listening commands needed by the two pages in the single main
+webview. There is no obsolete settings-window capability. The unused opener
+dependency and permission are absent.
 
 ## Backend Change Checklist
 
