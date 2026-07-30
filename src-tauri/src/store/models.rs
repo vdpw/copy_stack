@@ -72,6 +72,13 @@ pub struct TrayEvent {
     pub display: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayPreview {
+    pub data_type: String,
+    pub display: Vec<u8>,
+    pub truncated: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryStats {
     pub total_items: u64,

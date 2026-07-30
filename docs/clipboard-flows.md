@@ -44,6 +44,13 @@ Protocol assessment always precedes hashing, resource classification, compact
 projection, persistence, previews, tray, and mirror export. A marker on any item
 applies to the complete event.
 
+On macOS, highlighting a text row in the open tray menu performs a separate
+display-only lookup for that content hash and shows up to 64 KiB in a
+nonactivating panel beside the menu. Line breaks are preserved. Moving to an
+action/non-text row or closing the menu hides the panel. Menu construction
+remains summary-only, and clicking the highlighted row still uses the canonical
+restore path.
+
 Accepted events are classified once before the database lock used for the
 upsert. Duplicate identity updates the stored body and source/remote metadata
 without moving the row. New rows receive a monotonic timestamp. Restore
@@ -156,7 +163,8 @@ rejections produce the safe `capture-rejected` notice.
 - Keep protocol policy first and one decision per event.
 - Update SQLite before tray/UI/mirror notifications.
 - Keep file/media work and mirror writes outside the database lock.
-- Preserve cursor order and summary-only History/menu reads.
+- Preserve cursor order and summary-only History/menu construction; keep tray
+  hover detail lazy, display-only, and bounded.
 - Use the shared canonical restore helper for both entry points.
 - Update Rust/TypeScript contracts, permissions, capabilities, and docs
   together.

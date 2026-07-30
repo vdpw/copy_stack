@@ -74,7 +74,9 @@ The menu bar reads bounded summaries and defaults to showing every retained
 history row. Settings can cap it at any value from 1–1000; `0` means all.
 Long labels remain width-bounded, and every visible row restores its item
 directly without an intermediate submenu. Menu rebuilds never decode event
-blobs or read rich local media.
+blobs or read rich local media. On macOS, hovering a text row lazily opens a
+nonactivating side panel with its line-preserving content preview; the lookup
+is limited to the highlighted row and 64 KiB.
 
 ## Non-Goals
 

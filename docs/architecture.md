@@ -60,7 +60,9 @@ rewrite every history row.
 Database access remains serialized, but expensive work is separated from the
 lock:
 
-- list and menu queries select only persisted summary columns;
+- list and menu-construction queries select only persisted summary columns;
+- macOS tray hover reads one bounded display value for the currently
+  highlighted text row and presents it in a native nonactivating panel;
 - detail and restore commands copy an owned seed under the lock, then decode
   event data and inspect media after releasing it;
 - JSONL refresh signals are sent after a committed mutation. One coalescing

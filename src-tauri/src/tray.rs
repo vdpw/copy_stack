@@ -1,6 +1,6 @@
 use crate::i18n::{native_strings, Language};
 use crate::pasteboard_protocol::prepare_event_for_restore;
-use crate::store::{Database, FileDisplayItem, TrayEvent};
+use crate::store::{Database, FileDisplayItem, TrayEvent, TrayPreview};
 use crate::{
     clear_restore_suppression_if_matches, queue_restore_suppression,
     report_restore_post_processing_failure, report_tray_operation_failure,
@@ -18,6 +18,7 @@ const CLEAR_HISTORY_ID: &str = "action::clear-history";
 const QUIT_ID: &str = "action::quit";
 const HEADER_ID: &str = "label::recent-items";
 const EMPTY_STATE_ID: &str = "label::empty";
+pub(crate) const EVENT_MENU_START_INDEX: usize = 2;
 const MAX_MENU_LABEL_WIDTH: usize = 40;
 const TRUNCATION_SUFFIX: &str = "...";
 const ERROR_APP_STATE_UNAVAILABLE: &str = "app_state_unavailable";
@@ -35,13 +36,18 @@ pub const NAVIGATE_EVENT: &str = "app:navigate";
 pub const HISTORY_PAGE: &str = "history";
 pub const SETTINGS_PAGE: &str = "settings";
 
+struct BuiltTrayMenu<R: Runtime> {
+    menu: Menu<R>,
+    event_hashes: Vec<String>,
+}
+
 pub fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let menu = build_menu(app)?;
+    let built_menu = build_menu(app)?;
     let icon = Image::from_bytes(include_bytes!("../icons/tray-template.png"))
         .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())?;
 
     TrayIconBuilder::with_id(TRAY_ID)
-        .menu(&menu)
+        .menu(&built_menu.menu)
         .tooltip("Copy Stack")
         .show_menu_on_left_click(true)
         .icon(icon)
@@ -61,9 +67,13 @@ pub fn sync<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let tray = app
         .tray_by_id(TRAY_ID)
         .ok_or_else(|| ERROR_TRAY_OPERATION_FAILED.to_string())?;
-    let menu = build_menu(app)?;
+    let BuiltTrayMenu { menu, event_hashes } = build_menu(app)?;
     tray.set_menu(Some(menu))
         .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())?;
+    #[cfg(target_os = "macos")]
+    crate::tray_preview::install(app, &tray, event_hashes)?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = event_hashes;
 
     let show_in_menu_bar = {
         let state = app.state::<AppState>();
@@ -199,7 +209,7 @@ fn restore_event<R: Runtime>(app: &AppHandle<R>, content_hash: &str) -> Result<(
     Ok(())
 }
 
-fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
+fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<BuiltTrayMenu<R>, String> {
     let (events, language) = {
         let state = app.state::<AppState>();
         let db = state
@@ -253,7 +263,11 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
         }
     }
 
-    builder
+    let event_hashes = events
+        .iter()
+        .map(|event| event.content_hash.clone())
+        .collect();
+    let menu = builder
         .separator()
         .item(&open_history)
         .item(&open_settings)
@@ -261,7 +275,9 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
         .separator()
         .item(&quit)
         .build()
-        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())
+        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
+
+    Ok(BuiltTrayMenu { menu, event_hashes })
 }
 
 fn event_menu_label(event: &TrayEvent, language: Language) -> String {
@@ -284,6 +300,25 @@ fn event_menu_full_label(event: &TrayEvent, language: Language) -> String {
         "file" | "files" => format!("📄 {}", label),
         "folder" | "folders" => format!("📁 {}", label),
         _ => label,
+    }
+}
+
+pub(crate) fn tray_preview_text(preview: &TrayPreview) -> Option<String> {
+    if !matches!(preview.data_type.as_str(), "text" | "rtf" | "html") {
+        return None;
+    }
+
+    let text = std::str::from_utf8(&preview.display).ok()?;
+    let normalized_lines = text.replace("\r\n", "\n").replace('\r', "\n");
+    let content = normalized_lines.trim_end_matches('\n');
+    if content.trim().is_empty() {
+        return None;
+    }
+
+    if preview.truncated {
+        Some(format!("{content}\n…"))
+    } else {
+        Some(content.to_string())
     }
 }
 
@@ -453,5 +488,30 @@ mod tests {
             event_menu_label(&events[24], Language::English),
             "clipboard item 25"
         );
+    }
+
+    #[test]
+    fn tray_preview_preserves_multiline_text_and_marks_bounded_content() {
+        let preview = TrayPreview {
+            data_type: "text".to_string(),
+            display: b"switch {\r\n    case true:\r\n        break\r\n}".to_vec(),
+            truncated: true,
+        };
+
+        assert_eq!(
+            tray_preview_text(&preview).as_deref(),
+            Some("switch {\n    case true:\n        break\n}\n…")
+        );
+    }
+
+    #[test]
+    fn tray_preview_ignores_non_text_payloads() {
+        let preview = TrayPreview {
+            data_type: "png".to_string(),
+            display: b"PNG".to_vec(),
+            truncated: false,
+        };
+
+        assert!(tray_preview_text(&preview).is_none());
     }
 }

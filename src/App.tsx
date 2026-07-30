@@ -124,6 +124,9 @@ function App() {
             compactMode={settingsController.settings?.compact_mode ?? false}
             language={language}
             messages={messages}
+            moveRestoredItemToTop={
+              settingsController.settings?.move_restored_item_to_top ?? false
+            }
             onHistoryChanged={settingsController.loadSettings}
           />
         </>

@@ -33,9 +33,13 @@ clipboard history.
 - `get_safe_diagnostics()`
 
 History requests 50 summaries at a time. The backend caps every request at 100.
+The main list observes a sentinel 320 pixels ahead of the viewport and loads
+the next cursor page automatically as the user scrolls. The Load More button
+remains available as an accessibility and unsupported-observer fallback.
 Refresh reloads enough cursor pages to preserve the currently loaded depth and
 replaces them only while its request generation remains current. Load-more
-merges by content hash and ignores stale generations.
+merges by content hash, ignores stale generations, coalesces concurrent
+requests, and pauses automatic retries after an error.
 
 Detail is requested only when an expanded row reports `has_detail`. The
 frontend cache coalesces concurrent requests for the same hash, ignores results
@@ -154,8 +158,13 @@ restore that scroll anchor. The set of expanded hashes remains in view state.
 When `clipboard-history-updated` arrives while the application window is not
 focused, the refresh instead resets the page to the top after the new first
 page commits, so returning to the app starts at the newest item.
-Restore does not issue a redundant immediate reload: if restore-to-top changes
-ordering, the backend event triggers the refresh.
+When restore-to-top is enabled and the main window restores a row other than
+the first one, History owns that refresh, waits for the reordered first page to
+render, and then scrolls to the top with a 320 ms ease-out animation. Reduced
+motion preferences use an immediate jump. History consumes the matching backend
+update so the ordinary focused-window anchor restoration cannot undo the
+scroll. Restoring the first row or restoring while the setting is disabled does
+not issue a redundant reload.
 
 Restore and delete buttons stop card-toggle propagation. Each restore button is
 disabled while its command is in flight, and a successful pasteboard write

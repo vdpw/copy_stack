@@ -192,7 +192,9 @@ speed:
 - the default first page returns at most 50 summaries;
 - requested page sizes are capped at 100;
 - a summary display is at most 512 bytes;
-- summary and tray queries never decode event blobs or read media files;
+- summary and tray-construction queries never decode event blobs or read media
+  files;
+- macOS tray hover loads at most one 64 KiB display-only preview at a time;
 - the tray snapshot returns the configured number of events, defaults to all
   retained events, and is capped at the 1000-item retention ceiling;
 - a database-backed JSONL refresh streams one row at a time outside the

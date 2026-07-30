@@ -8,6 +8,7 @@ pub const MAX_RTF_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_PNG_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_FILE_URL_BYTES: usize = 64 * 1024;
 pub const MAX_DISPLAY_BYTES: usize = 1024 * 1024;
+pub const MAX_TRAY_PREVIEW_BYTES: usize = 64 * 1024;
 pub const MAX_PREVIEW_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_PREVIEW_IMAGE_PIXELS: u64 = 20_000_000;
 pub const MAX_PREVIEW_SEGMENTS: usize = 32;

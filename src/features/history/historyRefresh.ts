@@ -1,8 +1,31 @@
 interface RefreshAfterClipboardUpdateOptions {
   refresh: () => Promise<boolean>;
   refreshPreservingView: () => Promise<boolean>;
-  resetScrollToTop: () => void;
+  resetScrollToTop: () => Promise<void>;
   windowFocused: boolean;
+}
+
+export function shouldScrollToTopAfterRestore(
+  moveRestoredItemToTop: boolean,
+  restoredContentHash: string,
+  firstContentHash: string | undefined
+): boolean {
+  return (
+    moveRestoredItemToTop &&
+    firstContentHash !== undefined &&
+    restoredContentHash !== firstContentHash
+  );
+}
+
+export async function refreshHistoryToTop(
+  refresh: () => Promise<boolean>,
+  resetScrollToTop: () => Promise<void>
+): Promise<boolean> {
+  const refreshed = await refresh();
+  if (refreshed) {
+    await resetScrollToTop();
+  }
+  return refreshed;
 }
 
 export async function refreshAfterClipboardUpdate({
@@ -15,9 +38,5 @@ export async function refreshAfterClipboardUpdate({
     return refreshPreservingView();
   }
 
-  const refreshed = await refresh();
-  if (refreshed) {
-    resetScrollToTop();
-  }
-  return refreshed;
+  return refreshHistoryToTop(refresh, resetScrollToTop);
 }
