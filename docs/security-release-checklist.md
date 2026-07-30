@@ -88,3 +88,17 @@ History restore clicks and focus appearance also remain unclaimed. Native Intel
 clipboard, login/logout/reboot, app-relocation, offline WebView,
 TextExpander/Universal Clipboard, and packaged window QA remain release-blocking
 manual rows unless a release owner explicitly approves an exception.
+
+## Release exception: v0.1.0 (2026-07-30)
+
+The release owner explicitly approved publishing `v0.1.0` with the remaining
+manual rows above incomplete. This exception applies only to `v0.1.0` and does
+not claim that those rows passed.
+
+The automated release gate, the native Apple Silicon/Intel CI matrix, and the
+fixture-v3 100/1000-item text/mixed performance matrix passed before approval.
+Native Intel clipboard and desktop runtime QA, login/logout/reboot,
+app-relocation, offline WebView, TextExpander/Universal Clipboard, packaged
+window QA, History restore clicks, and focus appearance remain unverified
+post-publish risks. The release remains ad-hoc signed and not notarized, and the
+post-publish verification in `docs/release.md` is still required.
