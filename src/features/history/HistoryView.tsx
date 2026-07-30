@@ -13,12 +13,19 @@ import { useHistoryDetails } from "../../hooks/useHistoryDetails";
 import type { Operation } from "../../types";
 import { canLoadHistoryDetail } from "./detailCache";
 import { EventCard } from "./EventCard";
-import { refreshAfterClipboardUpdate } from "./historyRefresh";
+import { observeHistoryEnd } from "./historyInfiniteScroll";
+import {
+  refreshAfterClipboardUpdate,
+  refreshHistoryToTop,
+  shouldScrollToTopAfterRestore,
+} from "./historyRefresh";
+import { animateHistoryScrollToTop } from "./scrollAnimation";
 
 interface HistoryViewProps {
   compactMode: boolean;
   language: SupportedLanguage;
   messages: Messages;
+  moveRestoredItemToTop: boolean;
   onHistoryChanged: () => Promise<unknown>;
 }
 
@@ -74,6 +81,7 @@ export function HistoryView({
   compactMode,
   language,
   messages,
+  moveRestoredItemToTop,
   onHistoryChanged,
 }: HistoryViewProps) {
   const {
@@ -97,8 +105,11 @@ export function HistoryView({
     retain: retainDetails,
   } = useHistoryDetails();
   const listRef = useRef<ElementRef<"div"> | null>(null);
+  const loadMoreSentinelRef = useRef<ElementRef<"div"> | null>(null);
   const copiedFeedbackTimerRef = useRef<number | null>(null);
   const restoringHashesRef = useRef(new Set<string>());
+  const pendingRestoreToTopIntentsRef = useRef(new Set<number>());
+  const restoreToTopIntentSequenceRef = useRef(0);
   const [copiedEventHash, setCopiedEventHash] = useState<string | null>(null);
   const [restoringEventHashes, setRestoringEventHashes] = useState<Set<string>>(
     () => new Set()
@@ -120,10 +131,8 @@ export function HistoryView({
     return refreshed;
   }, [refreshHistory]);
 
-  const resetScrollToTop = useCallback(() => {
-    window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0 });
-    });
+  const resetScrollToTop = useCallback((): Promise<void> => {
+    return animateHistoryScrollToTop();
   }, []);
 
   const refreshForClipboardUpdate = useCallback(
@@ -187,6 +196,17 @@ export function HistoryView({
       if (restoringHashesRef.current.has(contentHash)) {
         return;
       }
+      const shouldScrollToTop = shouldScrollToTopAfterRestore(
+        moveRestoredItemToTop,
+        contentHash,
+        historyItems[0]?.content_hash
+      );
+      const restoreToTopIntent = shouldScrollToTop
+        ? ++restoreToTopIntentSequenceRef.current
+        : null;
+      if (restoreToTopIntent !== null) {
+        pendingRestoreToTopIntentsRef.current.add(restoreToTopIntent);
+      }
       restoringHashesRef.current.add(contentHash);
       setRestoringEventHashes(current => new Set(current).add(contentHash));
       try {
@@ -195,6 +215,9 @@ export function HistoryView({
         });
         setActionFailure(null);
         showCopiedFeedback(contentHash);
+        if (restoreToTopIntent !== null) {
+          await refreshHistoryToTop(refreshHistory, resetScrollToTop);
+        }
       } catch (caught) {
         const commandError = normalizeCommandError(caught, "restore_clipboard");
         if (commandError.code === "restore_post_processing_failed") {
@@ -209,6 +232,9 @@ export function HistoryView({
             : null,
         });
       } finally {
+        if (restoreToTopIntent !== null) {
+          pendingRestoreToTopIntentsRef.current.delete(restoreToTopIntent);
+        }
         restoringHashesRef.current.delete(contentHash);
         setRestoringEventHashes(current => {
           const next = new Set(current);
@@ -217,7 +243,13 @@ export function HistoryView({
         });
       }
     },
-    [showCopiedFeedback]
+    [
+      historyItems,
+      moveRestoredItemToTop,
+      refreshHistory,
+      resetScrollToTop,
+      showCopiedFeedback,
+    ]
   );
 
   const toggleExpansion = useCallback(
@@ -258,12 +290,25 @@ export function HistoryView({
   }, [historyItems, retainDetails]);
 
   useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel || !hasMore || loadingMore || historyError) {
+      return;
+    }
+
+    return observeHistoryEnd(sentinel, () => {
+      void loadMore();
+    });
+  }, [hasMore, historyError, loadMore, loadingMore]);
+
+  useEffect(() => {
     let disposed = false;
     const unlisteners: (() => void)[] = [];
 
     const register = async () => {
       const historyUnlisten = await listen("clipboard-history-updated", () => {
-        void refreshForClipboardUpdate();
+        if (pendingRestoreToTopIntentsRef.current.size === 0) {
+          void refreshForClipboardUpdate();
+        }
         void onHistoryChanged();
       });
       if (disposed) {
@@ -403,7 +448,11 @@ export function HistoryView({
                 {messages.loadedHistoryCount(historyItems.length, totalCount)}
               </p>
               {hasMore && (
-                <div className="history-footer-actions">
+                <div
+                  aria-live="polite"
+                  className="history-footer-actions history-load-more-sentinel"
+                  ref={loadMoreSentinelRef}
+                >
                   <button
                     className="btn btn-secondary"
                     disabled={loadingMore}

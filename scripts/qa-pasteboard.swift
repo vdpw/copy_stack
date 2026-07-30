@@ -73,6 +73,23 @@ private func writeSyntheticScenario(_ scenario: String) throws {
     switch scenario {
     case "plain":
         markers = []
+    case "multiline-preview":
+        item.setString(
+            """
+            switch {
+            case demandRef != nil && productRef != nil:
+                addRelation("非下架状态的需求和服务", demandRef, productRef)
+            case demandRef != nil:
+                addRelation("非下架状态的需求", demandRef)
+            case productRef != nil:
+                addRelation("非下架状态的服务", productRef)
+            default:
+                break
+            }
+            """,
+            forType: .string
+        )
+        markers = []
     case "formatted":
         item.setString(
             """

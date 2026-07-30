@@ -28,3 +28,42 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 sys-locale = "0.3.2"
 copy_event_listener = "0.1.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.4"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSAccessibilityProtocols",
+  "NSButton",
+  "NSColor",
+  "NSControl",
+  "NSEvent",
+  "NSFont",
+  "NSFontDescriptor",
+  "NSGraphics",
+  "NSMenu",
+  "NSMenuItem",
+  "NSPanel",
+  "NSResponder",
+  "NSScreen",
+  "NSStatusItem",
+  "NSText",
+  "NSTextContainer",
+  "NSTextView",
+  "NSVisualEffectView",
+  "NSView",
+  "NSWindow",
+  "objc2-quartz-core",
+] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSArray",
+  "NSGeometry",
+  "NSObject",
+  "NSString",
+] }
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CALayer",
+  "objc2-core-foundation",
+] }

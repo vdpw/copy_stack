@@ -134,6 +134,9 @@ The menu bar defaults to every retained row. A nonzero
 `0` means all, up to the 1000-item retention ceiling. Compact mode can hide
 image/file/video rows. `show_in_menu_bar = false` hides the icon entirely.
 Menu construction never decodes event blobs or reads local rich media.
+On macOS, hover previews appear only for text/HTML/RTF rows. The preview is a
+separate lazy display lookup capped at 64 KiB; action and binary/media rows hide
+it.
 
 ## JSONL Is Missing Or Stale
 

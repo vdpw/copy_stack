@@ -5,17 +5,17 @@ use crate::i18n::LanguagePreference;
 use crate::pasteboard_protocol::{
     assess_event, PasteboardMetadata, REMOTE_CLIPBOARD_TYPE, SOURCE_TYPE,
 };
-use crate::resource_policy::MAX_DISPLAY_BYTES;
 #[cfg(test)]
 use crate::resource_policy::{
     MAX_DETAIL_IPC_BYTES, MAX_HTML_BYTES, MAX_PREVIEW_IMAGE_BYTES, MAX_PREVIEW_SEGMENTS,
 };
+use crate::resource_policy::{MAX_DISPLAY_BYTES, MAX_TRAY_PREVIEW_BYTES};
 use crate::store::classification::{
     self, ClassifiedEvent, FileDisplay, FileDisplayItem, FILE_DISPLAY_FORMAT,
 };
 use crate::store::models::{
     AppSettings, HistoryCursor, HistoryDetail, HistoryDetailSeed, HistoryPage, HistoryStats,
-    HistorySummary, TrayEvent, DEFAULT_HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE,
+    HistorySummary, TrayEvent, TrayPreview, DEFAULT_HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE,
     MAX_MENU_BAR_ITEM_LIMIT, MAX_SUMMARY_DISPLAY_BYTES,
 };
 use crate::store::preview;
@@ -1924,6 +1924,64 @@ impl Database {
         rows.collect()
     }
 
+    pub(crate) fn get_tray_preview(&self, content_hash: &str) -> Result<Option<TrayPreview>> {
+        let compact_mode = self.get_compact_mode()?;
+        let query = if compact_mode {
+            "SELECT
+                'text',
+                substr(compact_display, 1, ?2),
+                length(compact_display) > ?2
+             FROM clipboard_events
+             WHERE content_hash = ?1
+               AND compact_content_hash IS NOT NULL"
+        } else {
+            "SELECT
+                data_type,
+                substr(
+                    CASE
+                        WHEN data_type IN ('text', 'rtf', 'html')
+                            THEN COALESCE(compact_display, display)
+                        ELSE summary_display
+                    END,
+                    1,
+                    ?2
+                ),
+                length(
+                    CASE
+                        WHEN data_type IN ('text', 'rtf', 'html')
+                            THEN COALESCE(compact_display, display)
+                        ELSE summary_display
+                    END
+                ) > ?2
+             FROM clipboard_events
+             WHERE content_hash = ?1"
+        };
+        let mut preview = self
+            .conn
+            .query_row(
+                query,
+                params![content_hash, MAX_TRAY_PREVIEW_BYTES as i64],
+                |row| {
+                    Ok(TrayPreview {
+                        data_type: row.get(0)?,
+                        display: row.get(1)?,
+                        truncated: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?;
+
+        if let Some(preview) = preview.as_mut() {
+            if let Err(error) = std::str::from_utf8(&preview.display) {
+                if error.error_len().is_none() {
+                    preview.display.truncate(error.valid_up_to());
+                }
+            }
+        }
+
+        Ok(preview)
+    }
+
     pub fn get_history_stats(&self) -> Result<HistoryStats> {
         let (total_items, total_bytes) = self.conn.query_row(
             "SELECT COUNT(*), COALESCE(SUM(byte_count), 0) FROM clipboard_events",
@@ -2207,6 +2265,12 @@ mod tests {
                 .expect("tray history should load")
                 .is_empty(),
             "{case} leaked into the tray path"
+        );
+        assert!(
+            db.get_tray_preview(body_hash)
+                .expect("tray preview lookup should succeed")
+                .is_none(),
+            "{case} leaked into the tray preview path"
         );
         assert!(
             db.get_all_events()
@@ -3151,6 +3215,53 @@ mod tests {
         assert!(tray
             .iter()
             .all(|item| item.display.len() <= MAX_SUMMARY_DISPLAY_BYTES));
+    }
+
+    #[test]
+    fn tray_preview_is_loaded_lazily_with_lines_and_a_hard_byte_bound() {
+        let db = in_memory_database();
+        let source = "第一行 keeps its formatting\n第二行 contains more clipboard text\n"
+            .repeat((MAX_TRAY_PREVIEW_BYTES / 32) + 100);
+        db.insert_event(&event(vec![data(
+            "public.utf8-plain-text",
+            source.as_bytes(),
+        )]))
+        .expect("long text should insert");
+
+        let tray = db.get_tray_events().expect("tray summary should load");
+        assert_eq!(tray.len(), 1);
+        assert!(tray[0].display.len() <= MAX_SUMMARY_DISPLAY_BYTES);
+
+        let preview = db
+            .get_tray_preview(&tray[0].content_hash)
+            .expect("tray preview should load")
+            .expect("tray preview should exist");
+        assert_eq!(preview.data_type, "text");
+        assert!(preview.truncated);
+        assert!(preview.display.len() <= MAX_TRAY_PREVIEW_BYTES);
+        assert!(preview.display.contains(&b'\n'));
+        assert!(std::str::from_utf8(&preview.display).is_ok());
+    }
+
+    #[test]
+    fn tray_preview_prefers_line_preserving_plain_text_for_formatted_content() {
+        let db = in_memory_database();
+        let source = "package biz\n\nimport (\n\t\"context\"\n\t\"encoding/json\"\n)\n";
+        db.insert_event(&event(vec![
+            data("public.utf8-plain-text", source.as_bytes()),
+            data("public.rtf", br"{\rtf1 formatted source code}"),
+        ]))
+        .expect("formatted text should insert");
+
+        let tray = db.get_tray_events().expect("tray snapshot should load");
+        let preview = db
+            .get_tray_preview(&tray[0].content_hash)
+            .expect("tray preview should load")
+            .expect("tray preview should exist");
+
+        assert_eq!(preview.data_type, "rtf");
+        assert_eq!(preview.display, source.as_bytes());
+        assert!(!preview.truncated);
     }
 
     #[test]

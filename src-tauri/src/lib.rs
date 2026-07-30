@@ -28,6 +28,8 @@ mod resource_policy;
 mod startup;
 mod store;
 mod tray;
+#[cfg(target_os = "macos")]
+mod tray_preview;
 
 pub use startup::StartupOptions;
 

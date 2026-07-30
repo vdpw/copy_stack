@@ -180,6 +180,21 @@ Cursor filtering compares the ordering tuple, so equal timestamps do not repeat
 or skip rows. Compact-mode paging selects the newest row for each effective
 text, including across page boundaries.
 
+## Menu Summary And Lazy Hover Preview
+
+Tray construction selects only `content_hash`, `data_type`, and the persisted
+512-byte `summary_display` for the configured rows. On macOS, highlighting one
+text/HTML/RTF row triggers a separate query by content hash. That query selects
+only the line-preserving plain-text projection when one exists, applies SQLite
+`substr(...)` before the value reaches Rust, and returns at most 64 KiB plus a
+truncation flag. It falls back to the classified display for legacy or
+non-projectable formatted rows. Binary/media rows use only their summary and do
+not open the text panel.
+
+The hover path does not select or decode `event_data`, inspect local paths, or
+read media. Only one highlighted row is materialized; closing the menu drops
+the visible preview.
+
 ## Lazy Detail And Restore Seeds
 
 `get_history_detail_seed` and `get_restore_seed` copy one row under the
@@ -275,7 +290,8 @@ evidence. Use synthetic fixtures.
 - Test a clean database, legacy migration, rollback injection, and a second
   current-version startup.
 - Preserve protocol filtering and derive metadata only from the event.
-- Preserve cursor ordering and summary-only list/menu queries.
+- Preserve cursor ordering and summary-only list/menu-construction queries.
+- Keep macOS menu hover preview single-row, display-only, and bounded in SQL.
 - Keep item and byte cleanup transactional.
 - Schedule mirror I/O only after commit and outside the database lock.
 - Run Rust tests, the performance harness where relevant, and the manual

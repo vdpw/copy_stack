@@ -30,9 +30,17 @@ Important modules:
   retention, and compatibility delegates to focused store modules.
 - `store/settings.rs`, `store/schema.rs`, and `store/models.rs`: typed settings,
   versioned schema declarations, and command-facing payloads.
-- `tray.rs`: summary-only menu construction and tray actions; macOS uses the
-  dedicated monochrome `icons/tray-template.png` mask rather than treating the
-  opaque full-color application icon as a template.
+- `tray.rs`: summary-only menu construction, preview text formatting, and tray
+  actions; macOS uses the dedicated monochrome `icons/tray-template.png` mask
+  rather than treating the opaque full-color application icon as a template.
+- `tray_preview.rs`: macOS-only native hover tracking and the nonactivating
+  side preview panel, which uses the system menu visual-effect material so its
+  background follows the active tray menu and desktop appearance. It uses a
+  fixed 12-point font and a content-sized 180-to-380-point width, preserves
+  source line breaks, wraps long lines, caps height at 61.8% of the active
+  screen, and replaces overflow with `...` instead of scrolling. The panel uses
+  compact 8-point horizontal and 6-point vertical insets and stays hidden when
+  the menu item title already contains the complete preview text.
 
 ## Startup And Process Ownership
 
@@ -79,6 +87,8 @@ The database lock protects one `rusqlite::Connection`. Keep it limited to SQL
 and copying owned seeds:
 
 - `get_copy_events_page` and tray sync select only summary columns;
+- a macOS tray hover performs one bounded display-only lookup for the
+  highlighted text row; it never decodes `event_data` or reads local media;
 - `get_history_detail` reads a seed, releases the lock, then decodes and reads
   validated local media;
 - restore commands read a seed and release the lock before decoding and
@@ -190,6 +200,7 @@ classification, persistence, mirror export, and UI/tray presentation. See
 - file URL: 64 KiB;
 - persisted display: bounded by the selected content-type capture limit; list
   summary: 512 bytes;
+- macOS tray hover text: 64 KiB, loaded only for the highlighted row;
 - preview image: 4 MiB and PNG dimension cap: 20 million pixels;
 - detail: 32 segments and 8 MiB serialized;
 - default accounted history budget: 256 MiB.

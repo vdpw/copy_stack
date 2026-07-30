@@ -197,7 +197,10 @@ settings on real NSPasteboard.
 
 Keep the tray query summary-only, honor `menu_bar_item_limit` (`0` means all,
 with a 1000-row ceiling), and do not introduce event decoding or local media
-reads during menu construction.
+reads during menu construction. The macOS hover panel may perform only its
+existing single-row, 64 KiB display lookup; verify that it preserves line
+breaks, stays beside the menu on each display, and disappears when the menu
+closes.
 
 ### Localized UI
 
