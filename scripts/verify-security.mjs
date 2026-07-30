@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -48,6 +49,10 @@ const releaseWorkflow = await readFile(
   resolve(projectRoot, ".github/workflows/release.yml"),
   "utf8"
 );
+const htmlPreviewSource = await readFile(
+  resolve(projectRoot, "src/lib/htmlPreview.ts"),
+  "utf8"
+);
 
 const security = tauriConfig.app?.security;
 const productionCsp = security?.csp;
@@ -63,6 +68,30 @@ check(
   !productionCsp?.includes("'unsafe-eval'") &&
     !productionCsp?.includes("'unsafe-inline'"),
   "Production CSP must not allow unsafe script or style execution."
+);
+const previewStyleMatch = htmlPreviewSource.match(
+  /const htmlPreviewStyles = `([\s\S]*?)`;\s*const htmlPreviewStyleHash\s*=\s*"([^"]+)";/
+);
+const computedPreviewStyleHash = previewStyleMatch
+  ? `sha256-${createHash("sha256")
+      .update(previewStyleMatch[1])
+      .digest("base64")}`
+  : null;
+const declaredPreviewStyleHash = previewStyleMatch?.[2] ?? null;
+check(
+  computedPreviewStyleHash !== null &&
+    computedPreviewStyleHash === declaredPreviewStyleHash,
+  "The HTML preview stylesheet hash must match its exact inline stylesheet."
+);
+check(
+  declaredPreviewStyleHash !== null &&
+    productionCsp?.includes(`'${declaredPreviewStyleHash}'`),
+  "Production CSP must authorize only the hashed HTML preview stylesheet."
+);
+check(
+  !htmlPreviewSource.includes("style-src 'unsafe-inline'") &&
+    !htmlPreviewSource.includes('target.setAttribute("style"'),
+  "HTML previews must not depend on unsafe or CSP-blocked inline styles."
 );
 check(
   productionCsp?.includes("object-src 'none'") &&

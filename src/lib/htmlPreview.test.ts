@@ -25,19 +25,21 @@ describe("sanitizeHtmlPreview", () => {
     );
     expect(sanitized).toContain("safe text");
     expect(sanitized).toContain("formatted text");
-    expect(sanitized).toContain('style="color: red"');
+    expect(sanitized).toMatch(/class="preview-tone-[0-6]"/);
+    expect(sanitized).not.toContain("style=");
   });
 
-  it("strips embedded image data while keeping safe inline formatting", () => {
+  it("strips embedded image data and maps safe formatting to classes", () => {
     const sanitized = sanitizeHtmlPreview(
       '<p style="font-weight: 700; position: fixed">Hello</p>' +
         '<img src="data:image/png;base64,iVBORw0KGgo=">'
     );
 
-    expect(sanitized).toContain("font-weight: 700");
+    expect(sanitized).toContain('class="preview-weight-strong"');
     expect(sanitized).not.toContain("position");
     expect(sanitized).not.toContain("data:image");
     expect(sanitized).not.toContain("src=");
+    expect(sanitized).not.toContain("style=");
   });
 
   it("renders formatted HTML above the former 64 KiB limit", () => {
@@ -46,7 +48,7 @@ describe("sanitizeHtmlPreview", () => {
       `<div style="background-color: #1e1e1e; white-space: pre">${source}</div>`
     );
 
-    expect(sanitized).toContain('class="preview-code-surface"');
+    expect(sanitized).toContain('class="preview-code-surface');
     expect(sanitized).toContain(source);
   });
 
@@ -85,12 +87,13 @@ describe("sanitizeHtmlPreview", () => {
 
   it("marks colored preformatted blocks as isolated scroll surfaces", () => {
     const sanitized = sanitizeHtmlPreview(
-      '<div style="background-color: #1e1e1e; white-space: pre">long code</div>'
+      '<div style="background-color: #1e1e1e; color: #61afef; white-space: pre">long code</div>'
     );
 
-    expect(sanitized).toContain('class="preview-code-surface"');
-    expect(sanitized).toContain("background-color:");
-    expect(sanitized).toContain("white-space: pre");
+    expect(sanitized).toContain('class="preview-code-surface');
+    expect(sanitized).toContain("preview-whitespace-pre");
+    expect(sanitized).toMatch(/preview-tone-[0-6]/);
+    expect(sanitized).not.toContain("style=");
   });
 });
 
@@ -102,14 +105,30 @@ describe("buildHtmlPreviewDocument", () => {
     expect(document).toContain("base-uri 'none'");
     expect(document).toContain("form-action 'none'");
     expect(document).toContain("img-src 'none'");
+    expect(document).not.toContain("'unsafe-inline'");
     expect(document).toContain("-webkit-user-select: none");
     expect(document).toContain("user-select: none");
+    expect(document).toContain("-webkit-user-drag: none");
     expect(document).toContain("overflow: auto");
     expect(document).toContain(".preview-code-surface");
     expect(document).toContain("min-height: calc(100vh - 32px)");
-    expect(document).toContain("padding-bottom: 14px");
-    expect(document).toContain("overflow-x: auto");
+    expect(document).toContain("linear-gradient(145deg, #1f2329");
     expect(document).toContain("<strong>Hello</strong>");
+  });
+
+  it("authorizes the preview stylesheet with a CSP hash", () => {
+    const document = buildHtmlPreviewDocument("<strong>Hello</strong>");
+    const parsed = new window.DOMParser().parseFromString(
+      document,
+      "text/html"
+    );
+    const innerPolicy =
+      parsed
+        .querySelector('meta[http-equiv="Content-Security-Policy"]')
+        ?.getAttribute("content") ?? "";
+
+    expect(innerPolicy).toMatch(/style-src 'sha256-[A-Za-z0-9+/]+={0,2}'/);
+    expect(innerPolicy).not.toContain("'unsafe-inline'");
   });
 });
 
