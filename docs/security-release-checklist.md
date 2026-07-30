@@ -102,3 +102,26 @@ app-relocation, offline WebView, TextExpander/Universal Clipboard, packaged
 window QA, History restore clicks, and focus appearance remain unverified
 post-publish risks. The release remains ad-hoc signed and not notarized, and the
 post-publish verification in `docs/release.md` is still required.
+
+## Release exception: v0.1.1 (2026-07-30)
+
+The release owner explicitly approved publishing `v0.1.1` with the remaining
+manual rows above incomplete. This exception applies only to `v0.1.1` and does
+not claim that those rows passed.
+
+The local pre-tag gate passed with the frozen pnpm lockfile, frontend
+type-check, lint, 43 tests, production build, security guardrail, Rust format
+and check, and 142 Rust tests; the manual performance test remained ignored by
+design. A local Apple Silicon release build produced both the `.app` and `.dmg`.
+Supplemental production-CSP desktop observation confirmed that code and
+document HTML previews retained their intended styling, dragging did not create
+a text selection, and the clipboard fingerprint remained unchanged. This
+observation used a private isolated database and no clipboard contents or
+screenshots were recorded or attached.
+
+Native Intel clipboard and desktop runtime QA, login/logout/reboot,
+app-relocation, offline WebView, TextExpander/Universal Clipboard, the complete
+malicious-preview matrix, History restore clicks, and focus appearance remain
+unverified post-publish risks. The release remains ad-hoc signed and not
+notarized, and the post-publish verification in `docs/release.md` is still
+required.
