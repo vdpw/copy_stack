@@ -130,15 +130,18 @@ Expanded eligible cards request detail:
 
 - formatted HTML uses the same renderer throughout the 2 MiB capture budget,
   is rebuilt into an allowlisted tree capped at 2,048 nodes and 24 levels,
-  strips every image/resource URL, and keeps only allowlisted inline
-  formatting;
+  strips every image/resource URL, and maps allowlisted formatting to a fixed
+  set of presentation classes without emitting inline `style` attributes;
 - malformed or legacy HTML outside the capture budget falls back to at most
   1 MiB of escaped plain text in a fixed, vertically and horizontally
   scrollable code viewport instead of rendering an empty iframe;
 - the sanitized document is rendered in an empty-sandbox iframe with
-  `default-src 'none'` and `img-src 'none'`; the preview document disables text
-  selection but allows vertical and horizontal scrolling inside its fixed
-  viewport; simple single-line previews use a compact viewport while multiline
+  `default-src 'none'` and `img-src 'none'`; the outer and inner policies
+  authorize only the exact SHA-256 hash of the static preview stylesheet, so
+  the same typography, document layout, code surface, and non-selection rules
+  work under both development and production CSP without `unsafe-inline`;
+  vertical and horizontal scrolling remain available inside the fixed
+  viewport, simple single-line previews use a compact viewport, and multiline
   or structured content keeps the full height; preview interaction does not
   collapse the owning History card;
 - image bytes use short-lived object URLs which are revoked on cleanup;
@@ -148,7 +151,9 @@ Expanded eligible cards request detail:
 
 The production outer CSP also blocks external connections and unsafe
 script/style execution. Do not relax either the outer or inner policy to make a
-specific clipboard payload render.
+specific clipboard payload render. Any preview stylesheet change must update
+the checked hash in both policies; the security gate and frontend tests reject
+hash drift.
 
 ## Refresh And Interaction
 
