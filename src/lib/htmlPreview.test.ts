@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { buildHtmlPreviewDocument, sanitizeHtmlPreview } from "./htmlPreview";
+import {
+  buildHtmlPreview,
+  buildHtmlPreviewDocument,
+  sanitizeHtmlPreview,
+} from "./htmlPreview";
 
 describe("sanitizeHtmlPreview", () => {
   it("removes active content, navigation, remote resources, and CSS URLs", () => {
@@ -36,8 +40,14 @@ describe("sanitizeHtmlPreview", () => {
     expect(sanitized).not.toContain("src=");
   });
 
-  it("rejects oversized input before parsing", () => {
-    expect(sanitizeHtmlPreview(`<p>${"x".repeat(70_000)}</p>`)).toBe("");
+  it("renders formatted HTML above the former 64 KiB limit", () => {
+    const source = "x".repeat(128 * 1024);
+    const sanitized = sanitizeHtmlPreview(
+      `<div style="background-color: #1e1e1e; white-space: pre">${source}</div>`
+    );
+
+    expect(sanitized).toContain('class="preview-code-surface"');
+    expect(sanitized).toContain(source);
   });
 
   it("caps output nodes and nesting depth", () => {
@@ -72,6 +82,16 @@ describe("sanitizeHtmlPreview", () => {
     )}hidden${"</custom-element>".repeat(200)}`;
     expect(sanitizeHtmlPreview(customNesting)).not.toContain("hidden");
   });
+
+  it("marks colored preformatted blocks as isolated scroll surfaces", () => {
+    const sanitized = sanitizeHtmlPreview(
+      '<div style="background-color: #1e1e1e; white-space: pre">long code</div>'
+    );
+
+    expect(sanitized).toContain('class="preview-code-surface"');
+    expect(sanitized).toContain("background-color:");
+    expect(sanitized).toContain("white-space: pre");
+  });
 });
 
 describe("buildHtmlPreviewDocument", () => {
@@ -84,6 +104,32 @@ describe("buildHtmlPreviewDocument", () => {
     expect(document).toContain("img-src 'none'");
     expect(document).toContain("-webkit-user-select: none");
     expect(document).toContain("user-select: none");
+    expect(document).toContain("overflow: auto");
+    expect(document).toContain(".preview-code-surface");
+    expect(document).toContain("min-height: calc(100vh - 32px)");
+    expect(document).toContain("padding-bottom: 14px");
+    expect(document).toContain("overflow-x: auto");
     expect(document).toContain("<strong>Hello</strong>");
+  });
+});
+
+describe("buildHtmlPreview", () => {
+  it("uses a compact viewport for simple single-line formatted content", () => {
+    const preview = buildHtmlPreview(
+      '<div style="background-color: #1e1e1e; white-space: pre">生效的优惠券</div>'
+    );
+
+    expect(preview.compact).toBe(true);
+    expect(preview.srcDoc).toContain("生效的优惠券");
+  });
+
+  it("keeps the full viewport for multiline or structured content", () => {
+    expect(
+      buildHtmlPreview('<div style="white-space: pre">first\nsecond</div>')
+        .compact
+    ).toBe(false);
+    expect(
+      buildHtmlPreview("<ul><li>first</li><li>second</li></ul>").compact
+    ).toBe(false);
   });
 });

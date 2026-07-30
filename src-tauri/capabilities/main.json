@@ -19,6 +19,7 @@
     "allow-set-max-items",
     "allow-set-max-history-bytes",
     "allow-set-show-in-menu-bar",
+    "allow-set-menu-bar-item-limit",
     "allow-set-move-restored-item-to-top",
     "allow-set-compact-mode",
     "allow-set-language"

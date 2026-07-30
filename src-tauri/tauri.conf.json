@@ -13,7 +13,7 @@
     "windows": [
       {
         "title": "Copy Stack",
-        "width": 900,
+        "width": 600,
         "height": 700,
         "minWidth": 600,
         "minHeight": 400,

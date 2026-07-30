@@ -94,19 +94,19 @@ machine-dependent timings into ordinary unit-test thresholds.
 
 ## Verification Matrix
 
-| Change | Required verification |
-| --- | --- |
-| Frontend | type-check, lint, frontend tests, build |
-| Rust backend | Rust format, check, and tests |
-| Command/event contract | frontend and Rust checks plus desktop QA |
-| Capture/restore/protocol | Rust tests plus real macOS NSPasteboard QA |
-| Persistence/migration/retention | Rust tests, legacy DB/rollback QA, second-start fast path |
-| Paging/detail/tray performance | structural tests, performance harness, desktop scroll/detail QA |
-| Private files/JSONL | Rust fault tests and native permission/failure QA |
-| CSP/capabilities/errors | `pnpm security-check`, frontend tests, offline/malicious-preview QA |
-| Single instance/autostart | lifecycle tests and packaged/manual macOS QA |
-| Release | every automated gate and completed security release matrix |
-| Documentation only | links, paths, command names, and `git diff --check` |
+| Change                          | Required verification                                               |
+| ------------------------------- | ------------------------------------------------------------------- |
+| Frontend                        | type-check, lint, frontend tests, build                             |
+| Rust backend                    | Rust format, check, and tests                                       |
+| Command/event contract          | frontend and Rust checks plus desktop QA                            |
+| Capture/restore/protocol        | Rust tests plus real macOS NSPasteboard QA                          |
+| Persistence/migration/retention | Rust tests, legacy DB/rollback QA, second-start fast path           |
+| Paging/detail/tray performance  | structural tests, performance harness, desktop scroll/detail QA     |
+| Private files/JSONL             | Rust fault tests and native permission/failure QA                   |
+| CSP/capabilities/errors         | `pnpm security-check`, frontend tests, offline/malicious-preview QA |
+| Single instance/autostart       | lifecycle tests and packaged/manual macOS QA                        |
+| Release                         | every automated gate and completed security release matrix          |
+| Documentation only              | links, paths, command names, and `git diff --check`                 |
 
 ## Required Manual Desktop QA
 
@@ -116,9 +116,11 @@ The following is a checklist, not a record of completed testing:
 2. Copy the same text again and confirm no duplicate and no order change.
 3. Page through at least 100 items; expand formatted/image/video details and
    confirm detail is requested only on expansion.
-4. Trigger a live update while scrolled and with cards expanded; verify the
-   scroll anchor and expansion state remain stable.
-5. Restore from History and the menu bar with both ordering settings.
+4. Trigger a focused live update while scrolled and with cards expanded; verify
+   the scroll anchor and expansion state remain stable. Repeat while the window
+   is unfocused and verify a new copy returns History to the newest row.
+5. Restore from History and the menu bar with both ordering settings. Verify
+   long menu labels copy directly without opening a submenu.
 6. Inspect the restored type list and confirm exactly one canonical source
    marker and remote marker only when applicable.
 7. Exercise every synthetic NSPasteboard marker combination in
@@ -127,20 +129,24 @@ The following is a checklist, not a record of completed testing:
 8. Exercise oversized formatted/image/event fixtures. Confirm safe text
    degradation or a localized rejection notice, with no oversized IPC payload.
 9. Lower item and byte limits and confirm oldest rows are trimmed.
-10. Delete one item and clear all from both History and the menu bar.
+10. Delete one item from History; clear all from Settings and the menu bar.
 11. Toggle compact mode, menu visibility, restore ordering, and all languages.
+    Set the menu count to 20 and then 0; verify 20 and all retained rows appear.
 12. Start a duplicate process and confirm the existing window activates while
     only one owner/listener/tray remains.
-13. Enable and disable launch at login and reopen Settings to verify OS state.
-14. Launch with the autostart flag and confirm the main window stays hidden
+13. Open Settings from the macOS application menu and with `Command+,`; confirm
+    there is no in-window Settings switcher, confirm the tray Settings entry
+    still works, then use the top-left back button to return to History.
+14. Enable and disable launch at login and reopen Settings to verify OS state.
+15. Launch with the autostart flag and confirm the main window stays hidden
     while capture and the menu bar remain active.
-15. Verify `.copy_stack` is `0700` and database/sidecars/mirror are `0600`.
-16. Inject unsafe/unwritable private paths and slow/failing JSONL writes; verify
+16. Verify `.copy_stack` is `0700` and database/sidecars/mirror are `0600`.
+17. Inject unsafe/unwritable private paths and slow/failing JSONL writes; verify
     safe errors, committed database mutations, complete last snapshot, and
     bounded exit.
-17. Run offline and confirm history, settings, restore, and previews make no
+18. Run offline and confirm history, settings, restore, and previews make no
     external request.
-18. Run malicious HTML preview fixtures and verify scripts, navigation, forms,
+19. Run malicious HTML preview fixtures and verify scripts, navigation, forms,
     external resources, and unsafe URLs do not execute.
 
 Record the full Apple Silicon and Intel evidence matrix in
@@ -189,8 +195,9 @@ settings on real NSPasteboard.
 
 ### Tray
 
-Keep the hard 20-item summary query and do not introduce event decoding or local
-media reads during menu construction.
+Keep the tray query summary-only, honor `menu_bar_item_limit` (`0` means all,
+with a 1000-row ceiling), and do not introduce event decoding or local media
+reads during menu construction.
 
 ### Localized UI
 

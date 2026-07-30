@@ -136,14 +136,3 @@ export function formatBytes(bytes: number, locale: string): string {
     maximumFractionDigits: value >= 10 ? 1 : 2,
   }).format(value)} ${units[unitIndex]}`;
 }
-
-export function sourceDisplayName(bundleId: string): string {
-  const knownNames: Record<string, string> = {
-    "com.apple.finder": "Finder",
-    "com.apple.Safari": "Safari",
-    "com.google.Chrome": "Chrome",
-    "com.microsoft.VSCode": "Visual Studio Code",
-    "com.tinyspeck.slackmacgap": "Slack",
-  };
-  return knownNames[bundleId] ?? bundleId;
-}

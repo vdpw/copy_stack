@@ -1,5 +1,14 @@
-import { AlertTriangle, ArrowUpDown, Eye, EyeOff, Type } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowUpDown,
+  Eye,
+  EyeOff,
+  Trash2,
+  Type,
+} from "lucide-react";
 import { useEffect, useState } from "react";
+import { invokeCommand } from "../../api/tauri";
 import { DiagnosticErrorBanner } from "../../components/DiagnosticErrorBanner";
 import {
   isLanguagePreference,
@@ -14,6 +23,7 @@ interface SettingsViewProps {
   controller: AppSettingsController;
   language: SupportedLanguage;
   messages: Messages;
+  onBack: () => void;
 }
 
 const mebibyte = 1024 * 1024;
@@ -22,12 +32,31 @@ export function SettingsView({
   controller,
   language,
   messages,
+  onBack,
 }: SettingsViewProps) {
   const { settings } = controller;
   const [pendingMaxItemsInput, setPendingMaxItemsInput] = useState("100");
   const [pendingHistoryBudgetInput, setPendingHistoryBudgetInput] =
     useState("256");
+  const [pendingMenuBarItemLimitInput, setPendingMenuBarItemLimitInput] =
+    useState("0");
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
+
+  const settingsHeader = (
+    <header className="preferences-header">
+      <button
+        aria-label={messages.backToHistory}
+        className="settings-back-button"
+        onClick={onBack}
+        title={messages.backToHistory}
+        type="button"
+      >
+        <ArrowLeft aria-hidden="true" size={18} />
+      </button>
+      <h1>{messages.settings}</h1>
+    </header>
+  );
 
   useEffect(() => {
     if (settings) {
@@ -35,15 +64,14 @@ export function SettingsView({
       setPendingHistoryBudgetInput(
         String(Math.round(settings.max_history_bytes / mebibyte))
       );
+      setPendingMenuBarItemLimitInput(String(settings.menu_bar_item_limit));
     }
   }, [settings]);
 
   if (!settings) {
     return (
       <main className="content-panel preferences-panel settings-panel">
-        <header className="preferences-header">
-          <h1>{messages.settings}</h1>
-        </header>
+        {settingsHeader}
         {controller.error ? (
           <DiagnosticErrorBanner
             error={controller.error}
@@ -75,6 +103,15 @@ export function SettingsView({
   const isHistoryBudgetDirty =
     isHistoryBudgetValid &&
     parsedHistoryBudget * mebibyte !== settings.max_history_bytes;
+  const parsedMenuBarItemLimit = Number(pendingMenuBarItemLimitInput);
+  const isMenuBarItemLimitValid =
+    pendingMenuBarItemLimitInput.trim() !== "" &&
+    Number.isInteger(parsedMenuBarItemLimit) &&
+    parsedMenuBarItemLimit >= 0 &&
+    parsedMenuBarItemLimit <= 1000;
+  const isMenuBarItemLimitDirty =
+    isMenuBarItemLimitValid &&
+    parsedMenuBarItemLimit !== settings.menu_bar_item_limit;
   const eventsToDelete = Math.max(
     0,
     settings.history_count - parsedPendingMaxItems
@@ -98,12 +135,33 @@ export function SettingsView({
     }
   };
 
+  const clearAllEvents = async () => {
+    if (
+      clearingHistory ||
+      controller.updating ||
+      settings.history_count === 0
+    ) {
+      return;
+    }
+
+    setClearingHistory(true);
+    controller.dismissError();
+    try {
+      await invokeCommand<void>("clear_all_events", "clear_history");
+      await controller.loadSettings();
+    } catch (caught) {
+      controller.reportError(caught, "clear_history", () => {
+        void clearAllEvents();
+      });
+    } finally {
+      setClearingHistory(false);
+    }
+  };
+
   return (
     <>
       <main className="content-panel preferences-panel settings-panel">
-        <header className="preferences-header">
-          <h1>{messages.settings}</h1>
-        </header>
+        {settingsHeader}
 
         {controller.error && (
           <DiagnosticErrorBanner
@@ -358,6 +416,78 @@ export function SettingsView({
               <span className="mac-switch-track" />
             </span>
           </label>
+
+          <div className="preference-row preference-row-stacked">
+            <div className="preference-copy">
+              <label htmlFor="menu-bar-item-limit-input">
+                {messages.menuBarItemLimit}
+              </label>
+              <p>
+                {messages.menuBarItemLimitDescription(
+                  settings.menu_bar_item_limit
+                )}
+              </p>
+            </div>
+            <div className="preference-control storage-input-row">
+              <input
+                className="storage-input"
+                disabled={controller.updating}
+                id="menu-bar-item-limit-input"
+                max="1000"
+                min="0"
+                onChange={event =>
+                  setPendingMenuBarItemLimitInput(event.target.value)
+                }
+                type="number"
+                value={pendingMenuBarItemLimitInput}
+              />
+              <button
+                className="btn btn-primary"
+                disabled={
+                  controller.updating ||
+                  !isMenuBarItemLimitValid ||
+                  !isMenuBarItemLimitDirty
+                }
+                onClick={() =>
+                  void controller.updateMenuBarItemLimit(parsedMenuBarItemLimit)
+                }
+                type="button"
+              >
+                {messages.apply}
+              </button>
+            </div>
+            {!isMenuBarItemLimitValid && (
+              <p className="settings-error" role="alert">
+                {messages.menuBarItemLimitError}
+              </p>
+            )}
+          </div>
+        </section>
+
+        <section className="preference-group">
+          <div className="preference-row">
+            <span className="preference-copy">
+              <span className="preference-title">
+                {messages.clipboardHistory}
+              </span>
+              <span className="preference-description">
+                {messages.clearHistoryDescription(settings.history_count)}
+              </span>
+            </span>
+            <button
+              className="btn btn-danger settings-clear-button"
+              disabled={
+                clearingHistory ||
+                controller.updating ||
+                settings.history_count === 0
+              }
+              onClick={() => void clearAllEvents()}
+              type="button"
+            >
+              <Trash2 aria-hidden="true" size={15} />
+              {clearingHistory ? messages.clearingHistory : messages.clearAll}
+            </button>
+          </div>
         </section>
       </main>
 

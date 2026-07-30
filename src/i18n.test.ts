@@ -2,13 +2,10 @@ import { describe, expect, it } from "vitest";
 import { getMessages, supportedLanguages } from "./i18n";
 
 describe("metadata and error localization", () => {
-  it("localizes explicit unknown sources in every supported language", () => {
+  it("localizes remote clipboard metadata in every supported language", () => {
     for (const language of supportedLanguages) {
       const messages = getMessages(language);
-      expect(messages.unknownSource).not.toHaveLength(0);
-      expect(messages.sourceBadge(messages.unknownSource)).toContain(
-        messages.unknownSource
-      );
+      expect(messages.remoteClipboard).not.toHaveLength(0);
     }
   });
 

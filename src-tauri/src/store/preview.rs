@@ -6,8 +6,8 @@
 
 use crate::event::decode_event_blob;
 use crate::resource_policy::{
-    allow_image_preview, MAX_DETAIL_IPC_BYTES, MAX_HTML_BYTES, MAX_PREVIEW_IMAGE_BYTES,
-    MAX_PREVIEW_SEGMENTS,
+    allow_image_preview, MAX_DETAIL_IPC_BYTES, MAX_DISPLAY_BYTES, MAX_HTML_BYTES,
+    MAX_PREVIEW_IMAGE_BYTES, MAX_PREVIEW_SEGMENTS,
 };
 use crate::store::classification::{
     file_url_display_name, file_url_extension, file_url_path, find_data, find_data_in_item,
@@ -50,6 +50,7 @@ pub(super) fn build_history_detail(
     let mut detail = HistoryDetail {
         content_hash: seed.content_hash,
         html_preview: None,
+        text_preview: None,
         rich_preview: Vec::new(),
     };
     if compact_mode {
@@ -58,6 +59,9 @@ pub(super) fn build_history_detail(
 
     let event = event_from_blob(&seed.event_data)?;
     detail.html_preview = bounded_html_preview(&event);
+    if find_data(&event, "public.html").is_some() && detail.html_preview.is_none() {
+        detail.text_preview = bounded_text_preview(&event);
+    }
 
     for segment in preview_segments_from_event(&event)
         .into_iter()
@@ -71,6 +75,9 @@ pub(super) fn build_history_detail(
 
     if !history_detail_fits_ipc_budget(&detail)? {
         detail.html_preview = None;
+    }
+    if !history_detail_fits_ipc_budget(&detail)? {
+        detail.text_preview = None;
     }
     if !history_detail_fits_ipc_budget(&detail)? {
         return Err(rusqlite::Error::InvalidParameterName(
@@ -119,6 +126,31 @@ fn bounded_html_preview(event: &Event) -> Option<String> {
         .trim()
         .to_string();
     (!html.is_empty()).then_some(html)
+}
+
+fn bounded_text_preview(event: &Event) -> Option<String> {
+    let text = find_raw_utf8_display(event)?;
+    let suffix = "\n…";
+    let content_limit = MAX_DISPLAY_BYTES.saturating_sub(suffix.len());
+    let mut preview = String::with_capacity(text.len().min(MAX_DISPLAY_BYTES));
+    let mut truncated = false;
+
+    for character in text.chars().filter(|character| *character != '\0') {
+        if preview.len().saturating_add(character.len_utf8()) > content_limit {
+            truncated = true;
+            break;
+        }
+        preview.push(character);
+    }
+
+    let mut preview = preview.trim().to_string();
+    if preview.is_empty() {
+        return None;
+    }
+    if truncated {
+        preview.push_str(suffix);
+    }
+    Some(preview)
 }
 
 fn preview_segments_from_event(event: &Event) -> Vec<StoredPreviewSegment> {
@@ -409,6 +441,23 @@ mod tests {
             data: vec![b'x'; MAX_HTML_BYTES + 1],
         }]);
         assert!(bounded_html_preview(&oversized).is_none());
+    }
+
+    #[test]
+    fn text_preview_preserves_lines_and_stays_bounded() {
+        let source = format!(
+            "package main\n\nfunc main() {{}}\n{}",
+            "x".repeat(MAX_DISPLAY_BYTES)
+        );
+        let source_event = event(vec![Data {
+            r#type: "public.utf8-plain-text".to_string(),
+            data: source.into_bytes(),
+        }]);
+        let preview = bounded_text_preview(&source_event).expect("text preview should exist");
+
+        assert!(preview.starts_with("package main\n\nfunc main() {}"));
+        assert!(preview.ends_with("\n…"));
+        assert!(preview.len() <= MAX_DISPLAY_BYTES);
     }
 
     #[test]

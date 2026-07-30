@@ -100,9 +100,12 @@ The response also carries total visible count and total accounted bytes.
 
 `get_history_detail(content_hash)` reads one owned seed, builds at most 32
 preview segments outside the lock, and enforces an 8 MiB serialized response
-budget. Bounded image bytes are returned for in-memory `blob:` previews. Video
-details return only a display label and media type; the asset protocol stays
-disabled and full local paths never cross IPC.
+budget. HTML throughout the 2 MiB capture budget is sent to the same isolated
+renderer. Malformed or legacy HTML outside that budget is replaced with at most
+1 MiB of its raw plain-text representation, preserving source-code line breaks.
+Bounded image bytes are returned for in-memory `blob:` previews. Video details
+return only a display label and media type; the asset protocol stays disabled
+and full local paths never cross IPC.
 
 ### History mutations and restore
 
@@ -135,13 +138,16 @@ repeat an already-completed external write.
 - `max_items` and `max_history_bytes`;
 - `history_count`, `history_bytes`, and `history_limit_bytes`;
 - `max_event_bytes`;
-- menu visibility, restore ordering, compact mode;
+- menu visibility, menu item limit, restore ordering, compact mode;
 - persisted and resolved language.
 
 Mutators are `set_max_items`, `set_max_history_bytes`,
-`set_show_in_menu_bar`, `set_move_restored_item_to_top`, `set_compact_mode`,
-and `set_language`. Item limits accept 1–1000. The byte command accepts
-16 MiB–4 GiB. Lower limits run cleanup before notifying History and the tray.
+`set_show_in_menu_bar`, `set_menu_bar_item_limit`,
+`set_move_restored_item_to_top`, `set_compact_mode`, and `set_language`.
+History item limits accept 1–1000. The menu item limit accepts 0–1000, where
+0 displays all retained items. The byte command accepts 16 MiB–4 GiB. Lower
+history limits run cleanup before notifying History and the tray; changing only
+the menu limit rebuilds the tray without deleting history.
 
 `get_autostart_status` and `set_autostart_enabled` operate on the OS login item
 and return verified state.

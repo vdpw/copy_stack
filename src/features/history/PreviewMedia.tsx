@@ -1,19 +1,39 @@
 import { Video } from "lucide-react";
-import { useEffect, useState } from "react";
-import { buildHtmlPreviewDocument } from "../../lib/htmlPreview";
+import { useEffect, useMemo, useState } from "react";
+import { buildHtmlPreview } from "../../lib/htmlPreview";
 import { isSafePreviewImage } from "../../lib/display";
 
 export function HtmlPreview({ html, title }: { html: string; title: string }) {
+  const preview = useMemo(() => buildHtmlPreview(html), [html]);
+
   return (
-    <div className="event-html-preview-shell">
+    <div
+      className="event-html-preview-shell"
+      onClick={event => event.stopPropagation()}
+    >
       <iframe
-        className="event-html-preview"
+        aria-label={title}
+        className={`event-html-preview ${
+          preview.compact ? "event-html-preview-compact" : ""
+        }`}
         referrerPolicy="no-referrer"
         sandbox=""
-        srcDoc={buildHtmlPreviewDocument(html)}
+        srcDoc={preview.srcDoc}
         tabIndex={-1}
-        title={title}
       />
+    </div>
+  );
+}
+
+export function TextPreview({ text, title }: { text: string; title: string }) {
+  return (
+    <div
+      aria-label={title}
+      className="event-text-preview-shell"
+      onClick={event => event.stopPropagation()}
+      role="region"
+    >
+      <pre className="event-text-preview">{text}</pre>
     </div>
   );
 }

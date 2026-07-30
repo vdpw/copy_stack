@@ -21,6 +21,7 @@ type EventType =
 
 export interface Messages {
   settings: string;
+  backToHistory: string;
   starting: string;
   storedItems: string;
   storedItemsDescription: (maximum: number, current: number) => string;
@@ -50,8 +51,13 @@ export interface Messages {
   showInMenuBar: string;
   menuBarEnabled: string;
   menuBarDisabled: string;
+  menuBarItemLimit: string;
+  menuBarItemLimitDescription: (limit: number) => string;
+  menuBarItemLimitError: string;
   clipboardHistory: string;
   clearAll: string;
+  clearHistoryDescription: (count: number) => string;
+  clearingHistory: string;
   loadMore: string;
   loadingMore: string;
   loadedHistoryCount: (loaded: number, total: number) => string;
@@ -78,8 +84,6 @@ export interface Messages {
   restoringToClipboard: string;
   deleteItem: string;
   clipboardItemCopied: string;
-  sourceBadge: (source: string) => string;
-  unknownSource: string;
   remoteClipboard: string;
   previewTruncated: string;
   captureRejected: string;
@@ -161,6 +165,7 @@ const traditionalChineseOperationErrors: Record<Operation, string> = {
 const translations: Record<SupportedLanguage, Messages> = {
   en: {
     settings: "Settings",
+    backToHistory: "Back to clipboard history",
     starting: "Starting Copy Stack...",
     storedItems: "Stored items",
     storedItemsDescription: (maximum, current) =>
@@ -199,8 +204,19 @@ const translations: Record<SupportedLanguage, Messages> = {
     showInMenuBar: "Show in menu bar",
     menuBarEnabled: "Recent clips are available from the tray menu.",
     menuBarDisabled: "The tray menu is hidden.",
+    menuBarItemLimit: "Tray menu items",
+    menuBarItemLimitDescription: limit =>
+      limit === 0
+        ? "Show every stored clip. Enter 0 for all, or set a limit from 1 to 1000."
+        : `Show the newest ${englishClipCount(limit)}. Enter 0 to show all.`,
+    menuBarItemLimitError: "Enter 0 for all, or a whole number from 1 to 1000.",
     clipboardHistory: "Clipboard history",
     clearAll: "Clear all",
+    clearHistoryDescription: count =>
+      count === 0
+        ? "There is no clipboard history to clear."
+        : `Permanently delete all ${englishEventCount(count)} stored on this Mac.`,
+    clearingHistory: "Clearing...",
     loadMore: "Load more",
     loadingMore: "Loading more...",
     loadedHistoryCount: (loaded, total) =>
@@ -241,8 +257,6 @@ const translations: Record<SupportedLanguage, Messages> = {
     restoringToClipboard: "Restoring to clipboard...",
     deleteItem: "Delete item",
     clipboardItemCopied: "Clipboard item copied.",
-    sourceBadge: source => `From ${source}`,
-    unknownSource: "Unknown source",
     remoteClipboard: "From another device",
     previewTruncated: "Summary shortened",
     captureRejected:
@@ -269,6 +283,7 @@ const translations: Record<SupportedLanguage, Messages> = {
   },
   "zh-CN": {
     settings: "设置",
+    backToHistory: "返回剪贴板历史",
     starting: "正在启动 Copy Stack...",
     storedItems: "存储数量",
     storedItemsDescription: (maximum, current) =>
@@ -302,8 +317,19 @@ const translations: Record<SupportedLanguage, Messages> = {
     showInMenuBar: "在菜单栏中显示",
     menuBarEnabled: "可从菜单栏访问最近的剪贴板内容。",
     menuBarDisabled: "菜单栏图标已隐藏。",
+    menuBarItemLimit: "托盘菜单条目数",
+    menuBarItemLimitDescription: limit =>
+      limit === 0
+        ? "展示全部已保存项目。输入 0 表示全部，也可设置 1–1000。"
+        : `展示最新 ${limit} 个项目。输入 0 可展示全部。`,
+    menuBarItemLimitError: "请输入 0（全部）或 1–1000 的整数。",
     clipboardHistory: "剪贴板历史",
     clearAll: "全部清空",
+    clearHistoryDescription: count =>
+      count === 0
+        ? "目前没有可清空的剪贴板历史。"
+        : `永久删除这台 Mac 上存储的全部 ${count} 条剪贴板记录。`,
+    clearingHistory: "正在清空...",
     loadMore: "加载更多",
     loadingMore: "正在加载...",
     loadedHistoryCount: (loaded, total) => `已显示 ${loaded}/${total} 条。`,
@@ -341,8 +367,6 @@ const translations: Record<SupportedLanguage, Messages> = {
     restoringToClipboard: "正在恢复到剪贴板...",
     deleteItem: "删除项目",
     clipboardItemCopied: "已复制到剪贴板。",
-    sourceBadge: source => `来源：${source}`,
-    unknownSource: "未知来源",
     remoteClipboard: "来自其他设备",
     previewTruncated: "摘要已缩短",
     captureRejected:
@@ -369,6 +393,7 @@ const translations: Record<SupportedLanguage, Messages> = {
   },
   "zh-TW": {
     settings: "設定",
+    backToHistory: "返回剪貼簿歷史",
     starting: "正在啟動 Copy Stack...",
     storedItems: "儲存數量",
     storedItemsDescription: (maximum, current) =>
@@ -402,8 +427,19 @@ const translations: Record<SupportedLanguage, Messages> = {
     showInMenuBar: "在選單列中顯示",
     menuBarEnabled: "可從選單列存取最近的剪貼簿內容。",
     menuBarDisabled: "選單列圖示已隱藏。",
+    menuBarItemLimit: "選單列選單項目數",
+    menuBarItemLimitDescription: limit =>
+      limit === 0
+        ? "顯示全部已儲存項目。輸入 0 代表全部，也可設定 1–1000。"
+        : `顯示最新 ${limit} 個項目。輸入 0 可顯示全部。`,
+    menuBarItemLimitError: "請輸入 0（全部）或 1–1000 的整數。",
     clipboardHistory: "剪貼簿歷史",
     clearAll: "全部清除",
+    clearHistoryDescription: count =>
+      count === 0
+        ? "目前沒有可清除的剪貼簿歷史。"
+        : `永久刪除這台 Mac 上儲存的全部 ${count} 筆剪貼簿記錄。`,
+    clearingHistory: "正在清除...",
     loadMore: "載入更多",
     loadingMore: "正在載入...",
     loadedHistoryCount: (loaded, total) => `已顯示 ${loaded}/${total} 筆。`,
@@ -441,8 +477,6 @@ const translations: Record<SupportedLanguage, Messages> = {
     restoringToClipboard: "正在還原至剪貼簿...",
     deleteItem: "刪除項目",
     clipboardItemCopied: "已複製到剪貼簿。",
-    sourceBadge: source => `來源：${source}`,
-    unknownSource: "未知來源",
     remoteClipboard: "來自其他裝置",
     previewTruncated: "摘要已縮短",
     captureRejected:

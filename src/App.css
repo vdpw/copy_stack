@@ -1,17 +1,6 @@
 :root {
   color: #14213d;
-  background:
-    radial-gradient(
-      circle at top left,
-      rgba(249, 115, 22, 0.2),
-      transparent 28%
-    ),
-    radial-gradient(
-      circle at top right,
-      rgba(56, 189, 248, 0.16),
-      transparent 24%
-    ),
-    linear-gradient(180deg, #fff7ed 0%, #f8fafc 45%, #eef6ff 100%);
+  background: #f8fafc;
   font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
 }
 
@@ -46,10 +35,10 @@ button {
 
 .app-shell {
   min-height: 100vh;
-  padding: 16px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
 }
 
 .app-shell,
@@ -70,89 +59,6 @@ button {
   letter-spacing: 0.14em;
   font-size: 0.66rem;
   font-weight: 700;
-}
-
-.app-navigation {
-  min-height: 44px;
-  padding: 5px 6px 5px 9px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid rgba(20, 33, 61, 0.08);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.76);
-  box-shadow: 0 8px 24px rgba(20, 33, 61, 0.06);
-  backdrop-filter: blur(22px);
-}
-
-.app-brand,
-.page-tabs,
-.page-tab {
-  display: flex;
-  align-items: center;
-}
-
-.app-brand {
-  min-width: 0;
-  gap: 8px;
-  color: #14213d;
-  font-size: 0.88rem;
-  font-weight: 750;
-  letter-spacing: -0.01em;
-}
-
-.app-brand-mark {
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #f97316, #fb7185);
-  color: #fff;
-  font-size: 0.76rem;
-  font-weight: 800;
-  box-shadow: 0 5px 14px rgba(249, 115, 22, 0.2);
-}
-
-.page-tabs {
-  gap: 2px;
-  padding: 3px;
-  border-radius: 11px;
-  background: rgba(20, 33, 61, 0.06);
-}
-
-.page-tab {
-  min-height: 30px;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: transparent;
-  color: #64748b;
-  font-size: 0.78rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    background 140ms ease,
-    box-shadow 140ms ease,
-    color 140ms ease;
-}
-
-.page-tab:hover {
-  color: #14213d;
-}
-
-.page-tab-active {
-  background: rgba(255, 255, 255, 0.94);
-  color: #14213d;
-  box-shadow: 0 2px 8px rgba(20, 33, 61, 0.1);
-}
-
-.page-tab:focus-visible {
-  outline: 3px solid rgba(249, 115, 22, 0.24);
-  outline-offset: 2px;
 }
 
 .panel-header h2,
@@ -178,12 +84,23 @@ button {
 }
 
 .content-panel {
-  min-height: calc(100vh - 88px);
-  border-radius: 20px;
+  min-height: 100vh;
+  border: 0;
+  border-radius: 0;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  background:
+    radial-gradient(circle at 4% 0%, rgba(251, 113, 133, 0.1), transparent 30%),
+    radial-gradient(
+      circle at 96% 4%,
+      rgba(56, 189, 248, 0.09),
+      transparent 28%
+    ),
+    linear-gradient(180deg, #fffaf7 0%, #f8fafc 48%, #f5f9ff 100%);
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .panel-header {
@@ -365,12 +282,6 @@ button {
   text-transform: uppercase;
 }
 
-.event-meta .event-source-badge {
-  background: rgba(37, 99, 235, 0.1);
-  color: #1d4ed8;
-  text-transform: none;
-}
-
 .event-meta .event-remote-badge {
   background: rgba(124, 58, 237, 0.1);
   color: #6d28d9;
@@ -418,7 +329,7 @@ button {
   border: 1px solid rgba(20, 33, 61, 0.12);
   border-radius: 12px;
   background: #fff;
-  cursor: pointer;
+  cursor: default;
 }
 
 .event-html-preview {
@@ -427,9 +338,36 @@ button {
   height: 280px;
   border: 0;
   background: #fff;
-  pointer-events: none;
+  pointer-events: auto;
   -webkit-user-select: none;
   user-select: none;
+}
+
+.event-html-preview-compact {
+  height: 104px;
+}
+
+.event-text-preview-shell {
+  width: 100%;
+  height: 280px;
+  margin-bottom: 8px;
+  overflow: auto;
+  border: 1px solid rgba(20, 33, 61, 0.14);
+  border-radius: 12px;
+  background: #1f2329;
+  cursor: default;
+}
+
+.event-text-preview {
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  padding: 16px 16px 22px;
+  color: #d9e2f1;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre;
 }
 
 .event-video-preview {
@@ -765,6 +703,9 @@ button {
 
 .preferences-header {
   padding: 0 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .preferences-header h1 {
@@ -773,6 +714,31 @@ button {
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.12;
+}
+
+.settings-back-button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(20, 33, 61, 0.07);
+  color: #14213d;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.settings-back-button:hover {
+  background: rgba(20, 33, 61, 0.12);
+}
+
+.settings-back-button:focus-visible {
+  outline: 3px solid rgba(0, 122, 255, 0.22);
+  outline-offset: 2px;
 }
 
 .preference-group {
@@ -863,6 +829,10 @@ button {
 .settings-panel .btn-primary {
   background: #007aff;
   color: #fff;
+}
+
+.settings-clear-button {
+  flex: 0 0 auto;
 }
 
 .mac-switch {
@@ -1078,13 +1048,9 @@ button {
     width: min(100%, 280px);
   }
 
-  .app-shell {
-    padding: 12px;
-  }
-
   .content-panel {
-    min-height: calc(100vh - 80px);
-    border-radius: 16px;
+    min-height: 100vh;
+    border-radius: 0;
     padding: 14px;
   }
 
@@ -1128,10 +1094,6 @@ button {
 }
 
 @media (max-width: 560px) {
-  .app-brand > span:last-child {
-    display: none;
-  }
-
   .panel-header,
   .event-card {
     align-items: stretch;

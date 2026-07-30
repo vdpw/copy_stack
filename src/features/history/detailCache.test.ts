@@ -6,6 +6,7 @@ function detail(contentHash: string): HistoryDetail {
   return {
     content_hash: contentHash,
     html_preview: null,
+    text_preview: null,
     rich_preview: [],
   };
 }

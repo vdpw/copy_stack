@@ -36,6 +36,7 @@ export interface HistorySummary {
 export interface HistoryDetail {
   content_hash: string;
   html_preview: string | null;
+  text_preview: string | null;
   rich_preview: RichPreviewSegment[];
 }
 
@@ -51,6 +52,7 @@ export interface AppSettings {
   max_items: number;
   max_history_bytes: number;
   show_in_menu_bar: boolean;
+  menu_bar_item_limit: number;
   move_restored_item_to_top: boolean;
   compact_mode: boolean;
   language: string;

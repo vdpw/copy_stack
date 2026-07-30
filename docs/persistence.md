@@ -82,6 +82,8 @@ or the removed legacy `source_app` heuristic.
 - `max_items`: default `100`, accepted UI range 1–1000.
 - `max_history_bytes`: default `268435456` (256 MiB).
 - `show_in_menu_bar`: default `true`.
+- `menu_bar_item_limit`: default `0` (all retained rows), accepted UI range
+  0–1000.
 - `move_restored_item_to_top`: default `false`.
 - `compact_mode`: default `false`.
 - `language`: default `system`; other valid values are `en`, `zh-CN`, and
@@ -185,6 +187,9 @@ database lock. Event decoding and local media inspection happen after the lock
 is released.
 
 Detail construction is display-only and bounded to 32 segments and 8 MiB.
+Formatted HTML throughout the 2 MiB capture budget uses the same isolated
+renderer. Malformed or legacy values outside that budget use a bounded 1 MiB
+plain-text fallback.
 Local images must be ordinary files whose identity remains stable before,
 during, and after a bounded read. PNG previews also enforce a 20-million-pixel
 header limit. Video bytes and local paths are never copied through IPC; video

@@ -121,7 +121,7 @@ Both limits apply:
 Inspect safe aggregate values:
 
 ```bash
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings WHERE key IN ('max_items', 'max_history_bytes') ORDER BY key;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings WHERE key IN ('max_items', 'max_history_bytes', 'menu_bar_item_limit') ORDER BY key;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT COUNT(*), COALESCE(SUM(byte_count), 0) FROM clipboard_events;"
 ```
 
@@ -129,8 +129,10 @@ Cleanup removes oldest rows until both constraints are satisfied.
 
 ## Menu Bar Is Empty Or Short
 
-The menu bar intentionally reads at most 20 bounded summaries. Compact mode can
-hide image/file/video rows. `show_in_menu_bar = false` hides the icon entirely.
+The menu bar defaults to every retained row. A nonzero
+`menu_bar_item_limit` restricts it to that many newest bounded summaries;
+`0` means all, up to the 1000-item retention ceiling. Compact mode can hide
+image/file/video rows. `show_in_menu_bar = false` hides the icon entirely.
 Menu construction never decodes event blobs or reads local rich media.
 
 ## JSONL Is Missing Or Stale

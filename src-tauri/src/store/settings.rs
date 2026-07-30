@@ -6,15 +6,17 @@ pub(super) const DEFAULT_MAX_ITEMS: u32 = 100;
 pub(super) const MAX_ITEMS_KEY: &str = "max_items";
 pub(super) const MAX_HISTORY_BYTES_KEY: &str = "max_history_bytes";
 pub(super) const SHOW_IN_MENU_BAR_KEY: &str = "show_in_menu_bar";
+pub(super) const MENU_BAR_ITEM_LIMIT_KEY: &str = "menu_bar_item_limit";
 pub(super) const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
 pub(super) const COMPACT_MODE_KEY: &str = "compact_mode";
 pub(super) const LANGUAGE_KEY: &str = "language";
 
-pub(super) fn default_entries() -> [(&'static str, String); 6] {
+pub(super) fn default_entries() -> [(&'static str, String); 7] {
     [
         (MAX_ITEMS_KEY, DEFAULT_MAX_ITEMS.to_string()),
         (MAX_HISTORY_BYTES_KEY, DEFAULT_MAX_HISTORY_BYTES.to_string()),
         (SHOW_IN_MENU_BAR_KEY, "true".to_string()),
+        (MENU_BAR_ITEM_LIMIT_KEY, "0".to_string()),
         (MOVE_RESTORED_ITEM_TO_TOP_KEY, "false".to_string()),
         (COMPACT_MODE_KEY, "false".to_string()),
         (LANGUAGE_KEY, "system".to_string()),
@@ -43,6 +45,14 @@ pub(super) fn get_show_in_menu_bar(connection: &Connection) -> Result<bool> {
 
 pub(super) fn set_show_in_menu_bar(connection: &Connection, value: bool) -> Result<()> {
     set(connection, SHOW_IN_MENU_BAR_KEY, bool_value(value))
+}
+
+pub(super) fn get_menu_bar_item_limit(connection: &Connection) -> Result<u32> {
+    get_u32(connection, MENU_BAR_ITEM_LIMIT_KEY, 0)
+}
+
+pub(super) fn set_menu_bar_item_limit(connection: &Connection, value: u32) -> Result<()> {
+    set(connection, MENU_BAR_ITEM_LIMIT_KEY, &value.to_string())
 }
 
 pub(super) fn get_move_restored_item_to_top(connection: &Connection) -> Result<bool> {
@@ -143,15 +153,20 @@ mod tests {
         let connection = connection();
         assert_eq!(get_max_items(&connection).unwrap(), DEFAULT_MAX_ITEMS);
         assert!(get_show_in_menu_bar(&connection).unwrap());
+        assert_eq!(get_menu_bar_item_limit(&connection).unwrap(), 0);
 
         set_max_items(&connection, 321).unwrap();
         set_show_in_menu_bar(&connection, false).unwrap();
+        set_menu_bar_item_limit(&connection, 75).unwrap();
         assert_eq!(get_max_items(&connection).unwrap(), 321);
         assert!(!get_show_in_menu_bar(&connection).unwrap());
+        assert_eq!(get_menu_bar_item_limit(&connection).unwrap(), 75);
 
         set(&connection, SHOW_IN_MENU_BAR_KEY, "invalid").unwrap();
         assert!(get_show_in_menu_bar(&connection).unwrap());
         set(&connection, MAX_ITEMS_KEY, "invalid").unwrap();
         assert!(get_max_items(&connection).is_err());
+        set(&connection, MENU_BAR_ITEM_LIMIT_KEY, "invalid").unwrap();
+        assert!(get_menu_bar_item_limit(&connection).is_err());
     }
 }
