@@ -8,7 +8,7 @@ flowchart TD
   Listener --> Channel["mpsc channel"]
   Channel --> Policy["protocol + resource policy"]
   Policy --> DB["SQLite private store"]
-  DB --> Summaries["cursor summaries / tray LIMIT 20"]
+  DB --> Summaries["cursor summaries / configurable tray snapshot"]
   DB --> Seeds["owned detail / restore seeds"]
   Seeds --> Detail["detail decode outside DB lock"]
   DB --> Mirror["coalescing JSONL worker<br/>independent read connection"]
@@ -69,8 +69,9 @@ lock:
 
 ## Frontend Structure
 
-- `src/App.tsx`: owns the main window's History/Settings page navigation and
-  coordinates language/error presentation.
+- `src/App.tsx`: owns the main window's History/Settings page navigation from
+  native `app:navigate` requests and the Settings back button, and coordinates
+  language/error presentation.
 - `src/features/history/`: history list, cards, media presentation, and the
   bounded detail cache.
 - `src/features/settings/`: settings presentation.
@@ -86,7 +87,9 @@ lock:
 The History page keeps scroll and expansion state across live refreshes. The
 Settings page loads counts and byte totals from `get_app_settings`; because the
 History view is unmounted while Settings is active, it does not fetch clipboard
-history in the background.
+history in the background. The macOS application menu and `Command+,` are the
+primary Settings entry points; the tray entry remains available. Settings
+returns to History through its own back button.
 
 ## Command Contract
 
@@ -95,8 +98,8 @@ The single main window registers the history commands
 `clear_all_events`, and `copy_to_clipboard`; the settings commands
 `get_app_settings`, `get_autostart_status`, `set_autostart_enabled`,
 `set_max_items`, `set_max_history_bytes`, `set_show_in_menu_bar`,
-`set_move_restored_item_to_top`, `set_compact_mode`, and `set_language`; plus
-the startup and diagnostic reads.
+`set_menu_bar_item_limit`, `set_move_restored_item_to_top`,
+`set_compact_mode`, and `set_language`; plus the startup and diagnostic reads.
 
 `src-tauri/capabilities/main.json` grants exactly that audited command union to
 the one webview. There is no broad `core:default` grant, separate settings

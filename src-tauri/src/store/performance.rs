@@ -1,5 +1,6 @@
 use super::{
-    Database, HistoryPage, DEFAULT_HISTORY_PAGE_SIZE, MAX_SUMMARY_DISPLAY_BYTES, TRAY_HISTORY_LIMIT,
+    Database, HistoryPage, DEFAULT_HISTORY_PAGE_SIZE, MAX_MENU_BAR_ITEM_LIMIT,
+    MAX_SUMMARY_DISPLAY_BYTES,
 };
 use crate::history_mirror::{HistoryMirror, HistoryMirrorConfig};
 use copy_event_listener::event::{Data, Event, Item};
@@ -412,7 +413,7 @@ fn assert_structural_budgets(page: &HistoryPage, tray_items: usize, item_count: 
         .items
         .iter()
         .all(|item| item.display.len() <= MAX_SUMMARY_DISPLAY_BYTES));
-    assert_eq!(tray_items, item_count.min(TRAY_HISTORY_LIMIT));
+    assert_eq!(tray_items, item_count.min(MAX_MENU_BAR_ITEM_LIMIT));
 }
 
 /// Run with:

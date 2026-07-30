@@ -25,8 +25,8 @@ codebase.
   protocol markers.
 - Delete one item or clear all history.
 - Enforce both an item-count limit and an accounted history-byte limit.
-- Configure compact text-only mode, restore ordering, language, and menu bar
-  visibility.
+- Configure compact text-only mode, restore ordering, language, menu bar
+  visibility, and how many history rows the menu bar shows.
 - Keep one owning process. A later launch activates the existing main window
   without creating another database, tray, or clipboard listener.
 - Configure the operating system login item. Login launches stay hidden while
@@ -60,12 +60,21 @@ refreshed.
 Settings exposes the item-count limit and current accounted storage usage.
 Lowering the item limit asks for confirmation. The backend also enforces the
 persisted `max_history_bytes` setting, which defaults to 256 MiB. Cleanup removes
-the oldest rows until both limits are satisfied.
+the oldest rows until both limits are satisfied. Settings also contains the
+webview's Clear All action.
+
+On macOS, Settings opens from the Copy Stack application menu or with
+`Command+,`; the menu bar tray also retains its Settings entry. The main
+content does not expose a History/Settings switcher. A top-left back button in
+Settings returns to History.
 
 ### Menu Bar Access
 
-The menu bar reads a summary-only query with a hard `LIMIT 20`. It never decodes
-event blobs or reads rich local media while rebuilding the menu.
+The menu bar reads bounded summaries and defaults to showing every retained
+history row. Settings can cap it at any value from 1–1000; `0` means all.
+Long labels remain width-bounded, and every visible row restores its item
+directly without an intermediate submenu. Menu rebuilds never decode event
+blobs or read rich local media.
 
 ## Non-Goals
 

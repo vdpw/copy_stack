@@ -4,8 +4,8 @@
 
 - `clipboard-history-updated`: refresh the first History page and settings
   totals.
-- `app:navigate`: native UI requested the in-window `history` or `settings`
-  page.
+- `app:navigate`: the tray requested History/Settings or the macOS application
+  menu requested Settings.
 - `app-language-changed`: reload authoritative language/settings.
 - `capture-rejected`: a resource-limited event could not be safely degraded;
   payload contains only resource kind and size bucket.
@@ -35,7 +35,7 @@ sequenceDiagram
     DB-->>Policy: committed
     Policy-->>Mirror: schedule row-free refresh
     Mirror->>DB: independent read of latest committed rows
-    Policy->>Tray: coalesced summary-only rebuild (LIMIT 20)
+    Policy->>Tray: coalesced summary-only rebuild (configured count; 0 = all)
     Policy->>UI: clipboard-history-updated
   end
 ```
@@ -77,9 +77,11 @@ sequenceDiagram
 ```
 
 A live update replaces the first page only if the request generation is still
-current. The frontend restores the previous scroll anchor and keeps its set of
-expanded hashes. Settings obtains `history_count` and `history_bytes` from
-`get_app_settings`; it does not load History to compute them.
+current. While the window is focused, the frontend restores the previous scroll
+anchor. If the update arrives while the window is unfocused, it resets to the
+top after refresh so the newest item is visible on return. The expanded-hash
+set remains in view state. Settings obtains `history_count` and `history_bytes`
+from `get_app_settings`; it does not load History to compute them.
 
 ## Restore From History Or Menu Bar
 
@@ -106,14 +108,14 @@ retryable command failure that could duplicate the external write.
 
 ## Delete, Clear, And Retention
 
-History delete/clear commands:
+History delete and Settings clear commands:
 
 1. commit SQLite;
 2. release the lock;
 3. schedule a row-free mirror refresh;
 4. let the mirror worker read current committed state;
 5. rebuild the menu bar;
-6. let the initiating History view refresh.
+6. let History refresh after a delete, or reload Settings totals after a clear.
 
 The tray clear action additionally emits `clipboard-history-updated`.
 

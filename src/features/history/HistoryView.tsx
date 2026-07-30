@@ -1,5 +1,4 @@
 import { listen } from "@tauri-apps/api/event";
-import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ElementRef } from "react";
 import {
@@ -14,6 +13,7 @@ import { useHistoryDetails } from "../../hooks/useHistoryDetails";
 import type { Operation } from "../../types";
 import { canLoadHistoryDetail } from "./detailCache";
 import { EventCard } from "./EventCard";
+import { refreshAfterClipboardUpdate } from "./historyRefresh";
 
 interface HistoryViewProps {
   compactMode: boolean;
@@ -120,6 +120,23 @@ export function HistoryView({
     return refreshed;
   }, [refreshHistory]);
 
+  const resetScrollToTop = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0 });
+    });
+  }, []);
+
+  const refreshForClipboardUpdate = useCallback(
+    () =>
+      refreshAfterClipboardUpdate({
+        refresh: refreshHistory,
+        refreshPreservingView,
+        resetScrollToTop,
+        windowFocused: document.hasFocus(),
+      }),
+    [refreshHistory, refreshPreservingView, resetScrollToTop]
+  );
+
   const reportActionFailure = useCallback(
     (caught: unknown, operation: Operation, retry: (() => void) | null) => {
       setActionFailure({
@@ -203,21 +220,6 @@ export function HistoryView({
     [showCopiedFeedback]
   );
 
-  const clearAllEvents = useCallback(async () => {
-    try {
-      await invokeCommand<void>("clear_all_events", "clear_history");
-      resetDetails();
-      setExpandedEventHashes(new Set());
-      setActionFailure(null);
-      await refreshHistory();
-      await onHistoryChanged();
-    } catch (caught) {
-      reportActionFailure(caught, "clear_history", () => {
-        void clearAllEvents();
-      });
-    }
-  }, [onHistoryChanged, refreshHistory, reportActionFailure, resetDetails]);
-
   const toggleExpansion = useCallback(
     (contentHash: string, hasDetail: boolean) => {
       const expanding = !expandedEventHashes.has(contentHash);
@@ -261,7 +263,7 @@ export function HistoryView({
 
     const register = async () => {
       const historyUnlisten = await listen("clipboard-history-updated", () => {
-        void refreshPreservingView();
+        void refreshForClipboardUpdate();
         void onHistoryChanged();
       });
       if (disposed) {
@@ -302,7 +304,12 @@ export function HistoryView({
       disposed = true;
       unlisteners.forEach(unlisten => unlisten());
     };
-  }, [onHistoryChanged, refreshPreservingView, reportActionFailure]);
+  }, [
+    onHistoryChanged,
+    refreshForClipboardUpdate,
+    refreshPreservingView,
+    reportActionFailure,
+  ]);
 
   const visibleFailure = actionFailure?.error ?? historyError;
   const retryVisibleFailure =
@@ -395,8 +402,8 @@ export function HistoryView({
               <p aria-live="polite">
                 {messages.loadedHistoryCount(historyItems.length, totalCount)}
               </p>
-              <div className="history-footer-actions">
-                {hasMore && (
+              {hasMore && (
+                <div className="history-footer-actions">
                   <button
                     className="btn btn-secondary"
                     disabled={loadingMore}
@@ -405,16 +412,8 @@ export function HistoryView({
                   >
                     {loadingMore ? messages.loadingMore : messages.loadMore}
                   </button>
-                )}
-                <button
-                  className="btn btn-danger"
-                  onClick={() => void clearAllEvents()}
-                  type="button"
-                >
-                  <Trash2 aria-hidden="true" size={15} />
-                  {messages.clearAll}
-                </button>
-              </div>
+                </div>
+              )}
             </div>
           </>
         )}

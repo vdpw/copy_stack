@@ -6,13 +6,12 @@ use crate::{
     report_restore_post_processing_failure, report_tray_operation_failure,
     restore_event_to_clipboard, schedule_history_mirror_for_tray, AppState,
 };
-use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{image::Image, AppHandle, Emitter, Manager, Runtime};
 
 const TRAY_ID: &str = "main";
 const EVENT_ITEM_PREFIX: &str = "event::";
-const EVENT_PREVIEW_PREFIX: &str = "preview::";
 const OPEN_HISTORY_ID: &str = "action::open-history";
 const OPEN_SETTINGS_ID: &str = "action::open-settings";
 const CLEAR_HISTORY_ID: &str = "action::clear-history";
@@ -246,28 +245,11 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
     } else {
         for event in &events {
             let menu_label = event_menu_label(event, language);
-            let full_label = event_menu_full_label(event, language);
             let event_item_id = format!("{}{}", EVENT_ITEM_PREFIX, event.content_hash.as_str());
-
-            if menu_label == full_label {
-                let item = MenuItemBuilder::with_id(event_item_id, menu_label)
-                    .build(app)
-                    .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
-                builder = builder.item(&item);
-            } else {
-                let full_item = MenuItemBuilder::with_id(event_item_id, full_label)
-                    .build(app)
-                    .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
-                let preview_menu = SubmenuBuilder::with_id(
-                    app,
-                    format!("{}{}", EVENT_PREVIEW_PREFIX, event.content_hash.as_str()),
-                    menu_label,
-                )
-                .item(&full_item)
-                .build()
+            let item = MenuItemBuilder::with_id(event_item_id, menu_label)
+                .build(app)
                 .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
-                builder = builder.item(&preview_menu);
-            }
+            builder = builder.item(&item);
         }
     }
 
@@ -454,8 +436,8 @@ mod tests {
     }
 
     #[test]
-    fn first_and_twentieth_tray_labels_preserve_boundary_items() {
-        let events = (1..=20)
+    fn first_and_last_tray_labels_preserve_boundary_items() {
+        let events = (1..=25)
             .map(|index| TrayEvent {
                 content_hash: format!("{index:064x}"),
                 data_type: "text".to_string(),
@@ -468,8 +450,8 @@ mod tests {
             "clipboard item 1"
         );
         assert_eq!(
-            event_menu_label(&events[19], Language::English),
-            "clipboard item 20"
+            event_menu_label(&events[24], Language::English),
+            "clipboard item 25"
         );
     }
 }

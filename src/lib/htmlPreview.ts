@@ -1,4 +1,3 @@
-const maxHtmlPreviewInputCharacters = 64 * 1024;
 const maxHtmlPreviewNodes = 2_048;
 const maxHtmlPreviewDepth = 24;
 
@@ -80,6 +79,11 @@ interface NodeBudget {
   remaining: number;
 }
 
+export interface HtmlPreviewPresentation {
+  compact: boolean;
+  srcDoc: string;
+}
+
 type DomNode = Parameters<HTMLElement["appendChild"]>[0];
 type DomDocument = typeof window.document;
 
@@ -92,16 +96,23 @@ function sanitizeInlineStyle(source: HTMLElement, target: HTMLElement) {
   const parser = window.document.createElement("span");
   parser.setAttribute("style", style);
   const declarations: string[] = [];
+  let hasBackgroundColor = false;
+  let preservesWhitespace = false;
 
   for (const property of safeStyleProperties) {
     const value = parser.style.getPropertyValue(property).trim();
     if (value && safeCssValue.test(value)) {
       declarations.push(`${property}: ${value}`);
+      hasBackgroundColor ||= property === "background-color";
+      preservesWhitespace ||= property === "white-space" && value === "pre";
     }
   }
 
   if (declarations.length > 0) {
     target.setAttribute("style", declarations.join("; "));
+  }
+  if (hasBackgroundColor && preservesWhitespace) {
+    target.classList.add("preview-code-surface");
   }
 }
 
@@ -158,11 +169,7 @@ function cloneSafeNode(
   }
 }
 
-export function sanitizeHtmlPreview(html: string): string {
-  if (html.length > maxHtmlPreviewInputCharacters) {
-    return "";
-  }
-
+function sanitizedHtmlPreviewBody(html: string): HTMLElement {
   const parsed = new window.DOMParser().parseFromString(html, "text/html");
   const safeDocument = window.document.implementation.createHTMLDocument("");
   const budget: NodeBudget = { remaining: maxHtmlPreviewNodes };
@@ -172,12 +179,49 @@ export function sanitizeHtmlPreview(html: string): string {
       break;
     }
   }
-  return safeDocument.body.innerHTML;
+  return safeDocument.body;
 }
 
-export function buildHtmlPreviewDocument(html: string): string {
+function isCompactHtmlPreview(body: HTMLElement): boolean {
+  const text = body.textContent?.trim() ?? "";
+  if (text.length === 0) {
+    return true;
+  }
+  if (/[\r\n]/.test(text)) {
+    return false;
+  }
+  if (
+    body.querySelector(
+      "blockquote, br, hr, img, li, ol, table, tbody, td, tfoot, th, thead, tr, ul"
+    )
+  ) {
+    return false;
+  }
+
+  const flowElementCount = body.querySelectorAll(
+    "div, h1, h2, h3, h4, h5, h6, p, pre"
+  ).length;
+  if (flowElementCount > 2) {
+    return false;
+  }
+
+  const isPreformatted = Boolean(
+    body.querySelector(".preview-code-surface, pre")
+  );
+  return isPreformatted || Array.from(text).length <= 80;
+}
+
+export function sanitizeHtmlPreview(html: string): string {
+  return sanitizedHtmlPreviewBody(html).innerHTML;
+}
+
+function previewDocument(sanitizedHtml: string): string {
   const previewStyles = `
-    :root { color-scheme: light; background: #fff; }
+    :root {
+      color-scheme: light;
+      background: #fff;
+      overflow: auto;
+    }
     * {
       box-sizing: border-box;
       max-width: 100%;
@@ -190,9 +234,16 @@ export function buildHtmlPreviewDocument(html: string): string {
       overflow-wrap: anywhere;
       color: #14213d;
       background: #fff;
-      cursor: pointer;
+      cursor: default;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.55;
+    }
+    .preview-code-surface {
+      max-width: 100%;
+      min-height: calc(100vh - 32px);
+      padding-bottom: 14px;
+      overflow-x: auto;
+      overflow-y: hidden;
     }
     img { height: auto; }
     table { border-collapse: collapse; }
@@ -205,6 +256,18 @@ export function buildHtmlPreviewDocument(html: string): string {
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'none'; style-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
     <style>${previewStyles}</style>
   </head>
-  <body>${sanitizeHtmlPreview(html)}</body>
+  <body>${sanitizedHtml}</body>
 </html>`;
+}
+
+export function buildHtmlPreview(html: string): HtmlPreviewPresentation {
+  const body = sanitizedHtmlPreviewBody(html);
+  return {
+    compact: isCompactHtmlPreview(body),
+    srcDoc: previewDocument(body.innerHTML),
+  };
+}
+
+export function buildHtmlPreviewDocument(html: string): string {
+  return buildHtmlPreview(html).srcDoc;
 }

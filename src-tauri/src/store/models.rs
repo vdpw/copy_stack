@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_HISTORY_PAGE_SIZE: usize = 50;
 pub const MAX_HISTORY_PAGE_SIZE: usize = 100;
-pub const TRAY_HISTORY_LIMIT: usize = 20;
+pub const MAX_MENU_BAR_ITEM_LIMIT: usize = 1_000;
 pub const MAX_SUMMARY_DISPLAY_BYTES: usize = 512;
 pub const DEFAULT_MAX_HISTORY_BYTES: u64 = crate::resource_policy::MAX_HISTORY_BYTES;
 
@@ -11,6 +11,7 @@ pub struct AppSettings {
     pub max_items: u32,
     pub max_history_bytes: u64,
     pub show_in_menu_bar: bool,
+    pub menu_bar_item_limit: u32,
     pub move_restored_item_to_top: bool,
     pub compact_mode: bool,
     pub language: String,
@@ -60,6 +61,7 @@ pub struct HistoryDetailSeed {
 pub struct HistoryDetail {
     pub content_hash: String,
     pub html_preview: Option<String>,
+    pub text_preview: Option<String>,
     pub rich_preview: Vec<crate::store::StoredPreviewSegment>,
 }
 

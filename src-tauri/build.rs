@@ -14,6 +14,7 @@ fn main() {
             "set_max_items",
             "set_max_history_bytes",
             "set_show_in_menu_bar",
+            "set_menu_bar_item_limit",
             "set_move_restored_item_to_top",
             "set_compact_mode",
             "set_language",

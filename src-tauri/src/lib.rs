@@ -39,7 +39,7 @@ use crate::i18n::{native_strings, Language, LanguagePreference};
 use crate::lifecycle::AutostartBackend;
 use crate::pasteboard_protocol::{assess_event, prepare_event_for_restore};
 use crate::resource_policy::prepare_capture_event;
-use crate::store::{AppSettings, Database, HistoryDetail, HistoryPage};
+use crate::store::{AppSettings, Database, HistoryDetail, HistoryPage, MAX_MENU_BAR_ITEM_LIMIT};
 use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
 use serde::Serialize;
@@ -788,6 +788,29 @@ fn set_show_in_menu_bar(
 }
 
 #[tauri::command]
+fn set_menu_bar_item_limit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    menu_bar_item_limit: u32,
+) -> CommandResult<()> {
+    if menu_bar_item_limit as usize > MAX_MENU_BAR_ITEM_LIMIT {
+        return Err(record_command_error(
+            &state,
+            CommandError::new(ErrorCode::InvalidSetting, Operation::UpdateSettings, false),
+        ));
+    }
+    {
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| database_unavailable(&state, Operation::UpdateSettings))?;
+        db.set_menu_bar_item_limit(menu_bar_item_limit)
+            .map_err(|_| database_error(&state, Operation::UpdateSettings))?;
+    }
+    tray::sync(&app).map_err(|_| state_error(&state, Operation::UpdateSettings))
+}
+
+#[tauri::command]
 fn set_move_restored_item_to_top(
     state: State<'_, AppState>,
     move_restored_item_to_top: bool,
@@ -1206,6 +1229,7 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
             set_max_items,
             set_max_history_bytes,
             set_show_in_menu_bar,
+            set_menu_bar_item_limit,
             set_move_restored_item_to_top,
             set_compact_mode,
             set_language

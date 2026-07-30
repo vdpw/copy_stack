@@ -64,7 +64,7 @@ For peak process memory, run the release test command under `/usr/bin/time -l`
 and record `maximum resident set size`. Use Instruments for the desktop app
 when measuring first-interaction and scrolling behavior.
 
-## Fixture-v3 reference record
+## Fixture-v3 reference record (pre-configurable tray count)
 
 On 2026-07-28, the release harness passed on an Apple M3 Pro MacBook Pro
 (`arm64`, 36 GB, macOS 26.5.2, rustc 1.93.1) while connected to AC power.
@@ -77,9 +77,10 @@ in 0.90 seconds with 14.42 MiB peak RSS.
 | mixed / 1000   |     210 µs |       3,165 µs |  72 µs |  504 µs |     72 µs | 24 µs |     490 µs |      1,002 µs |     3,262 µs |
 
 The 100-row text/mixed records also passed. First pages contained 50 summaries,
-the 1000-row walks contained 20 pages, and tray snapshots contained 20 rows.
-The largest first-page payload was 37,265 bytes. Full JSON records belong with
-the release evidence rather than this design document.
+the 1000-row walks contained 20 pages, and tray snapshots contained 20 rows
+because this record predates the all-items default. The largest first-page
+payload was 37,265 bytes. Full JSON records belong with the release evidence
+rather than this design document.
 
 The same fixture-v3 harness was repeated after adding the production
 database-backed JSONL observation. A complete 1000-row text snapshot took
@@ -128,12 +129,12 @@ are observations, not portable thresholds.
 | mixed / 100  |                 425 |                 80 |                67 |            50,088 B |                   21,858 B |
 | mixed / 1000 |               4,001 |                210 |             3,165 |           504,048 B |                   21,860 B |
 
-| Fixture      | Legacy rows loaded for tray | Current rows loaded for tray | Legacy tray query | Current tray query | Legacy warm start | Current warm start |
-| ------------ | --------------------------: | ---------------------------: | ----------------: | -----------------: | ----------------: | -----------------: |
-| text / 100   |                         100 |                           20 |                99 |                 22 |            24,622 |                478 |
-| text / 1000  |                        1000 |                           20 |               786 |                 26 |           251,786 |                433 |
-| mixed / 100  |                         100 |                           20 |               363 |                 19 |            26,461 |                402 |
-| mixed / 1000 |                        1000 |                           20 |             3,110 |                 24 |           252,944 |                490 |
+| Fixture      | Legacy rows loaded for tray | Then-current tray rows | Legacy tray query | Then-current tray query | Legacy warm start | Current warm start |
+| ------------ | --------------------------: | ---------------------: | ----------------: | ----------------------: | ----------------: | -----------------: |
+| text / 100   |                         100 |                     20 |                99 |                      22 |            24,622 |                478 |
+| text / 1000  |                        1000 |                     20 |               786 |                      26 |           251,786 |                433 |
+| mixed / 100  |                         100 |                     20 |               363 |                      19 |            26,461 |                402 |
+| mixed / 1000 |                        1000 |                     20 |             3,110 |                      24 |           252,944 |                490 |
 
 | Fixture      | Legacy capture | Current capture | Legacy duplicate | Current duplicate | Legacy count cleanup | Current count cleanup | Current byte cleanup |
 | ------------ | -------------: | --------------: | ---------------: | ----------------: | -------------------: | --------------------: | -------------------: |
@@ -150,12 +151,13 @@ are observations, not portable thresholds.
 | mixed / 1000 |             2,992 |                673 |     337,490 |      358,438 |
 
 At 1000 rows, the bounded first response reduced serialized payload by about
-17.9 times for text and 23.1 times for mixed history. The tray database query
-improved by about 30 times for text and 130 times for mixed history while
-returning a hard maximum of 20 rows. Current-schema warm startup improved from
-roughly 252 ms to less than 0.5 ms because it no longer rebuilds metadata from
-every event. The legacy and current direct harness processes peaked at
-16,187,392 bytes and 15,122,432 bytes RSS respectively.
+17.9 times for text and 23.1 times for mixed history. Current-schema warm
+startup improved from roughly 252 ms to less than 0.5 ms because it no longer
+rebuilds metadata from every event. The legacy and current direct harness
+processes peaked at 16,187,392 bytes and 15,122,432 bytes RSS respectively.
+These recorded tray timings predate the configurable tray count and its
+all-items default, so they are not current release evidence for tray rebuild
+cost.
 
 The comparison also preserves non-improvements: seeding was slightly slower in
 the current implementation, and duplicate/count-retention timings vary by
@@ -172,7 +174,7 @@ For same-machine, fixture-v3 review, use these non-blocking comparison budgets:
 | One mixed detail build         |        0.3 ms |
 | One capture                    |          2 ms |
 | Duplicate capture              |        1.5 ms |
-| 20-row tray query              |       0.15 ms |
+| Configured 20-row tray query   |       0.15 ms |
 | Current-schema warm start      |        2.5 ms |
 | Count retention                |          5 ms |
 | Byte retention                 |         15 ms |
@@ -191,7 +193,8 @@ speed:
 - requested page sizes are capped at 100;
 - a summary display is at most 512 bytes;
 - summary and tray queries never decode event blobs or read media files;
-- the tray snapshot returns at most 20 events;
+- the tray snapshot returns the configured number of events, defaults to all
+  retained events, and is capped at the 1000-item retention ceiling;
 - a database-backed JSONL refresh streams one row at a time outside the
   application database mutex;
 - a current schema/classifier version does not rebuild or scan history during

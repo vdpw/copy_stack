@@ -15,9 +15,11 @@
 - `src/types.ts`: serialized command/event contracts.
 - `src/i18n.ts`: English, Simplified Chinese, and Traditional Chinese catalogs.
 
-`App.tsx` owns the main window's `history` and `settings` page state. A compact
-top-level page switcher and native `app:navigate` requests select the active
-page. Settings is rendered in the same webview without an additional category
+`App.tsx` owns the main window's `history` and `settings` page state. On macOS,
+the native application-menu Settings item (`Command+,`) selects Settings
+through `app:navigate`; the tray can also request Settings. There is no
+in-webview page switcher. Settings has a top-left back button that returns to
+History. It is rendered in the same webview without an additional category
 sidebar; when it is active, the History view is unmounted and does not load
 clipboard history.
 
@@ -26,7 +28,6 @@ clipboard history.
 - `get_copy_events_page({cursor, pageSize})`
 - `get_history_detail({contentHash})`
 - `delete_copy_event({contentHash})`
-- `clear_all_events()`
 - `copy_to_clipboard({contentHash})`
 - `get_app_settings()`
 - `get_safe_diagnostics()`
@@ -49,9 +50,11 @@ summaries expand without a detail command.
 - `set_max_items({maxItems})`
 - `set_max_history_bytes({maxHistoryBytes})`
 - `set_show_in_menu_bar({showInMenuBar})`
+- `set_menu_bar_item_limit({menuBarItemLimit})`
 - `set_move_restored_item_to_top({moveRestoredItemToTop})`
 - `set_compact_mode({compactMode})`
 - `set_language({language})`
+- `clear_all_events()`
 
 Tauri maps camelCase frontend keys to snake_case Rust arguments. Update
 `src/types.ts`, the invoking hook, Rust serialization, command permissions, and
@@ -97,13 +100,15 @@ interface HistoryPage {
 interface HistoryDetail {
   content_hash: string;
   html_preview: string | null;
+  text_preview: string | null;
   rich_preview: RichPreviewSegment[];
 }
 ```
 
 The list response never contains raw `event_data`, full rich preview bytes, or
-an unbounded display. Source and remote provenance are presentation metadata
-and do not affect identity. The menu bar deliberately omits those badges.
+an unbounded display. Source provenance is retained for canonical restore but
+is not rendered in History. Remote provenance remains a localized History
+badge. Neither affects identity, and the menu bar omits both.
 
 `HistoryDetail` is bounded to 8 MiB and at most 32 segments. Image segments are
 limited to supported formats and 4 MiB. Video segments carry validated metadata
@@ -119,13 +124,19 @@ one item plus a remaining count, and expansion shows the available item list.
 
 Expanded eligible cards request detail:
 
-- formatted HTML is accepted only up to 64 KiB, rebuilt into an allowlisted
-  tree capped at 2,048 nodes and 24 levels, strips every image/resource URL,
-  and keeps only allowlisted inline formatting;
+- formatted HTML uses the same renderer throughout the 2 MiB capture budget,
+  is rebuilt into an allowlisted tree capped at 2,048 nodes and 24 levels,
+  strips every image/resource URL, and keeps only allowlisted inline
+  formatting;
+- malformed or legacy HTML outside the capture budget falls back to at most
+  1 MiB of escaped plain text in a fixed, vertically and horizontally
+  scrollable code viewport instead of rendering an empty iframe;
 - the sanitized document is rendered in an empty-sandbox iframe with
   `default-src 'none'` and `img-src 'none'`; the preview document disables text
-  selection and the iframe is pointer-inert so clicking its surface collapses
-  the owning History card;
+  selection but allows vertical and horizontal scrolling inside its fixed
+  viewport; simple single-line previews use a compact viewport while multiline
+  or structured content keeps the full height; preview interaction does not
+  collapse the owning History card;
 - image bytes use short-lived object URLs which are revoked on cleanup;
 - mixed text/image segments preserve clipboard order;
 - video detail is presented as metadata without loading the full video into
@@ -140,6 +151,9 @@ specific clipboard payload render.
 The initial load shows a loading state. Later refreshes keep the list mounted,
 capture the first visible card and its offset, replace the first page, then
 restore that scroll anchor. The set of expanded hashes remains in view state.
+When `clipboard-history-updated` arrives while the application window is not
+focused, the refresh instead resets the page to the top after the new first
+page commits, so returning to the app starts at the newest item.
 Restore does not issue a redundant immediate reload: if restore-to-top changes
 ordering, the backend event triggers the refresh.
 
@@ -170,6 +184,10 @@ defaults to off.
 The `system` language preference is resolved by the backend to `en`, `zh-CN`,
 or `zh-TW`. `app-language-changed` keeps the in-window pages synchronized and
 native menus are rebuilt by Rust.
+
+Clear All is presented only on Settings in the webview. After
+`clear_all_events` succeeds, Settings reloads the authoritative aggregate
+counts; returning to History mounts a fresh first-page query.
 
 ## Error Boundary
 

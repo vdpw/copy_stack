@@ -173,6 +173,22 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
     [runSettingsMutation]
   );
 
+  const updateMenuBarItemLimit = useCallback(
+    async (menuBarItemLimit: number) => {
+      await runSettingsMutation(
+        {
+          command: "set_menu_bar_item_limit",
+          args: { menuBarItemLimit },
+          patch: { menu_bar_item_limit: menuBarItemLimit },
+        },
+        () => {
+          void updateMenuBarItemLimit(menuBarItemLimit);
+        }
+      );
+    },
+    [runSettingsMutation]
+  );
+
   const updateRestoreOrdering = useCallback(
     async (moveRestoredItemToTop: boolean) => {
       await runSettingsMutation(
@@ -362,6 +378,7 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
     updateMaxItems,
     updateMaxHistoryBytes,
     updateMenuBarVisibility,
+    updateMenuBarItemLimit,
     updateRestoreOrdering,
     updateCompactMode,
     updateLanguage,

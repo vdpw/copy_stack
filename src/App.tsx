@@ -1,5 +1,4 @@
 import { listen } from "@tauri-apps/api/event";
-import { Clock3, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import "./App.css";
 import { DiagnosticErrorBanner } from "./components/DiagnosticErrorBanner";
@@ -104,65 +103,29 @@ function App() {
         <div className="startup-loading" role="status">
           {messages.starting}
         </div>
+      ) : activePage === "settings" ? (
+        <SettingsView
+          controller={settingsController}
+          language={language}
+          messages={messages}
+          onBack={() => setActivePage("history")}
+        />
       ) : (
         <>
-          <header className="app-navigation">
-            <div className="app-brand" aria-label="Copy Stack">
-              <span className="app-brand-mark" aria-hidden="true">
-                C
-              </span>
-              <span>Copy Stack</span>
-            </div>
-            <nav className="page-tabs" aria-label="Copy Stack">
-              <button
-                aria-current={activePage === "history" ? "page" : undefined}
-                className={`page-tab ${
-                  activePage === "history" ? "page-tab-active" : ""
-                }`}
-                onClick={() => setActivePage("history")}
-                type="button"
-              >
-                <Clock3 aria-hidden="true" size={15} />
-                {messages.clipboardHistory}
-              </button>
-              <button
-                aria-current={activePage === "settings" ? "page" : undefined}
-                className={`page-tab ${
-                  activePage === "settings" ? "page-tab-active" : ""
-                }`}
-                onClick={() => setActivePage("settings")}
-                type="button"
-              >
-                <Settings aria-hidden="true" size={15} />
-                {messages.settings}
-              </button>
-            </nav>
-          </header>
-
-          {activePage === "settings" ? (
-            <SettingsView
-              controller={settingsController}
-              language={language}
+          {settingsController.error && (
+            <DiagnosticErrorBanner
+              error={settingsController.error}
               messages={messages}
+              onDismiss={settingsController.dismissError}
+              onRetry={settingsController.retryError}
             />
-          ) : (
-            <>
-              {settingsController.error && (
-                <DiagnosticErrorBanner
-                  error={settingsController.error}
-                  messages={messages}
-                  onDismiss={settingsController.dismissError}
-                  onRetry={settingsController.retryError}
-                />
-              )}
-              <HistoryView
-                compactMode={settingsController.settings?.compact_mode ?? false}
-                language={language}
-                messages={messages}
-                onHistoryChanged={settingsController.loadSettings}
-              />
-            </>
           )}
+          <HistoryView
+            compactMode={settingsController.settings?.compact_mode ?? false}
+            language={language}
+            messages={messages}
+            onHistoryChanged={settingsController.loadSettings}
+          />
         </>
       )}
     </div>

@@ -16,7 +16,7 @@ use crate::store::classification::{
 use crate::store::models::{
     AppSettings, HistoryCursor, HistoryDetail, HistoryDetailSeed, HistoryPage, HistoryStats,
     HistorySummary, TrayEvent, DEFAULT_HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE,
-    MAX_SUMMARY_DISPLAY_BYTES, TRAY_HISTORY_LIMIT,
+    MAX_MENU_BAR_ITEM_LIMIT, MAX_SUMMARY_DISPLAY_BYTES,
 };
 use crate::store::preview;
 #[cfg(test)]
@@ -811,6 +811,7 @@ impl Database {
             max_items: self.get_max_items()?,
             max_history_bytes,
             show_in_menu_bar: self.get_show_in_menu_bar()?,
+            menu_bar_item_limit: self.get_menu_bar_item_limit()?,
             move_restored_item_to_top: self.get_move_restored_item_to_top()?,
             compact_mode: self.get_compact_mode()?,
             language: language.code().to_string(),
@@ -844,6 +845,14 @@ impl Database {
 
     pub fn set_show_in_menu_bar(&self, show_in_menu_bar: bool) -> Result<()> {
         settings::set_show_in_menu_bar(&self.conn, show_in_menu_bar)
+    }
+
+    pub fn get_menu_bar_item_limit(&self) -> Result<u32> {
+        settings::get_menu_bar_item_limit(&self.conn)
+    }
+
+    pub fn set_menu_bar_item_limit(&self, menu_bar_item_limit: u32) -> Result<()> {
+        settings::set_menu_bar_item_limit(&self.conn, menu_bar_item_limit)
     }
 
     pub fn get_move_restored_item_to_top(&self) -> Result<bool> {
@@ -1856,7 +1865,13 @@ impl Database {
 
     pub fn get_tray_events(&self) -> Result<Vec<TrayEvent>> {
         let compact_mode = self.get_compact_mode()?;
-        self.get_tray_events_for_mode(compact_mode, TRAY_HISTORY_LIMIT)
+        let configured_limit = self.get_menu_bar_item_limit()? as usize;
+        let requested_limit = if configured_limit == 0 {
+            MAX_MENU_BAR_ITEM_LIMIT
+        } else {
+            configured_limit
+        };
+        self.get_tray_events_for_mode(compact_mode, requested_limit)
     }
 
     fn get_tray_events_for_mode(
@@ -1864,7 +1879,7 @@ impl Database {
         compact_mode: bool,
         requested_limit: usize,
     ) -> Result<Vec<TrayEvent>> {
-        let limit = requested_limit.clamp(1, TRAY_HISTORY_LIMIT) as i64;
+        let limit = requested_limit.clamp(1, MAX_MENU_BAR_ITEM_LIMIT) as i64;
         let data_type = if compact_mode { "'text'" } else { "data_type" };
         let from = if compact_mode {
             "clipboard_events AS event"
@@ -3169,7 +3184,7 @@ mod tests {
     }
 
     #[test]
-    fn tray_snapshot_uses_a_hard_twenty_item_limit() {
+    fn tray_snapshot_defaults_to_all_and_respects_the_configured_limit() {
         let db = in_memory_database();
         db.set_max_items(1_000).expect("retention should expand");
         for index in 0..25 {
@@ -3184,7 +3199,23 @@ mod tests {
             db.get_tray_events()
                 .expect("tray snapshot should load")
                 .len(),
-            TRAY_HISTORY_LIMIT
+            25
+        );
+        db.set_menu_bar_item_limit(20)
+            .expect("tray limit should update");
+        assert_eq!(
+            db.get_tray_events()
+                .expect("limited tray snapshot should load")
+                .len(),
+            20
+        );
+        db.set_menu_bar_item_limit(0)
+            .expect("all-items tray setting should update");
+        assert_eq!(
+            db.get_tray_events()
+                .expect("all-items tray snapshot should load")
+                .len(),
+            25
         );
         assert_eq!(
             db.get_tray_events_for_mode(false, 1)
@@ -3196,7 +3227,7 @@ mod tests {
             db.get_tray_events_for_mode(false, usize::MAX)
                 .expect("capped tray snapshot should load")
                 .len(),
-            TRAY_HISTORY_LIMIT
+            25
         );
     }
 
@@ -3244,7 +3275,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_builder_rejects_png_bombs_and_oversized_html() {
+    fn detail_builder_rejects_png_bombs_and_degrades_oversized_html() {
         let bomb = valid_png(100_000, 100_000, 0);
         let bomb_event = event(vec![
             data(
@@ -3265,6 +3296,24 @@ mod tests {
         let detail = Database::build_history_detail(detail_seed(&html_event), false)
             .expect("oversized HTML should be safely omitted");
         assert!(detail.html_preview.is_none());
+        assert_eq!(
+            detail.text_preview.as_deref(),
+            Some("bounded HTML fallback")
+        );
+    }
+
+    #[test]
+    fn detail_builder_keeps_large_html_within_the_capture_limit() {
+        let large_html = vec![b'x'; 128 * 1024];
+        let html_event = event(vec![data("public.html", &large_html)]);
+        let detail = Database::build_history_detail(detail_seed(&html_event), false)
+            .expect("large accepted HTML should keep its formatted preview");
+
+        assert_eq!(
+            detail.html_preview.as_deref(),
+            std::str::from_utf8(&large_html).ok()
+        );
+        assert!(detail.text_preview.is_none());
     }
 
     #[test]
@@ -3362,6 +3411,7 @@ mod tests {
         let detail = Database::build_history_detail(detail_seed(&clipboard_event), true)
             .expect("compact detail should build");
         assert!(detail.html_preview.is_none());
+        assert!(detail.text_preview.is_none());
         assert!(detail.rich_preview.is_empty());
     }
 
@@ -3464,6 +3514,7 @@ mod tests {
         assert_eq!(settings.history_limit_bytes, 123_456);
         assert_eq!(settings.max_history_bytes, settings.history_limit_bytes);
         assert_eq!(settings.max_event_bytes, MAX_EVENT_BLOB_BYTES as u64);
+        assert_eq!(settings.menu_bar_item_limit, 0);
     }
 
     #[test]

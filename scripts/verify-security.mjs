@@ -90,8 +90,7 @@ const capabilityFiles = (await readdir(capabilitiesDirectory)).filter(name =>
   name.endsWith(".json")
 );
 check(
-  JSON.stringify([...capabilityFiles].sort()) ===
-    JSON.stringify(["main.json"]),
+  JSON.stringify([...capabilityFiles].sort()) === JSON.stringify(["main.json"]),
   "Exactly the main-window capability file must be enabled."
 );
 
@@ -132,6 +131,7 @@ check(
     "allow-set-max-items",
     "allow-set-max-history-bytes",
     "allow-set-show-in-menu-bar",
+    "allow-set-menu-bar-item-limit",
     "allow-set-move-restored-item-to-top",
     "allow-set-compact-mode",
     "allow-set-language",
@@ -143,7 +143,8 @@ check(
     mainPermissions.includes("allow-get-copy-events-page") &&
     mainPermissions.includes("allow-get-history-detail") &&
     mainPermissions.includes("allow-get-app-settings") &&
-    mainPermissions.includes("allow-set-autostart-enabled"),
+    mainPermissions.includes("allow-set-autostart-enabled") &&
+    mainPermissions.includes("allow-set-menu-bar-item-limit"),
   "The main window must have the audited history and settings page permissions."
 );
 check(

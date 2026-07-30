@@ -11,10 +11,10 @@ git push origin v0.1.0
 
 The matrix builds each target on matching native hardware:
 
-| Target | GitHub runner |
-| --- | --- |
-| `aarch64-apple-darwin` | `macos-15` |
-| `x86_64-apple-darwin` | `macos-15-intel` |
+| Target                 | GitHub runner    |
+| ---------------------- | ---------------- |
+| `aarch64-apple-darwin` | `macos-15`       |
+| `x86_64-apple-darwin`  | `macos-15-intel` |
 
 Normal branch/PR CI also runs its complete automated verification matrix on
 both native runners. Native compilation and unit tests improve architecture
@@ -86,7 +86,8 @@ At minimum, record native Apple Silicon and Intel evidence for:
 - protocol skip combinations, source/remote badges, and canonical restore from
   both entry points;
 - resource rejection/degradation and malicious HTML;
-- 1000-row paging/lazy detail and menu `LIMIT 20`;
+- 1000-row paging/lazy detail and menu bar behavior with all items plus
+  configured smaller limits;
 - offline use and unwritable/unsafe private paths;
 - slow/failing JSONL destination, last-snapshot integrity, and bounded exit.
 

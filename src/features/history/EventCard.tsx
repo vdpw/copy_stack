@@ -16,7 +16,6 @@ import {
   decodeSummaryDisplay,
   getDisplayWidth,
   parseFileDisplay,
-  sourceDisplayName,
   truncateContent,
 } from "../../lib/display";
 import type { FileDisplayItem } from "../../lib/display";
@@ -25,7 +24,12 @@ import type {
   HistorySummary,
   RichPreviewSegment,
 } from "../../types";
-import { HtmlPreview, ImageThumbnail, VideoMetadata } from "./PreviewMedia";
+import {
+  HtmlPreview,
+  ImageThumbnail,
+  TextPreview,
+  VideoMetadata,
+} from "./PreviewMedia";
 
 interface EventCardProps {
   summary: HistorySummary;
@@ -247,19 +251,6 @@ export function EventCard({
       <div className="event-content">
         <p className="event-meta">
           <span>{typeLabel}</span>
-          {summary.source_bundle_id !== null &&
-            summary.source_bundle_id !== undefined && (
-              <span
-                className="event-source-badge"
-                title={summary.source_bundle_id || messages.unknownSource}
-              >
-                {messages.sourceBadge(
-                  summary.source_bundle_id
-                    ? sourceDisplayName(summary.source_bundle_id)
-                    : messages.unknownSource
-                )}
-              </span>
-            )}
           {summary.is_remote_clipboard && (
             <span className="event-remote-badge">
               {messages.remoteClipboard}
@@ -293,6 +284,11 @@ export function EventCard({
         ) : expanded && detail?.html_preview ? (
           <HtmlPreview
             html={detail.html_preview}
+            title={messages.formattedPreviewTitle}
+          />
+        ) : expanded && detail?.text_preview ? (
+          <TextPreview
+            text={detail.text_preview}
             title={messages.formattedPreviewTitle}
           />
         ) : expanded && richSegments.length > 0 ? (
