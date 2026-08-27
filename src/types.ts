@@ -31,6 +31,7 @@ export interface HistorySummary {
   timestamp: number;
   byte_count: number;
   has_detail: boolean;
+  search_preview?: string | null;
 }
 
 export interface HistoryDetail {

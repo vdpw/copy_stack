@@ -55,7 +55,7 @@ function runtimeTotal(
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-export function useClipboardHistory() {
+export function useClipboardHistory(query = "") {
   const [state, setState] = useState<ClipboardHistoryState>(initialState);
   const generationRef = useRef(0);
   const loadMoreInFlightRef = useRef(false);
@@ -76,6 +76,7 @@ export function useClipboardHistory() {
           invokeCommand<HistoryPage>("get_copy_events_page", "load_history", {
             cursor,
             pageSize: historyPageSize,
+            query,
           }),
         targetCount,
         () => generation === generationRef.current
@@ -114,7 +115,7 @@ export function useClipboardHistory() {
       }));
       return false;
     }
-  }, []);
+  }, [query]);
 
   const loadMore = useCallback(async (): Promise<boolean> => {
     if (loadMoreInFlightRef.current || !state.hasMore || !state.nextCursor) {
@@ -130,7 +131,7 @@ export function useClipboardHistory() {
       const page = await invokeCommand<HistoryPage>(
         "get_copy_events_page",
         "load_history",
-        { cursor, pageSize: historyPageSize }
+        { cursor, pageSize: historyPageSize, query }
       );
       if (generation !== generationRef.current) {
         return false;
@@ -163,7 +164,7 @@ export function useClipboardHistory() {
     } finally {
       loadMoreInFlightRef.current = false;
     }
-  }, [state.hasMore, state.nextCursor]);
+  }, [query, state.hasMore, state.nextCursor]);
 
   const reportError = useCallback(
     (error: unknown, operation: Operation = "load_history") => {
@@ -180,6 +181,9 @@ export function useClipboardHistory() {
   }, []);
 
   useEffect(() => {
+    loadedCountRef.current = 0;
+    loadMoreInFlightRef.current = false;
+    setState(initialState);
     void refresh();
     return () => {
       generationRef.current += 1;

@@ -12,13 +12,14 @@ use tauri::{image::Image, AppHandle, Emitter, Manager, Runtime};
 
 const TRAY_ID: &str = "main";
 const EVENT_ITEM_PREFIX: &str = "event::";
+const SEARCH_HISTORY_ID: &str = "action::search-history";
 const OPEN_HISTORY_ID: &str = "action::open-history";
 const OPEN_SETTINGS_ID: &str = "action::open-settings";
 const CLEAR_HISTORY_ID: &str = "action::clear-history";
 const QUIT_ID: &str = "action::quit";
 const HEADER_ID: &str = "label::recent-items";
 const EMPTY_STATE_ID: &str = "label::empty";
-pub(crate) const EVENT_MENU_START_INDEX: usize = 2;
+pub(crate) const EVENT_MENU_START_INDEX: usize = 3;
 const MAX_MENU_LABEL_WIDTH: usize = 40;
 const TRUNCATION_SUFFIX: &str = "...";
 const ERROR_APP_STATE_UNAVAILABLE: &str = "app_state_unavailable";
@@ -33,6 +34,7 @@ const ERROR_WINDOW_OPERATION_FAILED: &str = "window_operation_failed";
 pub const HISTORY_UPDATED_EVENT: &str = "clipboard-history-updated";
 pub const LANGUAGE_CHANGED_EVENT: &str = "app-language-changed";
 pub const NAVIGATE_EVENT: &str = "app:navigate";
+pub const FOCUS_SEARCH_EVENT: &str = "app:focus-search";
 pub const HISTORY_PAGE: &str = "history";
 pub const SETTINGS_PAGE: &str = "settings";
 
@@ -119,6 +121,11 @@ pub(crate) fn notify_language_changed<R: Runtime>(app: &AppHandle<R>) -> Result<
 
 fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) -> Result<(), String> {
     match menu_id {
+        SEARCH_HISTORY_ID => {
+            show_page(app, HISTORY_PAGE)?;
+            app.emit(FOCUS_SEARCH_EVENT, ())
+                .map_err(|_| ERROR_WINDOW_OPERATION_FAILED.to_string())
+        }
         OPEN_HISTORY_ID => show_page(app, HISTORY_PAGE),
         OPEN_SETTINGS_ID => show_page(app, SETTINGS_PAGE),
         CLEAR_HISTORY_ID => {
@@ -234,6 +241,9 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<BuiltTrayMenu<R>, String
         .enabled(false)
         .build(app)
         .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
+    let search_history = MenuItemBuilder::with_id(SEARCH_HISTORY_ID, strings.search_clipboard)
+        .build(app)
+        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
     let open_history = MenuItemBuilder::with_id(OPEN_HISTORY_ID, strings.open_history)
         .build(app)
         .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
@@ -248,7 +258,10 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<BuiltTrayMenu<R>, String
         .build(app)
         .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
 
-    let mut builder = MenuBuilder::new(app).item(&recent_items).separator();
+    let mut builder = MenuBuilder::new(app)
+        .item(&recent_items)
+        .item(&search_history)
+        .separator();
 
     if events.is_empty() {
         builder = builder.item(&empty_state);

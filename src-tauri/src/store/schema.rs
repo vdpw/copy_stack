@@ -1,8 +1,14 @@
 use rusqlite::{Connection, Result, Transaction};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 3;
 pub(crate) const CLASSIFIER_METADATA_VERSION: i64 = 1;
 pub(crate) const CLASSIFIER_METADATA_KEY: &str = "classifier_metadata_version";
+pub(crate) const SEARCH_INDEX_VERSION: i64 = 1;
+pub(crate) const SEARCH_INDEX_METADATA_KEY: &str = "search_index_version";
+pub(crate) const SEARCH_INDEX_TABLE: &str = "clipboard_event_search";
+
+const SEARCH_DELETE_TRIGGER: &str = "clipboard_events_search_after_delete";
+const SEARCH_UPDATE_TRIGGER: &str = "clipboard_events_search_after_update";
 
 pub(crate) const REQUIRED_EVENT_COLUMNS: [&str; 13] = [
     "content_hash",
@@ -103,4 +109,58 @@ pub(crate) fn create_clipboard_event_indexes(connection: &Connection) -> Result<
         [],
     )?;
     Ok(())
+}
+
+pub(crate) fn create_search_index(connection: &Connection) -> Result<()> {
+    connection.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS clipboard_event_search USING fts5(
+            content_hash UNINDEXED,
+            search_text,
+            compact_search_text,
+            tokenize = 'trigram'
+        )",
+        [],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn drop_search_index(connection: &Connection) -> Result<()> {
+    drop_search_triggers(connection)?;
+    connection.execute("DROP TABLE IF EXISTS clipboard_event_search", [])?;
+    Ok(())
+}
+
+pub(crate) fn create_search_triggers(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS clipboard_events_search_after_delete
+         AFTER DELETE ON clipboard_events
+         BEGIN
+             DELETE FROM clipboard_event_search
+             WHERE content_hash = OLD.content_hash;
+         END;
+
+         CREATE TRIGGER IF NOT EXISTS clipboard_events_search_after_update
+         AFTER UPDATE OF content_hash, data_type, display, compact_display ON clipboard_events
+         BEGIN
+             DELETE FROM clipboard_event_search
+             WHERE content_hash = OLD.content_hash;
+         END;",
+    )?;
+    Ok(())
+}
+
+pub(crate) fn drop_search_triggers(connection: &Connection) -> Result<()> {
+    connection.execute(
+        &format!("DROP TRIGGER IF EXISTS {SEARCH_DELETE_TRIGGER}"),
+        [],
+    )?;
+    connection.execute(
+        &format!("DROP TRIGGER IF EXISTS {SEARCH_UPDATE_TRIGGER}"),
+        [],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn search_trigger_names() -> [&'static str; 2] {
+    [SEARCH_DELETE_TRIGGER, SEARCH_UPDATE_TRIGGER]
 }

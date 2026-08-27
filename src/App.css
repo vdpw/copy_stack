@@ -525,6 +525,27 @@ button {
   max-width: 100%;
 }
 
+.event-search-match {
+  margin: 6px 0 4px;
+  padding: 7px 9px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border-left: 3px solid rgba(249, 115, 22, 0.6);
+  border-radius: 7px;
+  background: rgba(255, 247, 237, 0.78);
+  color: #7c2d12;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.event-search-match svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .event-detail-status {
   display: flex;
   align-items: center;
@@ -1021,6 +1042,80 @@ button {
 .capture-notice-dismiss {
   padding: 5px 8px;
   flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.history-search {
+  position: sticky;
+  top: 10px;
+  z-index: 4;
+  min-height: 44px;
+  padding: 0 11px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(20, 33, 61, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #64748b;
+  box-shadow: 0 8px 24px rgba(20, 33, 61, 0.08);
+  backdrop-filter: blur(18px);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.history-search:focus-within {
+  border-color: rgba(249, 115, 22, 0.5);
+  box-shadow:
+    0 8px 24px rgba(20, 33, 61, 0.08),
+    0 0 0 3px rgba(249, 115, 22, 0.1);
+  color: #f97316;
+}
+
+.history-search input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #14213d;
+}
+
+.history-search input::placeholder {
+  color: #94a3b8;
+}
+
+.history-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.history-search-clear {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.history-search-clear:hover {
+  background: rgba(20, 33, 61, 0.07);
+  color: #14213d;
+}
+
+.history-search-shortcut {
+  padding: 3px 6px;
+  border: 1px solid rgba(20, 33, 61, 0.1);
+  border-radius: 6px;
+  background: rgba(248, 250, 252, 0.9);
+  color: #94a3b8;
+  font-size: 0.7rem;
   font-weight: 700;
 }
 

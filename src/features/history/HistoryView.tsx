@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { Search as SearchIcon, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ElementRef } from "react";
 import {
@@ -23,6 +24,7 @@ import { animateHistoryScrollToTop } from "./scrollAnimation";
 
 interface HistoryViewProps {
   compactMode: boolean;
+  focusSearchRequest: number;
   language: SupportedLanguage;
   messages: Messages;
   moveRestoredItemToTop: boolean;
@@ -79,11 +81,14 @@ function restoreScrollAnchor(
 
 export function HistoryView({
   compactMode,
+  focusSearchRequest,
   language,
   messages,
   moveRestoredItemToTop,
   onHistoryChanged,
 }: HistoryViewProps) {
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const {
     dismissError: dismissHistoryError,
     error: historyError,
@@ -94,7 +99,7 @@ export function HistoryView({
     loadingMore,
     refresh: refreshHistory,
     totalCount,
-  } = useClipboardHistory();
+  } = useClipboardHistory(searchQuery);
   const {
     details: loadedDetails,
     errors: detailErrors,
@@ -106,6 +111,7 @@ export function HistoryView({
   } = useHistoryDetails();
   const listRef = useRef<ElementRef<"div"> | null>(null);
   const loadMoreSentinelRef = useRef<ElementRef<"div"> | null>(null);
+  const searchInputRef = useRef<ElementRef<"input"> | null>(null);
   const copiedFeedbackTimerRef = useRef<number | null>(null);
   const restoringHashesRef = useRef(new Set<string>());
   const pendingRestoreToTopIntentsRef = useRef(new Set<number>());
@@ -121,6 +127,34 @@ export function HistoryView({
     null
   );
   const [captureNotice, setCaptureNotice] = useState(false);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setSearchQuery(searchInput.trim());
+    }, 180);
+    return () => window.clearTimeout(timeout);
+  }, [searchInput]);
+
+  useEffect(() => {
+    if (focusSearchRequest > 0) {
+      window.requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
+    }
+  }, [focusSearchRequest]);
+
+  useEffect(() => {
+    const focusSearch = (event: globalThis.KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
 
   const refreshPreservingView = useCallback(async () => {
     const anchor = captureScrollAnchor(listRef.current);
@@ -283,7 +317,7 @@ export function HistoryView({
   useEffect(() => {
     resetDetails();
     setExpandedEventHashes(new Set());
-  }, [compactMode, resetDetails]);
+  }, [compactMode, resetDetails, searchQuery]);
 
   useEffect(() => {
     retainDetails(new Set(historyItems.map(summary => summary.content_hash)));
@@ -394,16 +428,70 @@ export function HistoryView({
           </aside>
         )}
 
+        <form
+          className="history-search"
+          onSubmit={event => event.preventDefault()}
+          role="search"
+        >
+          <SearchIcon aria-hidden="true" size={18} strokeWidth={2} />
+          <input
+            aria-label={messages.searchClipboardHistory}
+            maxLength={256}
+            onChange={event => setSearchInput(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === "Escape") {
+                if (searchInput) {
+                  setSearchInput("");
+                  setSearchQuery("");
+                } else {
+                  event.currentTarget.blur();
+                }
+              }
+            }}
+            placeholder={messages.searchClipboardHistory}
+            ref={searchInputRef}
+            spellCheck={false}
+            type="search"
+            value={searchInput}
+          />
+          {searchInput && (
+            <button
+              aria-label={messages.clearSearch}
+              className="history-search-clear"
+              onClick={() => {
+                setSearchInput("");
+                setSearchQuery("");
+                searchInputRef.current?.focus();
+              }}
+              type="button"
+            >
+              <X aria-hidden="true" size={16} strokeWidth={2.2} />
+            </button>
+          )}
+          <span className="history-search-shortcut" aria-hidden="true">
+            ⌘F
+          </span>
+        </form>
+
         {loading ? (
           <div className="placeholder-card">{messages.loadingHistory}</div>
         ) : historyItems.length === 0 ? (
           <div className="empty-state">
-            <h3>{messages.emptyHistory}</h3>
-            <p>
-              {compactMode
-                ? messages.emptyHistoryCompact
-                : messages.emptyHistoryAll}
-            </p>
+            {searchQuery ? (
+              <>
+                <h3>{messages.noSearchResults}</h3>
+                <p>{messages.noSearchResultsDescription(searchQuery)}</p>
+              </>
+            ) : (
+              <>
+                <h3>{messages.emptyHistory}</h3>
+                <p>
+                  {compactMode
+                    ? messages.emptyHistoryCompact
+                    : messages.emptyHistoryAll}
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <>
@@ -438,6 +526,7 @@ export function HistoryView({
                     )
                   }
                   restoring={restoringEventHashes.has(summary.content_hash)}
+                  searchQuery={searchQuery}
                   summary={summary}
                 />
               ))}
@@ -445,7 +534,12 @@ export function HistoryView({
 
             <div className="history-pagination">
               <p aria-live="polite">
-                {messages.loadedHistoryCount(historyItems.length, totalCount)}
+                {searchQuery
+                  ? messages.loadedSearchCount(historyItems.length, totalCount)
+                  : messages.loadedHistoryCount(
+                      historyItems.length,
+                      totalCount
+                    )}
               </p>
               {hasMore && (
                 <div

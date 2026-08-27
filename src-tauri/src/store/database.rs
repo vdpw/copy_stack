@@ -23,13 +23,14 @@ use crate::store::preview;
 use crate::store::preview::StoredPreviewSegment;
 use crate::store::schema::{
     self, CLASSIFIER_METADATA_KEY, CLASSIFIER_METADATA_VERSION, CURRENT_SCHEMA_VERSION,
-    REQUIRED_EVENT_COLUMNS,
+    REQUIRED_EVENT_COLUMNS, SEARCH_INDEX_METADATA_KEY, SEARCH_INDEX_TABLE, SEARCH_INDEX_VERSION,
 };
 use crate::store::settings;
 use chrono::Utc;
 use copy_event_listener::event::{Data, Event, Item};
 use rusqlite::{
     params, types::ValueRef, Connection, OpenFlags, OptionalExtension, Result, Transaction,
+    TransactionBehavior,
 };
 #[cfg(test)]
 use serde::Serialize;
@@ -46,6 +47,7 @@ use tauri::AppHandle;
 const APP_DATA_DIR: &str = ".copy_stack";
 const DB_FILE_NAME: &str = "copy_stack.db";
 const MAX_SOURCE_BUNDLE_ID_BYTES: usize = 255;
+const MAX_SEARCH_QUERY_CHARS: usize = 256;
 #[cfg(test)]
 const INLINE_ATTACHMENT_PLACEHOLDER: char = '\u{fffc}';
 
@@ -147,6 +149,7 @@ enum MigrationFailpoint {
     AfterCopy,
     AfterValidation,
     AfterDropOriginal,
+    AfterSearchIndexBuild,
 }
 
 #[derive(Clone, Debug)]
@@ -316,11 +319,11 @@ impl Database {
         &self,
         failpoint: Option<MigrationFailpoint>,
     ) -> Result<()> {
-        let transaction = self.conn.unchecked_transaction()?;
-        let schema_version = schema::user_version(&transaction)?;
-        if schema_version > CURRENT_SCHEMA_VERSION {
+        let transaction = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let initial_schema_version = schema::user_version(&transaction)?;
+        if initial_schema_version > CURRENT_SCHEMA_VERSION {
             return Err(rusqlite::Error::InvalidParameterName(format!(
-                "database schema version {schema_version} is newer than supported version {CURRENT_SCHEMA_VERSION}"
+                "database schema version {initial_schema_version} is newer than supported version {CURRENT_SCHEMA_VERSION}"
             )));
         }
 
@@ -329,27 +332,55 @@ impl Database {
         Self::insert_default_settings(&transaction)?;
 
         let table_exists = Self::table_exists_in(&transaction, "clipboard_events")?;
-        let columns = if table_exists {
-            Self::table_columns_in(&transaction, "clipboard_events")?
-        } else {
-            Vec::new()
-        };
+        if !table_exists {
+            if initial_schema_version != 0 {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "versioned database is missing clipboard history table".to_string(),
+                ));
+            }
+            Self::create_current_schema_in(&transaction)?;
+            transaction.commit()?;
+            return Ok(());
+        }
+
+        let mut schema_version = initial_schema_version;
+        while schema_version < CURRENT_SCHEMA_VERSION {
+            schema_version = match schema_version {
+                0 | 1 => {
+                    Self::migrate_legacy_to_v2(&transaction, failpoint)?;
+                    2
+                }
+                2 => {
+                    Self::migrate_v2_to_v3(&transaction)?;
+                    Self::maybe_fail_migration(
+                        failpoint,
+                        MigrationFailpoint::AfterSearchIndexBuild,
+                    )?;
+                    3
+                }
+                version => {
+                    return Err(rusqlite::Error::InvalidParameterName(format!(
+                        "database schema version {version} has no migration to {CURRENT_SCHEMA_VERSION}"
+                    )));
+                }
+            };
+            schema::set_user_version(&transaction, schema_version)?;
+        }
+
+        let columns = Self::table_columns_in(&transaction, "clipboard_events")?;
+        if !Self::clipboard_events_schema_is_current(&transaction, &columns)? {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "current database schema does not match its declared version".to_string(),
+            ));
+        }
+
         let classifier_version = Self::metadata_version_in(&transaction, CLASSIFIER_METADATA_KEY)?;
         if classifier_version > CLASSIFIER_METADATA_VERSION {
             return Err(rusqlite::Error::InvalidParameterName(format!(
                 "classifier metadata version {classifier_version} is newer than supported version {CLASSIFIER_METADATA_VERSION}"
             )));
         }
-        let current_shape =
-            table_exists && Self::clipboard_events_schema_is_current(&transaction, &columns)?;
-
-        let rebuilt_history = if !table_exists {
-            schema::create_clipboard_events_table(&transaction, "clipboard_events")?;
-            true
-        } else if schema_version < CURRENT_SCHEMA_VERSION
-            || !current_shape
-            || classifier_version < CLASSIFIER_METADATA_VERSION
-        {
+        let rebuilt_history = if classifier_version < CLASSIFIER_METADATA_VERSION {
             Self::rebuild_clipboard_events_table_in(&transaction, &columns, failpoint)?;
             true
         } else {
@@ -367,8 +398,87 @@ impl Database {
             CLASSIFIER_METADATA_KEY,
             CLASSIFIER_METADATA_VERSION,
         )?;
+
+        let search_index_version =
+            Self::metadata_version_in(&transaction, SEARCH_INDEX_METADATA_KEY)?;
+        if search_index_version > SEARCH_INDEX_VERSION {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "search index version {search_index_version} is newer than supported version {SEARCH_INDEX_VERSION}"
+            )));
+        }
+        let search_index_shape_current = Self::search_index_schema_is_current(&transaction)?;
+        if !search_index_shape_current {
+            schema::drop_search_index(&transaction)?;
+        }
+        schema::create_search_index(&transaction)?;
+        schema::create_search_triggers(&transaction)?;
+        if rebuilt_history
+            || !search_index_shape_current
+            || search_index_version < SEARCH_INDEX_VERSION
+        {
+            Self::rebuild_search_index_in(&transaction)?;
+        }
+        Self::validate_search_index(&transaction)?;
+        Self::set_metadata_version_in(
+            &transaction,
+            SEARCH_INDEX_METADATA_KEY,
+            SEARCH_INDEX_VERSION,
+        )?;
         schema::set_user_version(&transaction, CURRENT_SCHEMA_VERSION)?;
         transaction.commit()
+    }
+
+    fn create_current_schema_in(transaction: &Transaction<'_>) -> Result<()> {
+        schema::create_clipboard_events_table(transaction, "clipboard_events")?;
+        schema::create_clipboard_event_indexes(transaction)?;
+        schema::create_search_index(transaction)?;
+        schema::create_search_triggers(transaction)?;
+        Self::set_metadata_version_in(
+            transaction,
+            CLASSIFIER_METADATA_KEY,
+            CLASSIFIER_METADATA_VERSION,
+        )?;
+        Self::set_metadata_version_in(
+            transaction,
+            SEARCH_INDEX_METADATA_KEY,
+            SEARCH_INDEX_VERSION,
+        )?;
+        schema::set_user_version(transaction, CURRENT_SCHEMA_VERSION)?;
+        Self::validate_clipboard_event_indexes(transaction)?;
+        Self::validate_clipboard_events_table(transaction, "clipboard_events", false)?;
+        Self::validate_search_index(transaction)
+    }
+
+    fn migrate_legacy_to_v2(
+        transaction: &Transaction<'_>,
+        failpoint: Option<MigrationFailpoint>,
+    ) -> Result<()> {
+        let columns = Self::table_columns_in(transaction, "clipboard_events")?;
+        Self::rebuild_clipboard_events_table_in(transaction, &columns, failpoint)?;
+        schema::drop_clipboard_event_indexes(transaction)?;
+        schema::create_clipboard_event_indexes(transaction)?;
+        Self::validate_clipboard_event_indexes(transaction)?;
+        Self::validate_clipboard_events_table(transaction, "clipboard_events", true)?;
+        Self::set_metadata_version_in(
+            transaction,
+            CLASSIFIER_METADATA_KEY,
+            CLASSIFIER_METADATA_VERSION,
+        )
+    }
+
+    fn migrate_v2_to_v3(transaction: &Transaction<'_>) -> Result<()> {
+        let columns = Self::table_columns_in(transaction, "clipboard_events")?;
+        if !Self::clipboard_events_schema_is_current(transaction, &columns)? {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "schema v2 clipboard history shape is invalid".to_string(),
+            ));
+        }
+        schema::drop_search_index(transaction)?;
+        schema::create_search_index(transaction)?;
+        schema::create_search_triggers(transaction)?;
+        Self::rebuild_search_index_in(transaction)?;
+        Self::validate_search_index(transaction)?;
+        Self::set_metadata_version_in(transaction, SEARCH_INDEX_METADATA_KEY, SEARCH_INDEX_VERSION)
     }
 
     fn insert_default_settings(connection: &Connection) -> Result<()> {
@@ -472,12 +582,21 @@ impl Database {
         Self::rebuild_clipboard_events_table_in(&transaction, columns, None)?;
         schema::drop_clipboard_event_indexes(&transaction)?;
         schema::create_clipboard_event_indexes(&transaction)?;
+        schema::create_search_index(&transaction)?;
+        schema::create_search_triggers(&transaction)?;
+        Self::rebuild_search_index_in(&transaction)?;
         Self::validate_clipboard_event_indexes(&transaction)?;
         Self::validate_clipboard_events_table(&transaction, "clipboard_events", true)?;
+        Self::validate_search_index(&transaction)?;
         Self::set_metadata_version_in(
             &transaction,
             CLASSIFIER_METADATA_KEY,
             CLASSIFIER_METADATA_VERSION,
+        )?;
+        Self::set_metadata_version_in(
+            &transaction,
+            SEARCH_INDEX_METADATA_KEY,
+            SEARCH_INDEX_VERSION,
         )?;
         schema::set_user_version(&transaction, CURRENT_SCHEMA_VERSION)?;
         transaction.commit()
@@ -790,6 +909,152 @@ impl Database {
         Ok(())
     }
 
+    fn rebuild_search_index_in(connection: &Connection) -> Result<()> {
+        schema::create_search_index(connection)?;
+        let mut statement = connection.prepare(
+            "SELECT content_hash, data_type, display, compact_display
+             FROM clipboard_events",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Option<Vec<u8>>>(3)?,
+            ))
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(row?);
+        }
+        drop(statement);
+
+        connection.execute("DELETE FROM clipboard_event_search", [])?;
+        for (content_hash, data_type, display, compact_display) in entries {
+            Self::upsert_search_index_in(
+                connection,
+                &content_hash,
+                &data_type,
+                &display,
+                compact_display.as_deref(),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn upsert_search_index_in(
+        connection: &Connection,
+        content_hash: &str,
+        data_type: &str,
+        display: &[u8],
+        compact_display: Option<&[u8]>,
+    ) -> Result<()> {
+        let search_text = Self::searchable_text(data_type, display);
+        let compact_search_text = compact_display
+            .map(Self::searchable_plain_text)
+            .unwrap_or_default();
+        connection.execute(
+            "DELETE FROM clipboard_event_search WHERE content_hash = ?1",
+            [content_hash],
+        )?;
+        connection.execute(
+            "INSERT INTO clipboard_event_search
+             (content_hash, search_text, compact_search_text)
+             VALUES (?1, ?2, ?3)",
+            params![content_hash, search_text, compact_search_text],
+        )?;
+        Ok(())
+    }
+
+    fn searchable_text(data_type: &str, display: &[u8]) -> String {
+        if let Some(file_display) = Self::parse_file_display(display) {
+            return file_display
+                .items
+                .into_iter()
+                .map(|item| item.name)
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+
+        if matches!(data_type, "text" | "rtf" | "html" | "video") {
+            return Self::searchable_plain_text(display);
+        }
+
+        String::new()
+    }
+
+    fn searchable_plain_text(display: &[u8]) -> String {
+        String::from_utf8_lossy(display)
+            .chars()
+            .filter(|character| *character != '\0')
+            .collect()
+    }
+
+    fn validate_search_index(connection: &Connection) -> Result<()> {
+        if !Self::search_index_schema_is_current(connection)? {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "clipboard search index schema validation failed".to_string(),
+            ));
+        }
+
+        for trigger in schema::search_trigger_names() {
+            let exists = connection
+                .query_row(
+                    "SELECT 1
+                     FROM sqlite_master
+                     WHERE type = 'trigger' AND name = ?1 AND tbl_name = 'clipboard_events'",
+                    [trigger],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !exists {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "clipboard search trigger validation failed".to_string(),
+                ));
+            }
+        }
+
+        let history_count: u64 =
+            connection.query_row("SELECT COUNT(*) FROM clipboard_events", [], |row| {
+                row.get(0)
+            })?;
+        let (search_count, distinct_hashes): (u64, u64) = connection.query_row(
+            "SELECT COUNT(*), COUNT(DISTINCT content_hash)
+             FROM clipboard_event_search",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let orphan_count: u64 = connection.query_row(
+            "SELECT COUNT(*)
+             FROM clipboard_event_search AS search
+             LEFT JOIN clipboard_events AS event
+               ON event.content_hash = search.content_hash
+             WHERE event.content_hash IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        if search_count != history_count || distinct_hashes != history_count || orphan_count != 0 {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "clipboard search index row validation failed".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn search_index_schema_is_current(connection: &Connection) -> Result<bool> {
+        if !Self::table_exists_in(connection, SEARCH_INDEX_TABLE)? {
+            return Ok(false);
+        }
+        let columns = Self::table_columns_in(connection, SEARCH_INDEX_TABLE)?;
+        Ok(columns
+            == [
+                "content_hash".to_string(),
+                "search_text".to_string(),
+                "compact_search_text".to_string(),
+            ])
+    }
+
     fn maybe_fail_migration(
         actual: Option<MigrationFailpoint>,
         expected: MigrationFailpoint,
@@ -1005,6 +1270,14 @@ impl Database {
         if updated == 0 {
             let timestamp = Self::next_history_timestamp_in(&transaction)?;
             Self::insert_current_row(&transaction, &classified, &event_data, &metadata, timestamp)?;
+        } else {
+            Self::upsert_search_index_in(
+                &transaction,
+                &classified.content_hash,
+                &classified.data_type,
+                &classified.display,
+                metadata.compact_display.as_deref(),
+            )?;
         }
 
         Self::cleanup_old_events_in(&transaction)?;
@@ -1081,6 +1354,13 @@ impl Database {
                     row_to_update,
                 ],
             )?;
+            Self::upsert_search_index_in(
+                &transaction,
+                &classified.content_hash,
+                &classified.data_type,
+                &classified.display,
+                metadata.compact_display.as_deref(),
+            )?;
             Self::cleanup_old_events_in(&transaction)?;
             transaction.commit()?;
             return Ok(true);
@@ -1133,6 +1413,13 @@ impl Database {
                 timestamp,
                 CLASSIFIER_METADATA_VERSION,
             ],
+        )?;
+        Self::upsert_search_index_in(
+            connection,
+            &classified.content_hash,
+            &classified.data_type,
+            &classified.display,
+            metadata.compact_display.as_deref(),
         )?;
         Ok(())
     }
@@ -1463,6 +1750,197 @@ impl Database {
         self.get_history_page_for_mode(cursor, page_size, compact_mode)
     }
 
+    pub fn search_history_page(
+        &self,
+        cursor: Option<&str>,
+        page_size: Option<usize>,
+        query: &str,
+    ) -> Result<HistoryPage> {
+        let query = query.trim();
+        if query.is_empty() {
+            return self.get_history_page(cursor, page_size);
+        }
+        if query.chars().count() > MAX_SEARCH_QUERY_CHARS || query.contains('\0') {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "clipboard history search query is invalid".to_string(),
+            ));
+        }
+        let compact_mode = self.get_compact_mode()?;
+        self.search_history_page_for_mode(cursor, page_size, compact_mode, query)
+    }
+
+    fn search_history_page_for_mode(
+        &self,
+        cursor: Option<&str>,
+        page_size: Option<usize>,
+        compact_mode: bool,
+        query: &str,
+    ) -> Result<HistoryPage> {
+        let page_size = page_size
+            .unwrap_or(DEFAULT_HISTORY_PAGE_SIZE)
+            .clamp(1, MAX_HISTORY_PAGE_SIZE);
+        let fetch_limit = (page_size + 1) as i64;
+        let cursor = cursor
+            .map(HistoryCursor::decode)
+            .transpose()
+            .map_err(rusqlite::Error::InvalidParameterName)?;
+        let search_column = if compact_mode {
+            "compact_search_text"
+        } else {
+            "search_text"
+        };
+        let use_trigram_index = query.chars().count() >= 3;
+        let search_filter = if use_trigram_index {
+            "clipboard_event_search MATCH ?1"
+        } else if compact_mode {
+            "instr(lower(clipboard_event_search.compact_search_text), lower(?1)) > 0"
+        } else {
+            "instr(lower(clipboard_event_search.search_text), lower(?1)) > 0"
+        };
+        let search_parameter = if use_trigram_index {
+            format!("{search_column}:\"{}\"", query.replace('"', "\"\""))
+        } else {
+            query.to_string()
+        };
+        let compact_filter = if compact_mode {
+            "event.compact_content_hash IS NOT NULL
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM clipboard_events AS newer
+                 WHERE newer.compact_content_hash = event.compact_content_hash
+                   AND (
+                       newer.timestamp > event.timestamp
+                       OR (
+                           newer.timestamp = event.timestamp
+                           AND newer.content_hash < event.content_hash
+                       )
+                   )
+             )"
+        } else {
+            "1 = 1"
+        };
+        let cursor_filter = if cursor.is_some() {
+            "AND (
+                event.timestamp < ?3
+                OR (event.timestamp = ?3 AND event.content_hash > ?4)
+             )"
+        } else {
+            ""
+        };
+        let limit_parameter = if cursor.is_some() { "?5" } else { "?3" };
+        let data_type = if compact_mode {
+            "'text'"
+        } else {
+            "event.data_type"
+        };
+        let preview_column = if compact_mode {
+            "clipboard_event_search.compact_search_text"
+        } else {
+            "clipboard_event_search.search_text"
+        };
+        let query_sql = format!(
+            "SELECT
+                event.content_hash,
+                {data_type},
+                event.summary_display,
+                event.summary_truncated,
+                event.timestamp,
+                event.source_bundle_id,
+                event.is_remote_clipboard,
+                event.byte_count,
+                CASE
+                    WHEN instr(lower({preview_column}), lower(?2)) = 0 THEN NULL
+                    ELSE
+                        CASE
+                            WHEN instr(lower({preview_column}), lower(?2)) > 61 THEN '…'
+                            ELSE ''
+                        END
+                        || substr(
+                            {preview_column},
+                            max(instr(lower({preview_column}), lower(?2)) - 60, 1),
+                            180
+                        )
+                        || CASE
+                            WHEN length({preview_column}) >
+                                 max(instr(lower({preview_column}), lower(?2)) - 60, 1) + 179
+                            THEN '…'
+                            ELSE ''
+                        END
+                END
+             FROM clipboard_events AS event
+             JOIN clipboard_event_search
+               ON clipboard_event_search.content_hash = event.content_hash
+             WHERE {search_filter}
+               AND {compact_filter}
+             {cursor_filter}
+             ORDER BY event.timestamp DESC, event.content_hash ASC
+             LIMIT {limit_parameter}"
+        );
+        let mut statement = self.conn.prepare(&query_sql)?;
+        let map_row = |row: &rusqlite::Row<'_>| {
+            let data_type = row.get::<_, String>(1)?;
+            Ok(HistorySummary {
+                content_hash: row.get(0)?,
+                has_detail: Self::data_type_has_detail(&data_type),
+                data_type,
+                display: row.get(2)?,
+                display_truncated: row.get(3)?,
+                timestamp: row.get(4)?,
+                source_bundle_id: row.get(5)?,
+                is_remote_clipboard: row.get(6)?,
+                byte_count: row.get::<_, i64>(7)?.max(0) as u64,
+                search_preview: row.get(8)?,
+            })
+        };
+        let rows = if let Some(cursor) = cursor.as_ref() {
+            statement.query_map(
+                params![
+                    &search_parameter,
+                    query,
+                    cursor.timestamp,
+                    &cursor.content_hash,
+                    fetch_limit
+                ],
+                map_row,
+            )?
+        } else {
+            statement.query_map(params![&search_parameter, query, fetch_limit], map_row)?
+        };
+        let mut items = rows.collect::<Result<Vec<_>>>()?;
+        let has_more = items.len() > page_size;
+        if has_more {
+            items.truncate(page_size);
+        }
+        let next_cursor = has_more.then(|| items.last()).flatten().map(|item| {
+            HistoryCursor {
+                timestamp: item.timestamp,
+                content_hash: item.content_hash.clone(),
+            }
+            .encode()
+        });
+
+        let count_sql = format!(
+            "SELECT COUNT(*)
+             FROM clipboard_events AS event
+             JOIN clipboard_event_search
+               ON clipboard_event_search.content_hash = event.content_hash
+             WHERE {search_filter}
+               AND {compact_filter}"
+        );
+        let total_count = self
+            .conn
+            .query_row(&count_sql, [&search_parameter], |row| row.get(0))?;
+        let stats = self.get_history_stats()?;
+
+        Ok(HistoryPage {
+            items,
+            next_cursor,
+            has_more,
+            total_count,
+            total_bytes: stats.total_bytes,
+        })
+    }
+
     fn get_history_page_for_mode(
         &self,
         cursor: Option<&str>,
@@ -1577,6 +2055,7 @@ impl Database {
                 source_bundle_id: row.get(5)?,
                 is_remote_clipboard: row.get(6)?,
                 byte_count: row.get::<_, i64>(7)?.max(0) as u64,
+                search_preview: None,
             })
         };
         let rows = if let Some(cursor) = cursor {
@@ -2463,6 +2942,7 @@ mod tests {
             MigrationFailpoint::AfterCopy,
             MigrationFailpoint::AfterValidation,
             MigrationFailpoint::AfterDropOriginal,
+            MigrationFailpoint::AfterSearchIndexBuild,
         ] {
             let path = temp_database_path("migration_rollback");
             create_version_one_database(&path, &clipboard_event);
@@ -2497,6 +2977,55 @@ mod tests {
             drop(connection);
             remove_database_files(&path);
         }
+    }
+
+    #[test]
+    fn schema_v2_migrates_to_v3_and_rebuilds_search_index() {
+        let db = in_memory_database();
+        db.insert_event(&event(vec![data(
+            "public.utf8-plain-text",
+            b"search index migration fixture",
+        )]))
+        .expect("fixture should insert");
+        schema::drop_search_index(&db.conn).expect("v3 search objects should drop");
+        db.conn
+            .execute(
+                "DELETE FROM app_metadata WHERE key = ?1",
+                [SEARCH_INDEX_METADATA_KEY],
+            )
+            .expect("search index version should clear");
+        db.conn
+            .pragma_update(None, "user_version", 2)
+            .expect("fixture should declare schema v2");
+
+        db.initialize_schema()
+            .expect("schema v2 should migrate to current");
+
+        assert_eq!(
+            schema::user_version(&db.conn).expect("schema version should load"),
+            CURRENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            db.search_history_page(None, Some(50), "migration fixture")
+                .expect("migrated search should load")
+                .total_count,
+            1
+        );
+        Database::validate_search_index(&db.conn).expect("migrated search index should validate");
+    }
+
+    #[test]
+    fn newer_schema_versions_are_rejected_without_changes() {
+        let db = in_memory_database();
+        db.conn
+            .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION + 1)
+            .expect("future schema fixture should update");
+
+        assert!(db.initialize_schema().is_err());
+        assert_eq!(
+            schema::user_version(&db.conn).expect("future version should remain"),
+            CURRENT_SCHEMA_VERSION + 1
+        );
     }
 
     #[test]
@@ -3089,6 +3618,104 @@ mod tests {
         assert_eq!(hashes.len(), 120);
         assert_eq!(hashes.iter().collect::<HashSet<_>>().len(), 120);
         assert!(db.get_history_page(Some("malformed"), Some(50)).is_err());
+    }
+
+    #[test]
+    fn search_uses_the_persisted_index_across_text_file_and_short_queries() {
+        let db = in_memory_database();
+        for value in [
+            "Needle in the newest text",
+            "unrelated clipboard text",
+            "another NEEDLE result",
+        ] {
+            db.insert_event(&event(vec![data(
+                "public.utf8-plain-text",
+                value.as_bytes(),
+            )]))
+            .expect("text fixture should insert");
+        }
+        db.insert_event(&event(vec![
+            data("public.utf8-plain-text", b"quarterly-needle-report.pdf"),
+            data(
+                "public.file-url",
+                b"file:///Users/example/Documents/quarterly-needle-report.pdf",
+            ),
+        ]))
+        .expect("file fixture should insert");
+        db.insert_event(&event(vec![data(
+            "public.utf8-plain-text",
+            "中文短词".as_bytes(),
+        )]))
+        .expect("CJK fixture should insert");
+        let deep_text = format!("{}deep-target", "prefix ".repeat(90));
+        db.insert_event(&event(vec![data(
+            "public.utf8-plain-text",
+            deep_text.as_bytes(),
+        )]))
+        .expect("deep text fixture should insert");
+
+        let first = db
+            .search_history_page(None, Some(2), "needle")
+            .expect("indexed search should load");
+        assert_eq!(first.items.len(), 2);
+        assert_eq!(first.total_count, 3);
+        assert!(first.has_more);
+        let second = db
+            .search_history_page(first.next_cursor.as_deref(), Some(2), "needle")
+            .expect("second search page should load");
+        assert_eq!(second.items.len(), 1);
+        assert!(!second.has_more);
+
+        let short = db
+            .search_history_page(None, Some(50), "短词")
+            .expect("short CJK search should load");
+        assert_eq!(short.total_count, 1);
+        assert_eq!(String::from_utf8_lossy(&short.items[0].display), "中文短词");
+
+        let deep = db
+            .search_history_page(None, Some(50), "deep-target")
+            .expect("deep full-text search should load");
+        assert_eq!(deep.total_count, 1);
+        assert!(deep.items[0]
+            .search_preview
+            .as_deref()
+            .is_some_and(|preview| preview.contains("deep-target")));
+    }
+
+    #[test]
+    fn search_index_tracks_updates_deletes_and_compact_visibility() {
+        let db = in_memory_database();
+        let formatted = event(vec![
+            data("public.utf8-plain-text", b"formatted searchable value"),
+            data("public.rtf", br"{\rtf1 formatted searchable value}"),
+        ]);
+        db.insert_event(&formatted)
+            .expect("formatted fixture should insert");
+        let content_hash = db
+            .search_history_page(None, Some(1), "searchable")
+            .expect("full search should load")
+            .items[0]
+            .content_hash
+            .clone();
+
+        db.set_compact_mode(true)
+            .expect("compact mode should enable");
+        assert_eq!(
+            db.search_history_page(None, Some(50), "searchable")
+                .expect("compact search should load")
+                .total_count,
+            1
+        );
+
+        db.delete_event(&content_hash)
+            .expect("indexed fixture should delete");
+        assert_eq!(
+            db.search_history_page(None, Some(50), "searchable")
+                .expect("deleted search should load")
+                .total_count,
+            0
+        );
+        Database::validate_search_index(&db.conn).expect("search index should remain synchronized");
     }
 
     #[test]

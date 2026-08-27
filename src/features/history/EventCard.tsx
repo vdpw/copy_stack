@@ -6,6 +6,7 @@ import {
   Files,
   Folder,
   Image as ImageIcon,
+  Search,
   Trash2,
   Video,
 } from "lucide-react";
@@ -39,6 +40,7 @@ interface EventCardProps {
   expanded: boolean;
   copied: boolean;
   restoring: boolean;
+  searchQuery?: string;
   language: SupportedLanguage;
   messages: Messages;
   onToggle: () => void;
@@ -213,6 +215,7 @@ export function EventCard({
   expanded,
   copied,
   restoring,
+  searchQuery = "",
   language,
   messages,
   onToggle,
@@ -223,6 +226,18 @@ export function EventCard({
   const fallbackLabel = getEventTypeLabel(messages, summary.data_type);
   const text = decodeSummaryDisplay(summary, fallbackLabel, messages.video);
   const fileItems = parseFileDisplay(text);
+  const searchPreview = summary.search_preview?.trim() ?? "";
+  const collapsedSearchSurface = fileItems
+    ? (fileItems[0]?.name ?? "")
+    : truncateContent(text);
+  const searchVisibleInCollapsedSummary = collapsedSearchSurface
+    .toLocaleLowerCase(language)
+    .includes(searchQuery.toLocaleLowerCase(language));
+  const showSearchPreview =
+    !expanded &&
+    searchPreview.length > 0 &&
+    searchQuery.length > 0 &&
+    !searchVisibleInCollapsedSummary;
   const richSegments = detail?.rich_preview ?? [];
   const typeLabel = expanded
     ? (richTypeLabel(messages, richSegments) ?? fallbackLabel)
@@ -315,6 +330,16 @@ export function EventCard({
               {expanded ? text : truncateContent(text)}
             </p>
           </div>
+        )}
+
+        {showSearchPreview && (
+          <p className="event-search-match">
+            <Search aria-hidden="true" size={14} strokeWidth={2.2} />
+            <span>
+              <span className="sr-only">{messages.searchMatch}: </span>
+              {searchPreview}
+            </span>
+          </p>
         )}
 
         <p className="event-timestamp">

@@ -254,6 +254,7 @@ fn get_copy_events_page(
     state: State<'_, AppState>,
     cursor: Option<String>,
     page_size: Option<usize>,
+    query: Option<String>,
 ) -> CommandResult<HistoryPage> {
     if cursor
         .as_deref()
@@ -272,8 +273,15 @@ fn get_copy_events_page(
         .db
         .lock()
         .map_err(|_| database_unavailable(&state, Operation::LoadHistory))?;
-    db.get_history_page(cursor.as_deref(), page_size)
-        .map_err(|_| database_error(&state, Operation::LoadHistory))
+    match query
+        .as_deref()
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+    {
+        Some(query) => db.search_history_page(cursor.as_deref(), page_size, query),
+        None => db.get_history_page(cursor.as_deref(), page_size),
+    }
+    .map_err(|_| database_error(&state, Operation::LoadHistory))
 }
 
 #[tauri::command]

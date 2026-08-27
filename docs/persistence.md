@@ -24,7 +24,7 @@ silently granted.
 
 Schema version is stored in `PRAGMA user_version`. Classifier/derived-metadata
 version is stored separately in `app_metadata`, because classifier policy can
-change without an unrelated SQL shape change.
+change without an unrelated SQL shape change. The current schema version is 3.
 
 ```sql
 CREATE TABLE clipboard_events (
@@ -51,6 +51,13 @@ CREATE TABLE settings (
 CREATE TABLE app_metadata (
   key TEXT PRIMARY KEY,
   value INTEGER NOT NULL
+);
+
+CREATE VIRTUAL TABLE clipboard_event_search USING fts5(
+  content_hash UNINDEXED,
+  search_text,
+  compact_search_text,
+  tokenize = 'trigram'
 );
 ```
 
@@ -93,16 +100,17 @@ Autostart is not stored here. The operating system login item is authoritative.
 
 ## Versioned Initialization And Migration
 
-Initialization is one transaction:
+Initialization and every pending migration run inside one immediate transaction:
 
-1. read and reject unsupported future schema or classifier versions;
+1. read and reject unsupported future schema or derived-metadata versions;
 2. create settings and metadata tables and insert missing defaults;
-3. inspect the history table shape and version gates;
-4. create a clean current table, rebuild a legacy/outdated table, or take the
-   current fast path;
-5. create and validate required indexes and table shape;
-6. write classifier version and `PRAGMA user_version`;
-7. commit.
+3. create the latest schema directly for an empty unversioned database;
+4. bootstrap legacy/unversioned history to schema v2, then apply every explicit
+   migration in order (`v2 -> v3`, followed by future adjacent versions);
+5. validate each target schema before advancing `PRAGMA user_version`;
+6. rebuild separately-versioned classifier or search metadata only when stale;
+7. validate the final tables, indexes, triggers, and search row accounting;
+8. commit the complete chain, or roll all steps back to the original version.
 
 The current fast path does not decode, reclassify, deduplicate, or rewrite all
 history rows on every launch.
@@ -124,6 +132,27 @@ NSPasteboard policy and classification:
 Row accounting and table/index validation run before the original table is
 replaced. Any migration error rolls back the entire transaction; fault-injection
 tests cover failures at multiple replacement stages.
+
+Released migrations are forward-only and immutable. A database with a schema
+version newer than the running app is preserved and rejected rather than
+downgraded. Missing or outdated rebuildable search objects are recreated from
+`clipboard_events`; unknown drift in the authoritative history schema is an
+error and is never repaired by deleting user data.
+
+## Search Index
+
+Search uses the FTS5 trigram table, never image/media BLOBs or the restore
+payload. `search_text` contains visible text and formatted-text projections plus
+file, folder, and video names. `compact_search_text` contains only the effective
+compact-mode text. Short one- and two-character queries use a fallback scan of
+stored search text so CJK searches remain useful.
+
+The index stores exactly one row per history row. Inserts and content updates
+refresh the entry in the same transaction; delete/update triggers remove stale
+entries during explicit deletion, clear, compact canonicalization, and
+retention. `search_index_version` in `app_metadata` versions extraction/tokenizer
+policy independently from SQL shape. The index is fully rebuildable from the
+authoritative history table.
 
 ## Capture And Upsert
 
