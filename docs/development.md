@@ -132,8 +132,9 @@ The following is a checklist, not a record of completed testing:
 10. Delete one item from History; clear all from Settings and the menu bar.
 11. Toggle compact mode, menu visibility, restore ordering, and all languages.
     Set the menu count to 20 and then 0; verify 20 and all retained rows appear.
-12. Start a duplicate process and confirm the existing window activates while
-    only one owner/listener/tray remains.
+12. Close the main window and click the macOS Dock icon; confirm the existing
+    window shows and focuses again. Then start a duplicate process and confirm
+    the same window activates while only one owner/listener/tray remains.
 13. Open Settings from the macOS application menu and with `Command+,`; confirm
     there is no in-window Settings switcher, confirm the tray Settings entry
     still works, then use the top-left back button to return to History.

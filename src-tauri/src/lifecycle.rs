@@ -78,6 +78,27 @@ pub(crate) fn activate_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(),
     activate_window(&window)
 }
 
+fn activate_window_on_reopen(
+    window: &impl MainWindowActions,
+    has_visible_windows: bool,
+) -> Result<(), LifecycleError> {
+    if has_visible_windows {
+        return Ok(());
+    }
+
+    activate_window(window)
+}
+
+pub(crate) fn activate_main_window_on_reopen<R: Runtime>(
+    app: &AppHandle<R>,
+    has_visible_windows: bool,
+) -> Result<(), LifecycleError> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or(LifecycleError::MainWindowUnavailable)?;
+    activate_window_on_reopen(&window, has_visible_windows)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InitialWindowVisibility {
     Visible,
@@ -214,6 +235,25 @@ mod tests {
             window.calls.borrow().as_slice(),
             ["show", "unminimize", "focus"]
         );
+    }
+
+    #[test]
+    fn dock_reopen_activates_a_hidden_window() {
+        let window = FakeWindow::default();
+
+        assert_eq!(activate_window_on_reopen(&window, false), Ok(()));
+        assert_eq!(
+            window.calls.borrow().as_slice(),
+            ["show", "unminimize", "focus"]
+        );
+    }
+
+    #[test]
+    fn dock_reopen_leaves_an_already_visible_window_unchanged() {
+        let window = FakeWindow::default();
+
+        assert_eq!(activate_window_on_reopen(&window, true), Ok(()));
+        assert!(window.calls.borrow().is_empty());
     }
 
     #[test]

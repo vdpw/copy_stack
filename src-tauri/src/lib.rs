@@ -1240,6 +1240,22 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
         .map_err(|_| "APP_BUILD_FAILED".to_string())?;
 
     app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } = &event
+        {
+            if let Err(_error) =
+                lifecycle::activate_main_window_on_reopen(app_handle, *has_visible_windows)
+            {
+                debug_error!(
+                    "[copy_stack] Dock reopen activation failed: {}",
+                    _error.code()
+                );
+            }
+        }
+
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             if let Some(state) = app_handle.try_state::<AppState>() {
                 if let Some(tray_refresh) = state.tray_refresh.as_ref() {
