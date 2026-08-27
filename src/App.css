@@ -1,7 +1,16 @@
 :root {
+  --app-font-family:
+    "PingFang SC", "PingFang TC", "PingFang HK", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #14213d;
   background: #f8fafc;
-  font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+  font-family: var(--app-font-family);
+}
+
+:root:lang(zh-TW) {
+  --app-font-family:
+    "PingFang TC", "PingFang SC", "PingFang HK", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 * {
@@ -64,8 +73,7 @@ button {
 .panel-header h2,
 .empty-state h3,
 .modal-header h3 {
-  font-family:
-    "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  font-family: var(--app-font-family);
 }
 
 .workspace {

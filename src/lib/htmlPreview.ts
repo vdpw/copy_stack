@@ -283,7 +283,8 @@ const htmlPreviewStyles = `
   color-scheme: light;
   background: #ffffff;
   overflow: auto;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "PingFang SC", "PingFang TC", "PingFang HK", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 html {
@@ -314,7 +315,8 @@ body {
   color: #24324a;
   background: #ffffff;
   cursor: default;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "PingFang SC", "PingFang TC", "PingFang HK", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   line-height: 1.6;
   text-rendering: optimizeLegibility;
@@ -625,7 +627,7 @@ img {
 }
 `;
 const htmlPreviewStyleHash =
-  "sha256-DV6gCx9H/0zifNgu3LZB1nySQPY8jTLVmOECY7WolhM=";
+  "sha256-SiMZoSATeAIpEWcOtJfnKFGWw/iEtsUerrNtbtJdbmA=";
 
 function previewDocument(sanitizedHtml: string): string {
   return `<!doctype html>
