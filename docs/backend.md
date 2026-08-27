@@ -53,7 +53,9 @@ Important modules:
 `lib.rs` registers the single-instance plugin first. A duplicate process calls
 only the existing-process callback, which shows, unminimizes, and focuses the
 main window. It does not create another database connection, tray, listener, or
-consumer.
+consumer. On macOS, clicking the Dock icon after closing the main window handles
+the application reopen event through the same show, unminimize, and focus
+sequence.
 
 First-instance setup:
 
