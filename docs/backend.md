@@ -31,7 +31,8 @@ Important modules:
 - `store/settings.rs`, `store/schema.rs`, and `store/models.rs`: typed settings,
   versioned schema declarations, and command-facing payloads.
 - `tray.rs`: summary-only menu construction, preview text formatting, and tray
-  actions; macOS uses the dedicated monochrome `icons/tray-template.png` mask
+  actions, including Search opening History and focusing its search field;
+  macOS uses the dedicated monochrome `icons/tray-template.png` mask
   rather than treating the opaque full-color application icon as a template.
 - `tray_preview.rs`: macOS-only native hover tracking and the nonactivating
   side preview panel, which uses the system menu visual-effect material so its
@@ -106,9 +107,12 @@ panicking across the command boundary.
 
 ### History reads
 
-`get_copy_events_page(cursor?, page_size?)` returns a stable cursor page of
-bounded `HistorySummary` values. Default size is 50 and maximum size is 100.
-The response also carries total visible count and total accounted bytes.
+`get_copy_events_page(cursor?, page_size?, query?)` returns a stable cursor page
+of bounded `HistorySummary` values. Default size is 50 and maximum size is 100.
+An empty query uses the timestamp index; a nonempty query joins the versioned
+FTS index and returns its matching count while preserving history order. The
+response also carries total visible count, total accounted bytes, and a bounded
+plain-text excerpt for search matches outside the ordinary collapsed summary.
 
 `get_history_detail(content_hash)` reads one owned seed, builds at most 32
 preview segments outside the lock, and enforces an 8 MiB serialized response

@@ -63,6 +63,12 @@ export interface Messages {
   loadMore: string;
   loadingMore: string;
   loadedHistoryCount: (loaded: number, total: number) => string;
+  searchClipboardHistory: string;
+  clearSearch: string;
+  searchMatch: string;
+  loadedSearchCount: (loaded: number, total: number) => string;
+  noSearchResults: string;
+  noSearchResultsDescription: (query: string) => string;
   loadingHistory: string;
   loadingDetail: string;
   detailUnavailable: string;
@@ -226,6 +232,14 @@ const translations: Record<SupportedLanguage, Messages> = {
     loadingMore: "Loading more...",
     loadedHistoryCount: (loaded, total) =>
       `Showing ${loaded} of ${englishClipCount(total)}.`,
+    searchClipboardHistory: "Search clipboard history",
+    clearSearch: "Clear search",
+    searchMatch: "Matching text",
+    loadedSearchCount: (loaded, total) =>
+      `Showing ${loaded} of ${total} matching clips.`,
+    noSearchResults: "No matching clips",
+    noSearchResultsDescription: query =>
+      `No clipboard history matches “${query}”.`,
     loadingHistory: "Loading clipboard history...",
     loadingDetail: "Loading full preview...",
     detailUnavailable: "The full preview is unavailable.",
@@ -341,6 +355,14 @@ const translations: Record<SupportedLanguage, Messages> = {
     loadMore: "加载更多",
     loadingMore: "正在加载...",
     loadedHistoryCount: (loaded, total) => `已显示 ${loaded}/${total} 条。`,
+    searchClipboardHistory: "搜索剪贴板历史",
+    clearSearch: "清除搜索",
+    searchMatch: "匹配内容",
+    loadedSearchCount: (loaded, total) =>
+      `已显示 ${loaded}/${total} 条匹配记录。`,
+    noSearchResults: "没有匹配的记录",
+    noSearchResultsDescription: query =>
+      `剪贴板历史中没有匹配“${query}”的内容。`,
     loadingHistory: "正在加载剪贴板历史...",
     loadingDetail: "正在加载完整预览...",
     detailUnavailable: "无法显示完整预览。",
@@ -454,6 +476,14 @@ const translations: Record<SupportedLanguage, Messages> = {
     loadMore: "載入更多",
     loadingMore: "正在載入...",
     loadedHistoryCount: (loaded, total) => `已顯示 ${loaded}/${total} 筆。`,
+    searchClipboardHistory: "搜尋剪貼簿歷史",
+    clearSearch: "清除搜尋",
+    searchMatch: "符合內容",
+    loadedSearchCount: (loaded, total) =>
+      `已顯示 ${loaded}/${total} 筆符合記錄。`,
+    noSearchResults: "沒有符合的記錄",
+    noSearchResultsDescription: query =>
+      `剪貼簿歷史中沒有符合「${query}」的內容。`,
     loadingHistory: "正在載入剪貼簿歷史...",
     loadingDetail: "正在載入完整預覽...",
     detailUnavailable: "無法顯示完整預覽。",

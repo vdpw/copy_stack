@@ -38,7 +38,8 @@ function renderCard(
   expanded: boolean,
   detail: HistoryDetail | undefined = undefined,
   onToggle = vi.fn(),
-  summary: HistorySummary = textSummary
+  summary: HistorySummary = textSummary,
+  searchQuery = ""
 ): string {
   return renderToStaticMarkup(
     <EventCard
@@ -54,6 +55,7 @@ function renderCard(
       onRetryDetail={vi.fn()}
       onToggle={onToggle}
       restoring={false}
+      searchQuery={searchQuery}
       summary={summary}
     />
   );
@@ -74,6 +76,23 @@ describe("EventCard", () => {
 
     expect(markup).not.toContain("com.apple.Safari");
     expect(markup).toContain("来自其他设备");
+  });
+
+  it("shows a bounded search excerpt when the collapsed summary hides the match", () => {
+    const markup = renderCard(
+      false,
+      undefined,
+      vi.fn(),
+      {
+        ...textSummary,
+        search_preview: "…context around deep-target…",
+      },
+      "deep-target"
+    );
+
+    expect(markup).toContain("event-search-match");
+    expect(markup).toContain("匹配内容");
+    expect(markup).toContain("deep-target");
   });
 
   it("keeps formatted previews out of the tab order", () => {

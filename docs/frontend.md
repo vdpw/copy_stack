@@ -25,7 +25,7 @@ clipboard history.
 
 ## Commands Used By History
 
-- `get_copy_events_page({cursor, pageSize})`
+- `get_copy_events_page({cursor, pageSize, query?})`
 - `get_history_detail({contentHash})`
 - `delete_copy_event({contentHash})`
 - `copy_to_clipboard({contentHash})`
@@ -33,6 +33,8 @@ clipboard history.
 - `get_safe_diagnostics()`
 
 History requests 50 summaries at a time. The backend caps every request at 100.
+When the trimmed query is nonempty, the same cursor contract pages through all
+matching retained history, not only rows already loaded in React.
 The main list observes a sentinel 320 pixels ahead of the viewport and loads
 the next cursor page automatically as the user scrolls. The Load More button
 remains available as an accessibility and unsupported-observer fallback.
@@ -70,6 +72,8 @@ the main-window capability together when a contract changes.
   preserving the History scroll anchor.
 - `app:navigate`: select `history` or `settings`; a repeated History request
   also refreshes the visible list.
+- `app:focus-search`: select History and focus/select its search field; the tray
+  uses this after showing the main window.
 - `app-language-changed`: reload authoritative settings in the main webview.
 - `capture-rejected`: display a localized, dismissible resource-limit notice.
 - `app-operation-error`: surface startup, capture, tray, and post-restore
@@ -91,6 +95,7 @@ interface HistorySummary {
   timestamp: number;
   byte_count: number;
   has_detail: boolean;
+  search_preview: string | null; // bounded, present only for search results
 }
 
 interface HistoryPage {
@@ -156,6 +161,14 @@ the checked hash in both policies; the security gate and frontend tests reject
 hash drift.
 
 ## Refresh And Interaction
+
+History has a sticky search field. Input is debounced for 180 ms, capped at 256
+characters, and sent to SQLite-backed search. `Command+F` focuses/selects the
+field. Escape clears a nonempty query and otherwise blurs it. Search results
+retain ordinary paging, expand, restore, and delete behavior, and show a
+localized result count and empty state. When a match falls outside the collapsed
+summary, the result includes a bounded plain-text match excerpt. A live clipboard
+update refreshes the active query instead of dropping back to unfiltered history.
 
 The initial load shows a loading state. Later refreshes keep the list mounted,
 capture the first visible card and its offset, replace the first page, then

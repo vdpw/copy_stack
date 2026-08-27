@@ -33,6 +33,7 @@ pub struct HistorySummary {
     pub is_remote_clipboard: bool,
     pub byte_count: u64,
     pub has_detail: bool,
+    pub search_preview: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

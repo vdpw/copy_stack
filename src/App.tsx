@@ -12,6 +12,7 @@ import type { AppPage } from "./navigation";
 
 function App() {
   const [activePage, setActivePage] = useState<AppPage>("history");
+  const [focusSearchRequest, setFocusSearchRequest] = useState(0);
   const startup = useStartupErrors();
   const settingsController = useAppSettings(
     activePage === "settings",
@@ -86,6 +87,31 @@ function App() {
   }, [reportError]);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    void listen("app:focus-search", () => {
+      setActivePage("history");
+      setFocusSearchRequest(current => current + 1);
+    })
+      .then(listener => {
+        if (disposed) {
+          listener();
+        } else {
+          unlisten = listener;
+        }
+      })
+      .catch(caught => {
+        reportError(caught, "load_history");
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [reportError]);
+
+  useEffect(() => {
     window.scrollTo({ top: 0 });
   }, [activePage]);
 
@@ -122,6 +148,7 @@ function App() {
           )}
           <HistoryView
             compactMode={settingsController.settings?.compact_mode ?? false}
+            focusSearchRequest={focusSearchRequest}
             language={language}
             messages={messages}
             moveRestoredItemToTop={

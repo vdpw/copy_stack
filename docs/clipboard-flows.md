@@ -6,6 +6,7 @@
   totals.
 - `app:navigate`: the tray requested History/Settings or the macOS application
   menu requested Settings.
+- `app:focus-search`: the tray requested the History search field.
 - `app-language-changed`: reload authoritative language/settings.
 - `capture-rejected`: a resource-limited event could not be safely degraded;
   payload contains only resource kind and size bucket.
@@ -89,6 +90,12 @@ anchor. If the update arrives while the window is unfocused, it resets to the
 top after refresh so the newest item is visible on return. The expanded-hash
 set remains in view state. Settings obtains `history_count` and `history_bytes`
 from `get_app_settings`; it does not load History to compute them.
+
+A nonempty search query follows the same cursor order and bounded summary path,
+but joins the rebuildable FTS index across all retained rows. Search never
+decodes restore payloads or reads local media. The menu bar Search action shows
+History and emits `app:focus-search`; search results are then restored or deleted
+through the same canonical paths as ordinary History rows.
 
 ## Restore From History Or Menu Bar
 
