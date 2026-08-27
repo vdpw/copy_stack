@@ -57,6 +57,8 @@ export interface Messages {
   clipboardHistory: string;
   clearAll: string;
   clearHistoryDescription: (count: number) => string;
+  clearHistoryConfirmationTitle: string;
+  clearHistoryConfirmationDescription: (count: number) => string;
   clearingHistory: string;
   loadMore: string;
   loadingMore: string;
@@ -216,6 +218,9 @@ const translations: Record<SupportedLanguage, Messages> = {
       count === 0
         ? "There is no clipboard history to clear."
         : `Permanently delete all ${englishEventCount(count)} stored on this Mac.`,
+    clearHistoryConfirmationTitle: "Clear all clipboard history?",
+    clearHistoryConfirmationDescription: count =>
+      `This will permanently delete all ${englishEventCount(count)} stored on this Mac.`,
     clearingHistory: "Clearing...",
     loadMore: "Load more",
     loadingMore: "Loading more...",
@@ -329,6 +334,9 @@ const translations: Record<SupportedLanguage, Messages> = {
       count === 0
         ? "目前没有可清空的剪贴板历史。"
         : `永久删除这台 Mac 上存储的全部 ${count} 条剪贴板记录。`,
+    clearHistoryConfirmationTitle: "清空全部剪贴板历史？",
+    clearHistoryConfirmationDescription: count =>
+      `将永久删除这台 Mac 上存储的全部 ${count} 条剪贴板记录。`,
     clearingHistory: "正在清空...",
     loadMore: "加载更多",
     loadingMore: "正在加载...",
@@ -439,6 +447,9 @@ const translations: Record<SupportedLanguage, Messages> = {
       count === 0
         ? "目前沒有可清除的剪貼簿歷史。"
         : `永久刪除這台 Mac 上儲存的全部 ${count} 筆剪貼簿記錄。`,
+    clearHistoryConfirmationTitle: "清除全部剪貼簿歷史？",
+    clearHistoryConfirmationDescription: count =>
+      `將永久刪除這台 Mac 上儲存的全部 ${count} 筆剪貼簿記錄。`,
     clearingHistory: "正在清除...",
     loadMore: "載入更多",
     loadingMore: "正在載入...",

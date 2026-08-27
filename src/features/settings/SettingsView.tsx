@@ -41,6 +41,7 @@ export function SettingsView({
   const [pendingMenuBarItemLimitInput, setPendingMenuBarItemLimitInput] =
     useState("0");
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [showClearHistoryDialog, setShowClearHistoryDialog] = useState(false);
   const [clearingHistory, setClearingHistory] = useState(false);
 
   const settingsHeader = (
@@ -481,7 +482,7 @@ export function SettingsView({
                 controller.updating ||
                 settings.history_count === 0
               }
-              onClick={() => void clearAllEvents()}
+              onClick={() => setShowClearHistoryDialog(true)}
               type="button"
             >
               <Trash2 aria-hidden="true" size={15} />
@@ -536,6 +537,53 @@ export function SettingsView({
                 {controller.updating
                   ? messages.updating
                   : messages.deleteAndUpdate}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showClearHistoryDialog && (
+        <div className="modal-overlay">
+          <div
+            aria-labelledby="clear-history-title"
+            aria-modal="true"
+            className="modal-content"
+            role="dialog"
+          >
+            <div className="modal-header">
+              <AlertTriangle className="warning-icon" size={24} />
+              <h3 id="clear-history-title">
+                {messages.clearHistoryConfirmationTitle}
+              </h3>
+            </div>
+
+            <div className="modal-body">
+              <p>
+                {messages.clearHistoryConfirmationDescription(
+                  settings.history_count
+                )}
+              </p>
+              <p className="warning-text">{messages.cannotUndo}</p>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowClearHistoryDialog(false)}
+                type="button"
+              >
+                {messages.cancel}
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={() => {
+                  setShowClearHistoryDialog(false);
+                  void clearAllEvents();
+                }}
+                type="button"
+              >
+                {messages.clearAll}
               </button>
             </div>
           </div>
