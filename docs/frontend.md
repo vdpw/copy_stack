@@ -76,8 +76,9 @@ the main-window capability together when a contract changes.
   uses this after showing the main window.
 - `app-language-changed`: reload authoritative settings in the main webview.
 - `capture-rejected`: display a localized, dismissible resource-limit notice.
-- `app-operation-error`: surface startup, capture, tray, and post-restore
-  failures through the same structured error UI.
+- `app-operation-error`: development-only surface for asynchronous startup,
+  capture, tray, and post-restore diagnostics. Production builds do not
+  subscribe to this global runtime-error channel.
 
 Every listener is unregistered during effect cleanup. The app does not listen
 for `new-copy-event`.
@@ -228,12 +229,18 @@ interface CommandError {
 }
 ```
 
-`get_startup_error` and the `app-operation-error` listener are bootstrapped
-before settings or History invokes. `invokeCommand` validates enumerated fields
-and converts every unknown value to a generic safe error. Error banners fetch
-the backend's bounded `get_safe_diagnostics` records and offer an explicit copy
-action with visible success/failure feedback. Raw Rust, database, filesystem,
-source-id, hash, path, HTML, and clipboard-content errors are not displayed.
+`get_startup_error` is bootstrapped before settings or History invokes in every
+build. Development builds also subscribe to `app-operation-error` for
+asynchronous runtime diagnostics. `invokeCommand` validates enumerated fields
+and converts every unknown value to a generic safe error.
+
+Development error banners fetch the backend's bounded
+`get_safe_diagnostics` records and offer an explicit copy action with visible
+success/failure feedback. Production error banners keep actionable localized
+command and startup feedback, but do not fetch or render diagnostic JSON and do
+not surface background runtime failures through a global banner. Raw Rust,
+database, filesystem, source-id, hash, path, HTML, and clipboard-content errors
+are never displayed.
 
 ## Frontend Change Checklist
 

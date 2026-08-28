@@ -155,6 +155,23 @@ fn record_command_error(state: &AppState, error: CommandError) -> CommandError {
     error
 }
 
+fn surface_debug_operation_error(error: &CommandError, publish: impl FnOnce(&CommandError)) {
+    #[cfg(debug_assertions)]
+    {
+        publish(error);
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (error, publish);
+    }
+}
+
+fn emit_debug_operation_error<R: Runtime>(app: &AppHandle<R>, error: &CommandError) {
+    surface_debug_operation_error(error, |error| {
+        let _ = app.emit(APP_OPERATION_ERROR_EVENT, error);
+    });
+}
+
 fn publish_startup_error<R: Runtime>(app: &AppHandle<R>, error: CommandError) {
     if let Some(status) = app.try_state::<StartupStatus>() {
         if let Ok(mut latest_error) = status.latest_error.lock() {
@@ -164,7 +181,7 @@ fn publish_startup_error<R: Runtime>(app: &AppHandle<R>, error: CommandError) {
     if let Some(state) = app.try_state::<AppState>() {
         let _ = state.diagnostics.record(&error);
     }
-    let _ = app.emit(APP_OPERATION_ERROR_EVENT, &error);
+    emit_debug_operation_error(app, &error);
 }
 
 pub(crate) fn report_restore_post_processing_failure<R: Runtime>(
@@ -177,7 +194,7 @@ pub(crate) fn report_restore_post_processing_failure<R: Runtime>(
         false,
     );
     let _ = state.diagnostics.record(&error);
-    let _ = app.emit(APP_OPERATION_ERROR_EVENT, &error);
+    emit_debug_operation_error(app, &error);
 }
 
 pub(crate) fn report_tray_operation_failure<R: Runtime>(app: &AppHandle<R>) {
@@ -185,7 +202,7 @@ pub(crate) fn report_tray_operation_failure<R: Runtime>(app: &AppHandle<R>) {
     if let Some(state) = app.try_state::<AppState>() {
         let _ = state.diagnostics.record(&error);
     }
-    let _ = app.emit(APP_OPERATION_ERROR_EVENT, &error);
+    emit_debug_operation_error(app, &error);
 }
 
 fn report_capture_tray_refresh_failure<R: Runtime>(app: &AppHandle<R>) {
@@ -197,7 +214,7 @@ fn report_capture_tray_refresh_failure<R: Runtime>(app: &AppHandle<R>) {
     if let Some(state) = app.try_state::<AppState>() {
         let _ = state.diagnostics.record(&error);
     }
-    let _ = app.emit(APP_OPERATION_ERROR_EVENT, &error);
+    emit_debug_operation_error(app, &error);
 }
 
 fn database_error(state: &AppState, operation: Operation) -> CommandError {
@@ -1291,6 +1308,18 @@ mod lib_tests {
     use super::*;
     use crate::pasteboard_protocol::{REMOTE_CLIPBOARD_TYPE, SOURCE_TYPE};
     use copy_event_listener::event::{Data, Item};
+
+    #[test]
+    fn global_operation_error_surface_is_debug_only() {
+        let error = CommandError::state(Operation::CaptureClipboard);
+        let mut published = false;
+
+        surface_debug_operation_error(&error, |_| {
+            published = true;
+        });
+
+        assert_eq!(published, cfg!(debug_assertions));
+    }
 
     #[test]
     fn rapid_capture_tray_refreshes_are_coalesced() {

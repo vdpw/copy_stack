@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invokeCommand } from "../api/tauri";
+import { currentErrorPresentationPolicy } from "../buildMode";
 import type { Messages } from "../i18n";
 import type { CommandError, SafeDiagnostic } from "../types";
 import { ErrorBanner } from "./ErrorBanner";
@@ -9,6 +10,7 @@ interface DiagnosticErrorBannerProps {
   messages: Messages;
   onDismiss: () => void;
   onRetry?: () => void;
+  showSafeDiagnosticDetails?: boolean;
 }
 
 interface DiagnosticStatus {
@@ -21,6 +23,7 @@ export function DiagnosticErrorBanner({
   messages,
   onDismiss,
   onRetry,
+  showSafeDiagnosticDetails = currentErrorPresentationPolicy.showSafeDiagnosticDetails,
 }: DiagnosticErrorBannerProps) {
   const [diagnostic, setDiagnostic] = useState<SafeDiagnostic | undefined>();
   const [status, setStatus] = useState<DiagnosticStatus | null>(null);
@@ -28,6 +31,12 @@ export function DiagnosticErrorBanner({
   useEffect(() => {
     let disposed = false;
     setDiagnostic(undefined);
+    if (!showSafeDiagnosticDetails) {
+      setStatus(null);
+      return () => {
+        disposed = true;
+      };
+    }
     setStatus({ message: messages.diagnosticLoading, isError: false });
 
     void invokeCommand<SafeDiagnostic[]>(
@@ -69,6 +78,7 @@ export function DiagnosticErrorBanner({
     error.retryable,
     messages.diagnosticLoading,
     messages.diagnosticUnavailable,
+    showSafeDiagnosticDetails,
   ]);
 
   const copyDiagnostic = async (value: SafeDiagnostic) => {
@@ -83,13 +93,13 @@ export function DiagnosticErrorBanner({
   return (
     <ErrorBanner
       copyDiagnosticLabel={messages.copyDiagnostic}
-      diagnostic={diagnostic}
+      diagnostic={showSafeDiagnosticDetails ? diagnostic : undefined}
       diagnosticLabel={messages.diagnosticDetails}
-      diagnosticStatus={status}
+      diagnosticStatus={showSafeDiagnosticDetails ? status : null}
       dismissLabel={messages.dismiss}
       error={error}
       message={messages.commandError(error.operation, error.code)}
-      onCopyDiagnostic={copyDiagnostic}
+      onCopyDiagnostic={showSafeDiagnosticDetails ? copyDiagnostic : undefined}
       onDismiss={onDismiss}
       onRetry={onRetry}
       retryLabel={messages.retry}

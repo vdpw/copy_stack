@@ -34,6 +34,9 @@ Important modules:
   actions, including Search opening History and focusing its search field;
   macOS uses the dedicated monochrome `icons/tray-template.png` mask
   rather than treating the opaque full-color application icon as a template.
+  A hidden tray skips menu construction and preview installation. When it is
+  re-enabled, the menu is prepared, the native status item is recreated, and
+  only then is the macOS preview delegate installed.
 - `tray_preview.rs`: macOS-only native hover tracking and the nonactivating
   side preview panel, which uses the system menu visual-effect material so its
   background follows the active tray menu and desktop appearance. It uses a
@@ -143,9 +146,11 @@ timestamp, the mirror is scheduled, the tray is synced, and
 `clipboard-history-updated` is emitted.
 
 Once the operating-system pasteboard write succeeds, restore returns success.
-Any later ordering, mirror, tray, or notification failure is reported as the
-non-retryable `restore_post_processing_failed` event, so a UI retry cannot
-repeat an already-completed external write.
+Any later ordering, mirror, tray, or notification failure is recorded as
+non-retryable `restore_post_processing_failed`, so a UI retry cannot repeat an
+already-completed external write. Development builds additionally publish the
+global diagnostic event; production builds keep the failure in the bounded
+diagnostic ring without showing a global banner.
 
 ### Settings and diagnostics
 
@@ -170,7 +175,10 @@ and return verified state.
 
 `get_safe_diagnostics` returns at most 32 records. Each record contains only
 timestamp, app version, platform, architecture, enumerated error code,
-operation, and retryability.
+operation, and retryability. The ring remains available for local debugging,
+but the global `app-operation-error` event and diagnostic JSON UI are
+development-only. Production builds still return structured errors for startup
+and user-invoked commands.
 
 ## Capture Pipeline
 
@@ -188,8 +196,8 @@ For every listener event:
 8. apply restore suppression by normalized content identity;
 9. insert/update and enforce retention transactionally;
 10. schedule the optional row-free mirror refresh after commit;
-11. coalesce rapid capture-driven tray refreshes, rebuild the summary-only
-    tray, and emit `clipboard-history-updated`.
+11. coalesce rapid capture-driven tray refreshes, rebuild the summary-only tray
+    only when it is visible, and emit `clipboard-history-updated`.
 
 Protocol policy always precedes content hashing, preview generation, resource
 classification, persistence, mirror export, and UI/tray presentation. See

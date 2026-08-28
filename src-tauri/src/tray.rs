@@ -69,14 +69,6 @@ pub fn sync<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let tray = app
         .tray_by_id(TRAY_ID)
         .ok_or_else(|| ERROR_TRAY_OPERATION_FAILED.to_string())?;
-    let BuiltTrayMenu { menu, event_hashes } = build_menu(app)?;
-    tray.set_menu(Some(menu))
-        .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())?;
-    #[cfg(target_os = "macos")]
-    crate::tray_preview::install(app, &tray, event_hashes)?;
-    #[cfg(not(target_os = "macos"))]
-    let _ = event_hashes;
-
     let show_in_menu_bar = {
         let state = app.state::<AppState>();
         let db = state
@@ -86,8 +78,42 @@ pub fn sync<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         db.get_show_in_menu_bar()
             .map_err(|_| ERROR_HISTORY_OPERATION_FAILED.to_string())?
     };
-    tray.set_visible(show_in_menu_bar)
-        .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())
+
+    apply_tray_visibility(
+        show_in_menu_bar,
+        || {
+            let BuiltTrayMenu { menu, event_hashes } = build_menu(app)?;
+            tray.set_menu(Some(menu))
+                .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())?;
+            Ok(event_hashes)
+        },
+        |visible| {
+            tray.set_visible(visible)
+                .map_err(|_| ERROR_TRAY_OPERATION_FAILED.to_string())
+        },
+        |event_hashes| {
+            #[cfg(target_os = "macos")]
+            crate::tray_preview::install(app, &tray, event_hashes)?;
+            #[cfg(not(target_os = "macos"))]
+            let _ = event_hashes;
+            Ok(())
+        },
+    )
+}
+
+fn apply_tray_visibility<T>(
+    visible: bool,
+    prepare_visible_tray: impl FnOnce() -> Result<T, String>,
+    set_visible: impl FnOnce(bool) -> Result<(), String>,
+    finish_visible_tray: impl FnOnce(T) -> Result<(), String>,
+) -> Result<(), String> {
+    if !visible {
+        return set_visible(false);
+    }
+
+    let prepared = prepare_visible_tray()?;
+    set_visible(true)?;
+    finish_visible_tray(prepared)
 }
 
 pub fn show_page<R: Runtime>(app: &AppHandle<R>, page: &str) -> Result<(), String> {
@@ -431,6 +457,60 @@ fn character_display_width(character: char) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn hidden_tray_skips_menu_and_preview_refresh() {
+        let steps = RefCell::new(Vec::new());
+
+        apply_tray_visibility(
+            false,
+            || {
+                steps.borrow_mut().push("prepare");
+                Ok(())
+            },
+            |visible| {
+                steps
+                    .borrow_mut()
+                    .push(if visible { "show" } else { "hide" });
+                Ok(())
+            },
+            |_| {
+                steps.borrow_mut().push("finish");
+                Ok(())
+            },
+        )
+        .expect("a hidden tray should sync without visible-only work");
+
+        assert_eq!(steps.into_inner(), vec!["hide"]);
+    }
+
+    #[test]
+    fn visible_tray_exists_before_preview_installation() {
+        let steps = RefCell::new(Vec::new());
+
+        apply_tray_visibility(
+            true,
+            || {
+                steps.borrow_mut().push("prepare");
+                Ok("prepared menu")
+            },
+            |visible| {
+                steps
+                    .borrow_mut()
+                    .push(if visible { "show" } else { "hide" });
+                Ok(())
+            },
+            |prepared| {
+                assert_eq!(prepared, "prepared menu");
+                steps.borrow_mut().push("finish");
+                Ok(())
+            },
+        )
+        .expect("a visible tray should be recreated before preview installation");
+
+        assert_eq!(steps.into_inner(), vec!["prepare", "show", "finish"]);
+    }
 
     #[test]
     fn truncate_label_caps_ascii_width() {

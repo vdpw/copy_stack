@@ -116,9 +116,11 @@ and schedules a mirror snapshot, refreshes the menu bar, and emits
 and the UI does not perform a redundant reload.
 
 A successful pasteboard write is the restore command's terminal success point.
-Failures in subsequent ordering, mirror, tray, or notification work emit the
+Failures in subsequent ordering, mirror, tray, or notification work record the
 non-retryable `restore_post_processing_failed` error instead of returning a
-retryable command failure that could duplicate the external write.
+retryable command failure that could duplicate the external write. Development
+builds also emit it through the global diagnostic event; production builds do
+not surface that background diagnostic as a banner.
 
 ## Delete, Clear, And Retention
 
@@ -164,8 +166,11 @@ state again or restores its previous value.
 Tauri commands return stable `{code, operation, retryable}` errors. The UI
 shows localized operation-level feedback and retry controls, never raw
 database/filesystem/plugin errors. The backend diagnostic ring contains only
-redacted environment and enum fields. Protocol skips remain silent; resource
-rejections produce the safe `capture-rejected` notice.
+redacted environment and enum fields. Development builds may display those safe
+fields for asynchronous debugging. Production builds neither subscribe to the
+global runtime-error event nor render diagnostic JSON; startup and user-invoked
+command failures retain concise localized feedback. Protocol skips remain
+silent; resource rejections produce the safe `capture-rejected` notice.
 
 ## Flow Change Checklist
 
