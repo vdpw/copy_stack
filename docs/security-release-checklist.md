@@ -125,3 +125,39 @@ malicious-preview matrix, History restore clicks, and focus appearance remain
 unverified post-publish risks. The release remains ad-hoc signed and not
 notarized, and the post-publish verification in `docs/release.md` is still
 required.
+
+## Release exception: v0.2.0 (2026-08-28)
+
+The release owner explicitly approved publishing `v0.2.0` with the remaining
+manual desktop matrix incomplete and with the performance deviation documented
+below. This exception applies only to `v0.2.0` and does not claim that the
+missing rows passed.
+
+The frozen frontend install, security guardrail, type-check, lint, 49 frontend
+tests, production build, Rust format and check, and Rust suite passed locally.
+The Rust result was 151 passed with the manual performance test ignored by the
+ordinary suite. The release commit also passed the native Apple Silicon and
+Intel CI jobs. A dependency update dry run left `copy_event_listener`
+unchanged. A local Apple Silicon release build produced an ad-hoc signed `.app`
+and `.dmg`; the application signature and disk-image checksum verified. An
+isolated debug launch confirmed startup and basic search-field interaction with
+a private temporary database, which was deleted after the run. This limited
+observation is not packaged desktop matrix evidence.
+
+The fixture-v3 performance harness completed repeatedly and all correctness
+and deterministic structural budgets passed. For the 1000-item byte-retention
+case, text and mixed cleanup measured approximately 51 ms and 47 ms median,
+respectively. These results exceed the existing 15 ms non-blocking review
+signal and are approximately 14 to 15 times slower than the same-machine
+`v0.1.1` measurements. Investigation isolated the cost to per-row FTS5 delete
+triggers scanning the `UNINDEXED` `content_hash`. The owner accepted this
+bounded bulk-cleanup regression for `v0.2.0`; a later change should make FTS
+deletion directly addressable rather than merely raising the review budget.
+
+The complete existing-database migration and second-start matrix, native Intel
+clipboard and desktop runtime QA, login/logout/reboot, app relocation, offline
+WebView behavior, complete protocol and malicious-preview matrices, packaged
+search/tray/restore/Dock behavior, launch-at-login, and post-download smoke
+tests remain unverified risks. The release remains ad-hoc signed and not
+notarized, and the post-publish verification in `docs/release.md` is still
+required.
