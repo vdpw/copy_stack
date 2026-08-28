@@ -135,7 +135,11 @@ The following is a checklist, not a record of completed testing:
 10. Lower item and byte limits and confirm oldest rows are trimmed.
 11. Delete one item from History; clear all from Settings and the menu bar.
 12. Toggle compact mode, menu visibility, restore ordering, and all languages.
-    Set the menu count to 20 and then 0; verify 20 and all retained rows appear.
+    With menu visibility off, copy a synthetic item and confirm it is saved
+    without attempting preview installation or showing a global runtime-error
+    banner. Turn visibility on again and confirm the native item and hover
+    preview return. Set the menu count to 20 and then 0; verify 20 and all
+    retained rows appear.
 13. Close the main window and click the macOS Dock icon; confirm the existing
     window shows and focuses again. Then start a duplicate process and confirm
     the same window activates while only one owner/listener/tray remains.

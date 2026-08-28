@@ -45,6 +45,23 @@ copy_event_listener = "0.1.2"
 Local development and release builds do not require a sibling
 `copy_event_listener` checkout.
 
+## Local Release Build
+
+Build the native release package from the current source with the same ad-hoc
+signing identity used by the release workflow:
+
+```bash
+env APPLE_SIGNING_IDENTITY=- pnpm desktop:build
+```
+
+The command writes the `.app` and `.dmg` bundles under
+`src-tauri/target/release/bundle/` for the current Mac architecture. It does not
+notarize the package.
+
+Production packages do not subscribe to the development-only global runtime
+diagnostic event or render safe-diagnostic JSON. Actionable startup and
+user-invoked command errors remain localized and visible.
+
 The security gate checks strict production CSP, empty static asset scope,
 prototype freezing, per-window capabilities, absence of opener permissions,
 audited dependency floors, and both native CI/release runner entries.

@@ -53,6 +53,22 @@ const htmlPreviewSource = await readFile(
   resolve(projectRoot, "src/lib/htmlPreview.ts"),
   "utf8"
 );
+const buildModeSource = await readFile(
+  resolve(projectRoot, "src/buildMode.ts"),
+  "utf8"
+);
+const startupErrorsSource = await readFile(
+  resolve(projectRoot, "src/hooks/useStartupErrors.ts"),
+  "utf8"
+);
+const diagnosticBannerSource = await readFile(
+  resolve(projectRoot, "src/components/DiagnosticErrorBanner.tsx"),
+  "utf8"
+);
+const rustAppSource = await readFile(
+  resolve(projectRoot, "src-tauri/src/lib.rs"),
+  "utf8"
+);
 
 const security = tauriConfig.app?.security;
 const productionCsp = security?.csp;
@@ -112,6 +128,23 @@ check(
 check(
   security?.freezePrototype === true,
   "Tauri IPC prototype freezing must remain enabled."
+);
+check(
+  buildModeSource.includes("import.meta.env.DEV") &&
+    startupErrorsSource.includes(
+      "currentErrorPresentationPolicy.listenForRuntimeOperationErrors"
+    ) &&
+    diagnosticBannerSource.includes(
+      "currentErrorPresentationPolicy.showSafeDiagnosticDetails"
+    ),
+  "Production builds must not subscribe to runtime diagnostics or render diagnostic JSON."
+);
+check(
+  rustAppSource.includes("fn emit_debug_operation_error") &&
+    rustAppSource.includes("#[cfg(debug_assertions)]") &&
+    [...rustAppSource.matchAll(/\.emit\(APP_OPERATION_ERROR_EVENT/g)].length ===
+      1,
+  "Global operation-error events must be emitted only through the debug-only helper."
 );
 
 const capabilitiesDirectory = resolve(projectRoot, "src-tauri/capabilities");
