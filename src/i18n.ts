@@ -22,8 +22,13 @@ type EventType =
 export interface Messages {
   settings: string;
   backToHistory: string;
+  backToHistoryShort: string;
+  loadingSettings: string;
   starting: string;
   storedItems: string;
+  settingHelp: (setting: string) => string;
+  storedItemsHelp: string;
+  historyBudgetHelp: (maximumEventSize: string) => string;
   storedItemsDescription: (maximum: number, current: number) => string;
   historyStorageUsage: (current: string, maximum: string) => string;
   maximumEventSize: (maximum: string) => string;
@@ -91,6 +96,27 @@ export interface Messages {
   restoreToClipboard: string;
   restoringToClipboard: string;
   deleteItem: string;
+  recentHistory: string;
+  generalSettings: string;
+  generalSettingsDescription: string;
+  appearanceSettings: string;
+  appearanceSettingsDescription: string;
+  theme: string;
+  themeDescription: string;
+  themeSystem: string;
+  themeLight: string;
+  themeDark: string;
+  menuBarSettings: string;
+  menuBarSettingsDescription: string;
+  clipboardSettings: string;
+  clipboardSettingsDescription: string;
+  storageSettings: string;
+  behaviorSettings: string;
+  pinItem: string;
+  unpinItem: string;
+  pinned: string;
+  pinUpdated: string;
+  pinRetentionHint: string;
   clipboardItemCopied: string;
   remoteClipboard: string;
   previewTruncated: string;
@@ -134,6 +160,7 @@ const englishOperationErrors: Record<Operation, string> = {
   load_history_detail: "This clipboard preview could not be loaded.",
   restore_clipboard: "This item could not be restored to the clipboard.",
   delete_history: "This clipboard item could not be deleted.",
+  pin_history: "The pin status could not be updated.",
   clear_history: "Clipboard history could not be cleared.",
   load_settings: "Settings could not be loaded.",
   update_settings:
@@ -149,6 +176,7 @@ const simplifiedChineseOperationErrors: Record<Operation, string> = {
   load_history_detail: "无法加载此剪贴板预览。",
   restore_clipboard: "无法将此项目恢复到剪贴板。",
   delete_history: "无法删除此剪贴板项目。",
+  pin_history: "无法更新固定状态。",
   clear_history: "无法清空剪贴板历史。",
   load_settings: "无法加载设置。",
   update_settings: "无法更新设置，已恢复保存的值。",
@@ -163,6 +191,7 @@ const traditionalChineseOperationErrors: Record<Operation, string> = {
   load_history_detail: "無法載入此剪貼簿預覽。",
   restore_clipboard: "無法將此項目還原至剪貼簿。",
   delete_history: "無法刪除此剪貼簿項目。",
+  pin_history: "無法更新固定狀態。",
   clear_history: "無法清除剪貼簿歷史。",
   load_settings: "無法載入設定。",
   update_settings: "無法更新設定，已還原儲存的值。",
@@ -174,17 +203,24 @@ const translations: Record<SupportedLanguage, Messages> = {
   en: {
     settings: "Settings",
     backToHistory: "Back to clipboard history",
+    backToHistoryShort: "Back to History",
+    loadingSettings: "Loading settings...",
     starting: "Starting Copy Stack...",
     storedItems: "Stored items",
+    settingHelp: setting => `${setting} help`,
+    storedItemsHelp:
+      "Over the item limit, the oldest unpinned clips are removed. Pinned clips are always kept.",
+    historyBudgetHelp: maximum =>
+      `Over the storage limit, the oldest unpinned clips are removed. Pinned clips stay; each clip can use up to ${maximum}.`,
     storedItemsDescription: (maximum, current) =>
-      `Keep the newest ${englishClipCount(maximum)}. Currently storing ${englishClipCount(current)}.`,
+      `Keep up to ${englishClipCount(maximum)}, prioritizing pinned clips. Currently storing ${englishClipCount(current)}.`,
     historyStorageUsage: (current, maximum) =>
       `History uses ${current} of the ${maximum} local storage budget.`,
     maximumEventSize: maximum =>
       `A single clipboard item can use up to ${maximum}.`,
     historyBudget: "History storage budget",
     historyBudgetDescription:
-      "Maximum local history size in MiB (16–4096). Oldest items are removed first.",
+      "Maximum local history size in MiB (16–4096). Oldest unpinned items are removed first.",
     historyBudgetError: "Enter a whole number from 16 to 4096 MiB.",
     apply: "Apply",
     storageLimitError: "Enter a whole number between 1 and 1000.",
@@ -215,18 +251,18 @@ const translations: Record<SupportedLanguage, Messages> = {
     menuBarItemLimit: "Tray menu items",
     menuBarItemLimitDescription: limit =>
       limit === 0
-        ? "Show every stored clip. Enter 0 for all, or set a limit from 1 to 1000."
-        : `Show the newest ${englishClipCount(limit)}. Enter 0 to show all.`,
+        ? "Pinned clips appear first. Enter 0 for all (up to 1000), or set a limit from 1 to 1000."
+        : `Show up to ${englishClipCount(limit)}, with pinned clips first. Enter 0 to show all (up to 1000).`,
     menuBarItemLimitError: "Enter 0 for all, or a whole number from 1 to 1000.",
     clipboardHistory: "Clipboard history",
-    clearAll: "Clear all",
+    clearAll: "Clear unpinned",
     clearHistoryDescription: count =>
       count === 0
         ? "There is no clipboard history to clear."
-        : `Permanently delete all ${englishEventCount(count)} stored on this Mac.`,
-    clearHistoryConfirmationTitle: "Clear all clipboard history?",
+        : `There are ${englishEventCount(count)} on this Mac. Clearing history deletes only unpinned items.`,
+    clearHistoryConfirmationTitle: "Clear unpinned clipboard history?",
     clearHistoryConfirmationDescription: count =>
-      `This will permanently delete all ${englishEventCount(count)} stored on this Mac.`,
+      `Of the ${englishEventCount(count)} on this Mac, only unpinned items will be permanently deleted. Pinned items will be kept.`,
     clearingHistory: "Clearing...",
     loadMore: "Load more",
     loadingMore: "Loading more...",
@@ -275,6 +311,30 @@ const translations: Record<SupportedLanguage, Messages> = {
     restoreToClipboard: "Restore to clipboard",
     restoringToClipboard: "Restoring to clipboard...",
     deleteItem: "Delete item",
+    pinItem: "Pin item",
+    recentHistory: "Recent",
+    generalSettings: "General",
+    generalSettingsDescription: "Language and startup preferences.",
+    appearanceSettings: "Appearance",
+    appearanceSettingsDescription: "Choose how Copy Stack looks.",
+    theme: "Color theme",
+    themeDescription: "Choose a light or dark appearance, or follow your Mac.",
+    themeSystem: "System",
+    themeLight: "Light",
+    themeDark: "Dark",
+    menuBarSettings: "Menu Bar",
+    menuBarSettingsDescription:
+      "Quick access to clipboard history from your menu bar.",
+    clipboardSettings: "Clipboard",
+    clipboardSettingsDescription:
+      "Manage capture behavior and retained history.",
+    storageSettings: "Storage",
+    behaviorSettings: "Capture & behavior",
+    unpinItem: "Unpin item",
+    pinned: "Pinned",
+    pinUpdated: "Pin status updated.",
+    pinRetentionHint:
+      "Pinned items are kept when clearing history or reaching storage limits. If pinned items alone exceed a limit, they are still kept. Unpinning applies the current limits immediately.",
     clipboardItemCopied: "Clipboard item copied.",
     remoteClipboard: "From another device",
     previewTruncated: "Summary shortened",
@@ -294,7 +354,7 @@ const translations: Record<SupportedLanguage, Messages> = {
         : englishOperationErrors[operation],
     reduceHistory: "Reduce stored history?",
     reduceHistoryDescription: (current, next, deleteCount) =>
-      `Changing the storage limit from ${current} to ${next} will remove ${englishEventCount(deleteCount)} from local storage, starting with the oldest.`,
+      `Changing the storage limit from ${current} to ${next} will remove up to ${englishEventCount(deleteCount)}, starting with the oldest unpinned items. Pinned items will be kept.`,
     cannotUndo: "This action cannot be undone.",
     cancel: "Cancel",
     updating: "Updating...",
@@ -303,16 +363,22 @@ const translations: Record<SupportedLanguage, Messages> = {
   "zh-CN": {
     settings: "设置",
     backToHistory: "返回剪贴板历史",
+    backToHistoryShort: "返回主界面",
+    loadingSettings: "正在加载设置...",
     starting: "正在启动 Copy Stack...",
     storedItems: "存储数量",
+    settingHelp: setting => `${setting}说明`,
+    storedItemsHelp: "超出数量上限时，清理最旧的未固定记录。固定记录始终保留。",
+    historyBudgetHelp: maximum =>
+      `超出容量时，清理最旧的未固定记录。固定记录保留；单条最多 ${maximum}。`,
     storedItemsDescription: (maximum, current) =>
-      `保留最新的 ${maximum} 条剪贴板内容，目前已存储 ${current} 条。`,
+      `数量上限 ${maximum} 条，优先保留固定项目。目前已存储 ${current} 条。`,
     historyStorageUsage: (current, maximum) =>
       `历史记录已使用 ${current}，本地存储预算为 ${maximum}。`,
     maximumEventSize: maximum => `单条剪贴板内容最多可使用 ${maximum}。`,
     historyBudget: "历史记录存储预算",
     historyBudgetDescription:
-      "本地历史记录的最大大小（MiB，16–4096）。超出后会先删除最旧的项目。",
+      "本地历史记录的最大大小（MiB，16–4096）。超出后会先删除最旧的未固定项目。",
     historyBudgetError: "请输入 16 到 4096 之间的整数（MiB）。",
     apply: "应用",
     storageLimitError: "请输入 1 到 1000 之间的整数。",
@@ -339,18 +405,18 @@ const translations: Record<SupportedLanguage, Messages> = {
     menuBarItemLimit: "托盘菜单条目数",
     menuBarItemLimitDescription: limit =>
       limit === 0
-        ? "展示全部已保存项目。输入 0 表示全部，也可设置 1–1000。"
-        : `展示最新 ${limit} 个项目。输入 0 可展示全部。`,
+        ? "固定项目优先。输入 0 展示全部（最多 1000 条），也可设置 1–1000。"
+        : `最多展示 ${limit} 个项目，固定项目优先。输入 0 展示全部（最多 1000 条）。`,
     menuBarItemLimitError: "请输入 0（全部）或 1–1000 的整数。",
     clipboardHistory: "剪贴板历史",
-    clearAll: "全部清空",
+    clearAll: "清空未固定",
     clearHistoryDescription: count =>
       count === 0
         ? "目前没有可清空的剪贴板历史。"
-        : `永久删除这台 Mac 上存储的全部 ${count} 条剪贴板记录。`,
-    clearHistoryConfirmationTitle: "清空全部剪贴板历史？",
+        : `当前共 ${count} 条记录。清空时只删除未固定的项目，固定项目会保留。`,
+    clearHistoryConfirmationTitle: "清空未固定的剪贴板历史？",
     clearHistoryConfirmationDescription: count =>
-      `将永久删除这台 Mac 上存储的全部 ${count} 条剪贴板记录。`,
+      `当前共 ${count} 条记录。清空时只删除未固定的项目，固定项目会保留。`,
     clearingHistory: "正在清空...",
     loadMore: "加载更多",
     loadingMore: "正在加载...",
@@ -396,6 +462,28 @@ const translations: Record<SupportedLanguage, Messages> = {
     restoreToClipboard: "恢复到剪贴板",
     restoringToClipboard: "正在恢复到剪贴板...",
     deleteItem: "删除项目",
+    pinItem: "固定项目",
+    recentHistory: "最近记录",
+    generalSettings: "通用",
+    generalSettingsDescription: "管理语言与登录启动偏好。",
+    appearanceSettings: "外观",
+    appearanceSettingsDescription: "选择 Copy Stack 的窗口外观。",
+    theme: "颜色主题",
+    themeDescription: "选择浅色、深色，或跟随 Mac 的系统外观。",
+    themeSystem: "跟随系统",
+    themeLight: "浅色",
+    themeDark: "深色",
+    menuBarSettings: "菜单栏",
+    menuBarSettingsDescription: "从菜单栏快速访问剪贴板历史。",
+    clipboardSettings: "剪贴板",
+    clipboardSettingsDescription: "管理采集行为与历史保留规则。",
+    storageSettings: "存储",
+    behaviorSettings: "采集与行为",
+    unpinItem: "取消固定",
+    pinned: "已固定",
+    pinUpdated: "固定状态已更新。",
+    pinRetentionHint:
+      "固定项目不会被清空或自动淘汰；仅固定项目就超出数量或容量上限时，仍会保留。取消固定后立即应用当前上限。",
     clipboardItemCopied: "已复制到剪贴板。",
     remoteClipboard: "来自其他设备",
     previewTruncated: "摘要已缩短",
@@ -415,7 +503,7 @@ const translations: Record<SupportedLanguage, Messages> = {
         : simplifiedChineseOperationErrors[operation],
     reduceHistory: "减少存储的历史记录？",
     reduceHistoryDescription: (current, next, deleteCount) =>
-      `将存储上限从 ${current} 改为 ${next}，会从最旧的记录开始删除本地存储中的 ${deleteCount} 条剪贴板记录。`,
+      `将存储上限从 ${current} 改为 ${next}，将从最旧的未固定项目开始，最多删除 ${deleteCount} 条记录，固定项目会保留。`,
     cannotUndo: "此操作无法撤销。",
     cancel: "取消",
     updating: "正在更新...",
@@ -424,16 +512,22 @@ const translations: Record<SupportedLanguage, Messages> = {
   "zh-TW": {
     settings: "設定",
     backToHistory: "返回剪貼簿歷史",
+    backToHistoryShort: "返回主畫面",
+    loadingSettings: "正在載入設定...",
     starting: "正在啟動 Copy Stack...",
     storedItems: "儲存數量",
+    settingHelp: setting => `${setting}說明`,
+    storedItemsHelp: "超出數量上限時，清理最舊的未固定記錄。固定記錄始終保留。",
+    historyBudgetHelp: maximum =>
+      `超出容量時，清理最舊的未固定記錄。固定記錄保留；單筆最多 ${maximum}。`,
     storedItemsDescription: (maximum, current) =>
-      `保留最新的 ${maximum} 筆剪貼簿內容，目前已儲存 ${current} 筆。`,
+      `數量上限 ${maximum} 筆，優先保留固定項目。目前已儲存 ${current} 筆。`,
     historyStorageUsage: (current, maximum) =>
       `歷史記錄已使用 ${current}，本機儲存預算為 ${maximum}。`,
     maximumEventSize: maximum => `單筆剪貼簿內容最多可使用 ${maximum}。`,
     historyBudget: "歷史記錄儲存預算",
     historyBudgetDescription:
-      "本機歷史記錄的最大大小（MiB，16–4096）。超出後會先刪除最舊的項目。",
+      "本機歷史記錄的最大大小（MiB，16–4096）。超出後會先刪除最舊的未固定項目。",
     historyBudgetError: "請輸入 16 到 4096 之間的整數（MiB）。",
     apply: "套用",
     storageLimitError: "請輸入 1 到 1000 之間的整數。",
@@ -460,18 +554,18 @@ const translations: Record<SupportedLanguage, Messages> = {
     menuBarItemLimit: "選單列選單項目數",
     menuBarItemLimitDescription: limit =>
       limit === 0
-        ? "顯示全部已儲存項目。輸入 0 代表全部，也可設定 1–1000。"
-        : `顯示最新 ${limit} 個項目。輸入 0 可顯示全部。`,
+        ? "固定項目優先。輸入 0 顯示全部（最多 1000 筆），也可設定 1–1000。"
+        : `最多顯示 ${limit} 個項目，固定項目優先。輸入 0 顯示全部（最多 1000 筆）。`,
     menuBarItemLimitError: "請輸入 0（全部）或 1–1000 的整數。",
     clipboardHistory: "剪貼簿歷史",
-    clearAll: "全部清除",
+    clearAll: "清除未固定",
     clearHistoryDescription: count =>
       count === 0
         ? "目前沒有可清除的剪貼簿歷史。"
-        : `永久刪除這台 Mac 上儲存的全部 ${count} 筆剪貼簿記錄。`,
-    clearHistoryConfirmationTitle: "清除全部剪貼簿歷史？",
+        : `目前共 ${count} 筆記錄。只刪除未固定的項目，固定項目會保留。`,
+    clearHistoryConfirmationTitle: "清除未固定的剪貼簿歷史？",
     clearHistoryConfirmationDescription: count =>
-      `將永久刪除這台 Mac 上儲存的全部 ${count} 筆剪貼簿記錄。`,
+      `目前共 ${count} 筆記錄。只刪除未固定的項目，固定項目會保留。`,
     clearingHistory: "正在清除...",
     loadMore: "載入更多",
     loadingMore: "正在載入...",
@@ -517,6 +611,28 @@ const translations: Record<SupportedLanguage, Messages> = {
     restoreToClipboard: "還原至剪貼簿",
     restoringToClipboard: "正在還原至剪貼簿...",
     deleteItem: "刪除項目",
+    pinItem: "固定項目",
+    recentHistory: "最近記錄",
+    generalSettings: "一般",
+    generalSettingsDescription: "管理語言與登入啟動偏好。",
+    appearanceSettings: "外觀",
+    appearanceSettingsDescription: "選擇 Copy Stack 的視窗外觀。",
+    theme: "顏色主題",
+    themeDescription: "選擇淺色、深色，或跟隨 Mac 的系統外觀。",
+    themeSystem: "跟隨系統",
+    themeLight: "淺色",
+    themeDark: "深色",
+    menuBarSettings: "選單列",
+    menuBarSettingsDescription: "從選單列快速存取剪貼簿歷史。",
+    clipboardSettings: "剪貼簿",
+    clipboardSettingsDescription: "管理擷取行為與歷史保留規則。",
+    storageSettings: "儲存",
+    behaviorSettings: "擷取與行為",
+    unpinItem: "取消固定",
+    pinned: "已固定",
+    pinUpdated: "固定狀態已更新。",
+    pinRetentionHint:
+      "固定項目不會被清除或自動淘汰；僅固定項目就超出數量或容量上限時，仍會保留。取消固定後立即套用目前上限。",
     clipboardItemCopied: "已複製到剪貼簿。",
     remoteClipboard: "來自其他裝置",
     previewTruncated: "摘要已縮短",
@@ -536,7 +652,7 @@ const translations: Record<SupportedLanguage, Messages> = {
         : traditionalChineseOperationErrors[operation],
     reduceHistory: "減少儲存的歷史記錄？",
     reduceHistoryDescription: (current, next, deleteCount) =>
-      `將儲存上限從 ${current} 改為 ${next}，會從最舊的記錄開始刪除本機儲存中的 ${deleteCount} 筆剪貼簿記錄。`,
+      `將儲存上限從 ${current} 改為 ${next}，將從最舊的未固定項目開始，最多刪除 ${deleteCount} 筆記錄，固定項目會保留。`,
     cannotUndo: "此操作無法還原。",
     cancel: "取消",
     updating: "正在更新...",

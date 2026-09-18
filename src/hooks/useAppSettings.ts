@@ -4,7 +4,7 @@ import {
   normalizeCommandError,
   TauriCommandError,
 } from "../api/tauri";
-import type { AppSettings, Operation } from "../types";
+import type { AppSettings, Operation, ThemePreference } from "../types";
 import type { LanguagePreference } from "../i18n";
 import { runOptimisticMutation } from "./settingsMutation";
 
@@ -221,6 +221,18 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
     [runSettingsMutation]
   );
 
+  const updateTheme = useCallback(
+    async (theme: ThemePreference) => {
+      await runSettingsMutation(
+        { command: "set_theme", args: { theme }, patch: { theme } },
+        () => {
+          void updateTheme(theme);
+        }
+      );
+    },
+    [runSettingsMutation]
+  );
+
   const updateLanguage = useCallback(
     async (language: LanguagePreference) => {
       if (!settings || updating) {
@@ -382,6 +394,7 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
     updateRestoreOrdering,
     updateCompactMode,
     updateLanguage,
+    updateTheme,
     updateAutostart,
     reportError,
     retryError,

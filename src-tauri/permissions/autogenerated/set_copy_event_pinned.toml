@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-copy-event-pinned"
+description = "Enables the set_copy_event_pinned command without any pre-configured scope."
+commands.allow = ["set_copy_event_pinned"]
+
+[[permission]]
+identifier = "deny-set-copy-event-pinned"
+description = "Denies the set_copy_event_pinned command without any pre-configured scope."
+commands.deny = ["set_copy_event_pinned"]

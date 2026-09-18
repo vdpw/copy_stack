@@ -41,7 +41,10 @@ use crate::i18n::{native_strings, Language, LanguagePreference};
 use crate::lifecycle::AutostartBackend;
 use crate::pasteboard_protocol::{assess_event, prepare_event_for_restore};
 use crate::resource_policy::prepare_capture_event;
-use crate::store::{AppSettings, Database, HistoryDetail, HistoryPage, MAX_MENU_BAR_ITEM_LIMIT};
+use crate::store::{
+    AppSettings, Database, HistoryCursor, HistoryDetail, HistoryPage, ThemePreference,
+    MAX_MENU_BAR_ITEM_LIMIT,
+};
 use copy_event_listener::clipboard::ClipboardListener;
 use copy_event_listener::event::Event;
 use serde::Serialize;
@@ -233,17 +236,7 @@ fn database_unavailable(state: &AppState, operation: Operation) -> CommandError 
 }
 
 fn history_cursor_is_valid(cursor: &str) -> bool {
-    let mut parts = cursor.splitn(3, ':');
-    parts.next() == Some("v1")
-        && parts
-            .next()
-            .is_some_and(|timestamp| timestamp.parse::<i64>().is_ok())
-        && parts.next().is_some_and(|hash| {
-            hash.len() == 64
-                && hash
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        })
+    HistoryCursor::decode(cursor).is_ok()
 }
 
 fn schedule_history_mirror(state: &AppState) -> CommandResult<()> {
@@ -350,6 +343,33 @@ fn delete_copy_event(
     }
     schedule_history_mirror(&state)?;
     tray::sync(&app).map_err(|_| state_error(&state, Operation::DeleteHistory))
+}
+
+#[tauri::command]
+fn set_copy_event_pinned(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    content_hash: String,
+    pinned: bool,
+) -> CommandResult<()> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| database_unavailable(&state, Operation::PinHistory))?;
+    let found = db
+        .set_event_pinned(&content_hash, pinned)
+        .map_err(|_| database_error(&state, Operation::PinHistory))?;
+    if !found {
+        return Err(CommandError::new(
+            ErrorCode::HistoryItemNotFound,
+            Operation::PinHistory,
+            false,
+        ));
+    }
+    drop(db);
+    schedule_history_mirror(&state)?;
+    tray::sync(&app).map_err(|_| state_error(&state, Operation::PinHistory))?;
+    tray::notify_history_changed(&app).map_err(|_| state_error(&state, Operation::PinHistory))
 }
 
 #[tauri::command]
@@ -902,6 +922,38 @@ fn set_language(
     Ok(settings)
 }
 
+fn parse_theme_preference(theme: &str) -> CommandResult<ThemePreference> {
+    ThemePreference::from_code(theme).ok_or_else(|| {
+        CommandError::new(ErrorCode::InvalidSetting, Operation::UpdateSettings, false)
+    })
+}
+
+fn native_theme(theme: ThemePreference) -> Option<tauri::Theme> {
+    match theme {
+        ThemePreference::System => None,
+        ThemePreference::Light => Some(tauri::Theme::Light),
+        ThemePreference::Dark => Some(tauri::Theme::Dark),
+    }
+}
+
+#[tauri::command]
+fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: String) -> CommandResult<()> {
+    let theme =
+        parse_theme_preference(&theme).map_err(|error| record_command_error(&state, error))?;
+    {
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| database_unavailable(&state, Operation::UpdateSettings))?;
+        db.set_theme(theme)
+            .map_err(|_| database_error(&state, Operation::UpdateSettings))?;
+    }
+    // macOS appearance is application-wide, including native window chrome and menus.
+    // None removes an explicit override so the application follows the system again.
+    app.set_theme(native_theme(theme));
+    Ok(())
+}
+
 fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static str> {
     let (tx, rx) = mpsc::channel::<Event>();
     let event_app_handle = app_handle.clone();
@@ -1117,6 +1169,18 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
             };
             debug_log!("[copy_stack] database initialized");
 
+            match db.get_theme() {
+                Ok(theme) => app_handle.set_theme(native_theme(theme)),
+                Err(_) => publish_startup_error(
+                    &app_handle,
+                    CommandError::new(
+                        ErrorCode::DatabaseOperationFailed,
+                        Operation::Startup,
+                        false,
+                    ),
+                ),
+            }
+
             if db.cleanup_old_events().is_err() {
                 publish_startup_error(
                     &app_handle,
@@ -1247,6 +1311,7 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
             get_copy_events_page,
             get_history_detail,
             delete_copy_event,
+            set_copy_event_pinned,
             clear_all_events,
             copy_to_clipboard,
             get_app_settings,
@@ -1259,7 +1324,8 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
             set_menu_bar_item_limit,
             set_move_restored_item_to_top,
             set_compact_mode,
-            set_language
+            set_language,
+            set_theme
         ])
         .build(tauri::generate_context!())
         .map_err(|_| "APP_BUILD_FAILED".to_string())?;
@@ -1308,6 +1374,54 @@ mod lib_tests {
     use super::*;
     use crate::pasteboard_protocol::{REMOTE_CLIPBOARD_TYPE, SOURCE_TYPE};
     use copy_event_listener::event::{Data, Item};
+
+    #[test]
+    fn history_command_cursor_validation_accepts_v2_and_rejects_legacy_or_malformed_values() {
+        let hash = "a".repeat(64);
+        for pin in [0, 1] {
+            assert!(history_cursor_is_valid(&format!(
+                "v2:{pin}:1725000000123:{hash}"
+            )));
+        }
+
+        for cursor in [
+            String::new(),
+            format!("v1:1725000000123:{hash}"),
+            format!("v1:0:1725000000123:{hash}"),
+            format!("v2:2:1725000000123:{hash}"),
+            format!("v2:true:1725000000123:{hash}"),
+            format!("v2:0:nope:{hash}"),
+            format!("v2:0:9223372036854775808:{hash}"),
+            "v2:0:1725000000123".to_string(),
+            "v2:0:1725000000123:short".to_string(),
+            format!("v2:0:1725000000123:{}", hash.to_uppercase()),
+            format!("v2:0:1725000000123:{hash}:extra"),
+        ] {
+            assert!(
+                !history_cursor_is_valid(&cursor),
+                "accepted invalid cursor: {cursor}"
+            );
+        }
+    }
+
+    #[test]
+    fn theme_command_accepts_only_supported_preferences_and_maps_native_appearance() {
+        for (value, native) in [
+            ("system", None),
+            ("light", Some(tauri::Theme::Light)),
+            ("dark", Some(tauri::Theme::Dark)),
+        ] {
+            let theme = parse_theme_preference(value).expect("supported theme should parse");
+            assert_eq!(theme.code(), value);
+            assert_eq!(native_theme(theme), native);
+        }
+        for invalid in ["", "auto", "Dark", " light "] {
+            assert_eq!(
+                parse_theme_preference(invalid).unwrap_err(),
+                CommandError::new(ErrorCode::InvalidSetting, Operation::UpdateSettings, false)
+            );
+        }
+    }
 
     #[test]
     fn global_operation_error_surface_is_debug_only() {

@@ -54,7 +54,7 @@ restore path.
 
 Accepted events are classified once before the database lock used for the
 upsert. Duplicate identity updates the stored body and source/remote metadata
-without moving the row. New rows receive a monotonic timestamp. Restore
+without moving the row or resetting its pin flag. New rows receive a monotonic timestamp. Restore
 suppression is checked before insertion.
 
 Mirror scheduling happens after commit. The worker coalesces row-free refresh
@@ -95,7 +95,24 @@ A nonempty search query follows the same cursor order and bounded summary path,
 but joins the rebuildable FTS index across all retained rows. Search never
 decodes restore payloads or reads local media. The menu bar Search action shows
 History and emits `app:focus-search`; search results are then restored or deleted
-through the same canonical paths as ordinary History rows.
+through the same canonical paths as ordinary History rows. Both lists put
+pinned summaries first, then sort by descending timestamp and ascending hash
+within each group. The cursor carries all three ordering fields.
+
+## Pin And Unpin
+
+The History card action invokes `set_copy_event_pinned` with the content hash
+and desired boolean state. It neither expands the card nor writes the clipboard.
+The backend updates SQLite without changing the timestamp, applies retention
+when unpinning, commits, schedules the mirror, rebuilds the menu, and emits
+`clipboard-history-updated`. The frontend refreshes authoritative pages and
+shows the new section/badge state; a failed command reports the `pin_history`
+operation and only offers a retry when permitted by the error contract.
+
+The menu gives pinned entries their own leading section and pin marker while
+retaining direct-click restore and lazy hover previews. Its combined item limit
+is filled with pinned entries first; Open History provides access to the rest.
+Pin management stays in the main window.
 
 ## Restore From History Or Menu Bar
 
@@ -112,7 +129,8 @@ Both entry points:
 
 When restore-to-top is enabled, the backend then updates the timestamp, takes
 and schedules a mirror snapshot, refreshes the menu bar, and emits
-`clipboard-history-updated`. When disabled, persisted history does not change
+`clipboard-history-updated`. The item moves to the top of its pinned or ordinary
+group. When disabled, persisted history does not change
 and the UI does not perform a redundant reload.
 
 A successful pasteboard write is the restore command's terminal success point.
@@ -133,11 +151,18 @@ History delete and Settings clear commands:
 5. rebuild the menu bar;
 6. let History refresh after a delete, or reload Settings totals after a clear.
 
-The tray clear action additionally emits `clipboard-history-updated`.
+Clear from Settings or the tray deletes only unpinned rows. Both labels and the
+Settings confirmation make this explicit. Explicit item deletion still removes
+a pinned item when requested; in compact mode it removes the whole equivalent
+text group. The tray clear action additionally emits
+`clipboard-history-updated`.
 
 Changing `max_items` or `max_history_bytes` stores the value, removes oldest
-rows until both budgets are met, schedules the mirror, rebuilds the menu bar,
-and notifies History. Settings uses aggregate counts for confirmation.
+unpinned rows until both budgets are met or none remain, schedules the mirror,
+rebuilds the menu bar, and notifies History. Pinned rows count toward totals but
+survive even when they alone exceed a budget. Settings uses aggregate counts
+for confirmation and explains the pin exception. Unpinning applies the same
+cleanup immediately.
 
 ## Compact Mode
 
@@ -145,8 +170,11 @@ Protocol assessment always sees the original event. Compact capture accepts only
 one valid nonblank plain-text projection and preserves dedicated source/remote
 metadata. Older full rows are not rewritten: page, menu, and restore queries
 project eligible rows to canonical text and hide image/file/video-dominant
-rows. Rows with the same effective text appear once. JSONL uses this same
-projection and is refreshed when the mode changes.
+rows. Rows with the same effective text appear once and are shown as pinned if
+any equivalent stored row is pinned. Pin/Unpin and explicit deletion affect the
+whole effective-text group. Capturing that text again consolidates the group while retaining its
+newest timestamp and any pin flag. JSONL uses the compact projection and is
+refreshed when the mode changes.
 
 ## Lifecycle And Autostart
 

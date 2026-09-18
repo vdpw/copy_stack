@@ -5,6 +5,7 @@ fn main() {
             "get_copy_events_page",
             "get_history_detail",
             "delete_copy_event",
+            "set_copy_event_pinned",
             "clear_all_events",
             "copy_to_clipboard",
             "get_app_settings",
@@ -18,6 +19,7 @@ fn main() {
             "set_move_restored_item_to_top",
             "set_compact_mode",
             "set_language",
+            "set_theme",
         ]),
     ))
     .expect("failed to build Copy Stack with scoped command permissions");

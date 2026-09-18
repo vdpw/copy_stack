@@ -11,7 +11,7 @@ interface TestIntersectionEntry {
 }
 
 interface TestIntersectionOptions {
-  root?: null;
+  root?: HTMLElement;
   rootMargin?: string;
   threshold?: number;
 }
@@ -47,11 +47,13 @@ describe("observeHistoryEnd", () => {
 
     const target = document.createElement("div");
     const onVisible = vi.fn();
-    const cleanup = observeHistoryEnd(target, onVisible);
+    const root = document.createElement("main");
+    root.append(target);
+    const cleanup = observeHistoryEnd(target, onVisible, root);
 
     expect(observe).toHaveBeenCalledWith(target);
     expect(options).toEqual({
-      root: null,
+      root,
       rootMargin: historyLoadAheadMargin,
       threshold: 0,
     });
@@ -70,7 +72,11 @@ describe("observeHistoryEnd", () => {
     const onVisible = vi.fn();
 
     expect(() =>
-      observeHistoryEnd(document.createElement("div"), onVisible)()
+      observeHistoryEnd(
+        document.createElement("div"),
+        onVisible,
+        document.createElement("main")
+      )()
     ).not.toThrow();
     expect(onVisible).not.toHaveBeenCalled();
   });

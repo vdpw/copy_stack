@@ -1,4 +1,4 @@
-use crate::{tray::EVENT_MENU_START_INDEX, AppState};
+use crate::{tray::TrayPreviewItem, AppState};
 use objc2::{
     define_class, msg_send,
     rc::Retained,
@@ -40,7 +40,7 @@ struct PreviewLayout {
 }
 
 struct TrayPreviewMenuDelegateIvars {
-    content_hashes: Vec<String>,
+    content_hashes: Vec<Option<TrayPreviewItem>>,
     loader: PreviewLoader,
     panel: Retained<NSPanel>,
     text_view: Retained<NSTextView>,
@@ -79,7 +79,7 @@ thread_local! {
 impl TrayPreviewMenuDelegate {
     fn new(
         mtm: MainThreadMarker,
-        content_hashes: Vec<String>,
+        content_hashes: Vec<Option<TrayPreviewItem>>,
         loader: PreviewLoader,
         menu_anchor_x: f64,
     ) -> Retained<Self> {
@@ -105,15 +105,17 @@ impl TrayPreviewMenuDelegate {
             self.hide_preview();
             return;
         };
-        let Some(event_index) = menu_index.checked_sub(EVENT_MENU_START_INDEX) else {
-            self.hide_preview();
-            return;
-        };
-        let Some(content_hash) = self.ivars().content_hashes.get(event_index) else {
+        let Some(preview_item) = self
+            .ivars()
+            .content_hashes
+            .get(menu_index)
+            .and_then(Option::as_ref)
+        else {
             self.hide_preview();
             return;
         };
 
+        let content_hash = &preview_item.content_hash;
         if self.ivars().current_hash.borrow().as_deref() == Some(content_hash.as_str()) {
             return;
         }
@@ -123,7 +125,7 @@ impl TrayPreviewMenuDelegate {
             return;
         };
         *self.ivars().current_hash.borrow_mut() = Some(content_hash.clone());
-        if !preview_needs_panel(&item.title().to_string(), &preview) {
+        if !preview_needs_panel(&item.title().to_string(), &preview, preview_item.is_pinned) {
             self.ivars().panel.orderOut(None);
             return;
         }
@@ -170,7 +172,7 @@ impl TrayPreviewMenuDelegate {
 pub(crate) fn install<R: Runtime>(
     app: &AppHandle<R>,
     tray: &TrayIcon<R>,
-    content_hashes: Vec<String>,
+    content_hashes: Vec<Option<TrayPreviewItem>>,
 ) -> Result<(), String> {
     let preview_app = app.clone();
     let loader: PreviewLoader = Arc::new(move |content_hash| {
@@ -397,8 +399,13 @@ fn estimated_preview_layout(
     })
 }
 
-fn preview_needs_panel(menu_title: &str, preview: &str) -> bool {
-    menu_title != preview
+fn preview_needs_panel(menu_title: &str, preview: &str, is_pinned: bool) -> bool {
+    let content_title = if is_pinned {
+        menu_title.strip_prefix("📌 ").unwrap_or(menu_title)
+    } else {
+        menu_title
+    };
+    content_title != preview
 }
 
 fn character_columns(character: char, columns: usize) -> usize {
@@ -496,22 +503,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pin_decoration_does_not_open_a_redundant_preview_or_strip_user_text() {
+        assert!(!preview_needs_panel("📌 short text", "short text", true));
+        assert!(!preview_needs_panel(
+            "📌 📌 user text",
+            "📌 user text",
+            true
+        ));
+        assert!(!preview_needs_panel("📌 user text", "📌 user text", false));
+        assert!(preview_needs_panel(
+            "📌 short...",
+            "short text with more content",
+            true
+        ));
+    }
+
+    #[test]
     fn preview_is_hidden_only_when_the_menu_title_contains_the_complete_content() {
         assert!(!preview_needs_panel(
             "short clipboard text",
-            "short clipboard text"
+            "short clipboard text",
+            false
         ));
         assert!(preview_needs_panel(
             "first line second line",
-            "first line\nsecond line"
+            "first line\nsecond line",
+            false
         ));
         assert!(preview_needs_panel(
             "value with spaces",
-            "value  with  spaces"
+            "value  with  spaces",
+            false
         ));
         assert!(preview_needs_panel(
             "long clipboard text...",
-            "long clipboard text continues"
+            "long clipboard text continues",
+            false
         ));
     }
 

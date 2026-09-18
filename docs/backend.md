@@ -112,8 +112,12 @@ panicking across the command boundary.
 
 `get_copy_events_page(cursor?, page_size?, query?)` returns a stable cursor page
 of bounded `HistorySummary` values. Default size is 50 and maximum size is 100.
-An empty query uses the timestamp index; a nonempty query joins the versioned
-FTS index and returns its matching count while preserving history order. The
+Both ordinary and search pages order pinned summaries first, followed by
+`timestamp DESC, content_hash ASC` within each group. The `v2` cursor includes
+pin state. The command boundary uses the same `HistoryCursor::decode` as
+database pagination, so newly emitted cursors are accepted on subsequent
+requests. A nonempty query joins the versioned FTS index and returns its
+matching count while preserving that history order. The
 response also carries total visible count, total accounted bytes, and a bounded
 plain-text excerpt for search matches outside the ordinary collapsed summary.
 
@@ -131,6 +135,22 @@ and full local paths never cross IPC.
 `delete_copy_event` and `clear_all_events` commit SQLite first, release the
 lock, schedule an optional mirror refresh, and sync the tray. The frontend
 reloads after these commands.
+
+`clear_all_events` deletes only unpinned rows. Explicit `delete_copy_event`
+still permits deletion of a pinned item, deleting all equivalent text rows when
+compact mode presents them as one item. `set_copy_event_pinned(content_hash,
+pinned)` persists the flag without changing the timestamp; compact mode applies
+the action to every row with the same effective text. Unpinning also enforces
+retention in that transaction. After commit it schedules the mirror, syncs the
+tray, and emits `clipboard-history-updated`. Failures use the `pin_history`
+operation, including `history_item_not_found` for a missing target.
+
+The tray lists Pinned before Recent History with separate section labels and a
+separator. Pinned entries carry a pin marker; clicking any entry still restores
+it directly. Pin/Unpin lives in the main History view. The configured menu item
+limit applies to the combined list, giving pinned entries priority; a zero
+limit shows up to 1000 entries. The Open History action remains available for
+items beyond that limit.
 
 `copy_to_clipboard` uses the same canonical restore helper as the tray:
 
@@ -160,15 +180,27 @@ diagnostic ring without showing a global banner.
 - `history_count`, `history_bytes`, and `history_limit_bytes`;
 - `max_event_bytes`;
 - menu visibility, menu item limit, restore ordering, compact mode;
-- persisted and resolved language.
+- persisted and resolved language;
+- the persisted `theme` preference (`system`, `light`, or `dark`).
 
 Mutators are `set_max_items`, `set_max_history_bytes`,
 `set_show_in_menu_bar`, `set_menu_bar_item_limit`,
-`set_move_restored_item_to_top`, `set_compact_mode`, and `set_language`.
+`set_move_restored_item_to_top`, `set_compact_mode`, `set_language`, and
+`set_theme`.
 History item limits accept 1–1000. The menu item limit accepts 0–1000, where
-0 displays all retained items. The byte command accepts 16 MiB–4 GiB. Lower
-history limits run cleanup before notifying History and the tray; changing only
+0 displays all retained items up to the 1000-entry menu ceiling. The byte command
+accepts 16 MiB–4 GiB. Lower history limits run cleanup of unpinned rows before
+notifying History and the tray. Pinned rows remain included in totals and may
+keep them above a configured limit; changing only
 the menu limit rebuilds the tray without deleting history.
+
+`set_theme(theme)` validates and persists `system`, `light`, or `dark`, then
+synchronizes the native window theme. The default `system` preference follows
+the operating system; an explicit value requests that native appearance. Apply
+the saved preference at startup as well as after a settings change. The frontend
+uses the same preference for webview colors, resolving system appearance with a
+live media query. Keep the command, serialized settings shape, permission, and
+main-window capability synchronized.
 
 `get_autostart_status` and `set_autostart_enabled` operate on the OS login item
 and return verified state.

@@ -35,6 +35,7 @@ pub enum Operation {
     LoadHistoryDetail,
     RestoreClipboard,
     DeleteHistory,
+    PinHistory,
     ClearHistory,
     LoadSettings,
     UpdateSettings,

@@ -1,5 +1,5 @@
 use crate::i18n::LanguagePreference;
-use crate::store::models::DEFAULT_MAX_HISTORY_BYTES;
+use crate::store::models::{ThemePreference, DEFAULT_MAX_HISTORY_BYTES};
 use rusqlite::{Connection, Result};
 
 pub(super) const DEFAULT_MAX_ITEMS: u32 = 100;
@@ -10,8 +10,9 @@ pub(super) const MENU_BAR_ITEM_LIMIT_KEY: &str = "menu_bar_item_limit";
 pub(super) const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
 pub(super) const COMPACT_MODE_KEY: &str = "compact_mode";
 pub(super) const LANGUAGE_KEY: &str = "language";
+pub(super) const THEME_KEY: &str = "theme";
 
-pub(super) fn default_entries() -> [(&'static str, String); 7] {
+pub(super) fn default_entries() -> [(&'static str, String); 8] {
     [
         (MAX_ITEMS_KEY, DEFAULT_MAX_ITEMS.to_string()),
         (MAX_HISTORY_BYTES_KEY, DEFAULT_MAX_HISTORY_BYTES.to_string()),
@@ -20,6 +21,7 @@ pub(super) fn default_entries() -> [(&'static str, String); 7] {
         (MOVE_RESTORED_ITEM_TO_TOP_KEY, "false".to_string()),
         (COMPACT_MODE_KEY, "false".to_string()),
         (LANGUAGE_KEY, "system".to_string()),
+        (THEME_KEY, "system".to_string()),
     ]
 }
 
@@ -80,6 +82,17 @@ pub(super) fn get_language(connection: &Connection) -> Result<LanguagePreference
 
 pub(super) fn set_language(connection: &Connection, value: LanguagePreference) -> Result<()> {
     set(connection, LANGUAGE_KEY, value.code())
+}
+
+pub(super) fn get_theme(connection: &Connection) -> Result<ThemePreference> {
+    Ok(get(connection, THEME_KEY)?
+        .as_deref()
+        .and_then(ThemePreference::from_code)
+        .unwrap_or_default())
+}
+
+pub(super) fn set_theme(connection: &Connection, value: ThemePreference) -> Result<()> {
+    set(connection, THEME_KEY, value.code())
 }
 
 pub(super) fn get(connection: &Connection, key: &str) -> Result<Option<String>> {

@@ -7,6 +7,8 @@ import {
   Folder,
   Image as ImageIcon,
   Search,
+  Pin,
+  PinOff,
   Trash2,
   Video,
 } from "lucide-react";
@@ -40,6 +42,7 @@ interface EventCardProps {
   expanded: boolean;
   copied: boolean;
   restoring: boolean;
+  pinning: boolean;
   searchQuery?: string;
   language: SupportedLanguage;
   messages: Messages;
@@ -47,6 +50,7 @@ interface EventCardProps {
   onRetryDetail: () => void;
   onRestore: () => void;
   onDelete: () => void;
+  onPin: () => void;
 }
 
 function renderEventTypeIcon(dataType: string) {
@@ -215,6 +219,7 @@ export function EventCard({
   expanded,
   copied,
   restoring,
+  pinning,
   searchQuery = "",
   language,
   messages,
@@ -222,6 +227,7 @@ export function EventCard({
   onRetryDetail,
   onRestore,
   onDelete,
+  onPin,
 }: EventCardProps) {
   const fallbackLabel = getEventTypeLabel(messages, summary.data_type);
   const text = decodeSummaryDisplay(summary, fallbackLabel, messages.video);
@@ -244,6 +250,7 @@ export function EventCard({
     : fallbackLabel;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.target !== event.currentTarget) return;
     if (event.key !== "Enter" && event.key !== " ") {
       return;
     }
@@ -253,19 +260,27 @@ export function EventCard({
 
   return (
     <article
-      aria-expanded={expanded}
       className={`event-card ${expanded ? "event-card-expanded" : ""} ${
         copied ? "event-card-copied" : ""
-      }`}
+      } ${summary.is_pinned ? "event-card-pinned" : ""}`}
       data-history-hash={summary.content_hash}
       onClick={onToggle}
-      onKeyDown={handleKeyDown}
-      role="button"
-      tabIndex={0}
     >
-      <div className="event-content">
+      <div
+        aria-expanded={expanded}
+        className="event-content"
+        onKeyDown={handleKeyDown}
+        role="button"
+        tabIndex={0}
+      >
         <p className="event-meta">
           <span>{typeLabel}</span>
+          {summary.is_pinned && (
+            <span className="event-pinned-badge">
+              <Pin size={12} aria-hidden="true" />
+              {messages.pinned}
+            </span>
+          )}
           {summary.is_remote_clipboard && (
             <span className="event-remote-badge">
               {messages.remoteClipboard}
@@ -348,6 +363,24 @@ export function EventCard({
       </div>
 
       <div className="event-actions">
+        <button
+          aria-label={summary.is_pinned ? messages.unpinItem : messages.pinItem}
+          aria-pressed={summary.is_pinned}
+          className={`btn btn-secondary ${summary.is_pinned ? "btn-pinned" : ""}`}
+          disabled={pinning}
+          title={summary.is_pinned ? messages.unpinItem : messages.pinItem}
+          onClick={event => {
+            event.stopPropagation();
+            onPin();
+          }}
+          type="button"
+        >
+          {summary.is_pinned ? (
+            <PinOff size={16} aria-hidden="true" />
+          ) : (
+            <Pin size={16} aria-hidden="true" />
+          )}
+        </button>
         <button
           aria-label={
             copied

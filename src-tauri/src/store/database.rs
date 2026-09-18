@@ -15,8 +15,8 @@ use crate::store::classification::{
 };
 use crate::store::models::{
     AppSettings, HistoryCursor, HistoryDetail, HistoryDetailSeed, HistoryPage, HistoryStats,
-    HistorySummary, TrayEvent, TrayPreview, DEFAULT_HISTORY_PAGE_SIZE, MAX_HISTORY_PAGE_SIZE,
-    MAX_MENU_BAR_ITEM_LIMIT, MAX_SUMMARY_DISPLAY_BYTES,
+    HistorySummary, ThemePreference, TrayEvent, TrayPreview, DEFAULT_HISTORY_PAGE_SIZE,
+    MAX_HISTORY_PAGE_SIZE, MAX_MENU_BAR_ITEM_LIMIT, MAX_SUMMARY_DISPLAY_BYTES,
 };
 use crate::store::preview;
 #[cfg(test)]
@@ -86,6 +86,7 @@ impl StoredEvent {
 struct DbRow {
     event_data: Vec<u8>,
     timestamp: i64,
+    is_pinned: bool,
 }
 
 struct PersistedMetadata {
@@ -150,6 +151,7 @@ enum MigrationFailpoint {
     AfterValidation,
     AfterDropOriginal,
     AfterSearchIndexBuild,
+    AfterPinColumn,
 }
 
 #[derive(Clone, Debug)]
@@ -358,6 +360,28 @@ impl Database {
                     )?;
                     3
                 }
+                3 => {
+                    let columns = Self::table_columns_in(&transaction, "clipboard_events")?;
+                    if !Self::clipboard_events_schema_is_current(&transaction, &columns)?
+                        && !Self::clipboard_events_schema_matches(
+                            &transaction,
+                            &columns,
+                            &REQUIRED_EVENT_COLUMNS[..13],
+                        )?
+                    {
+                        return Err(rusqlite::Error::InvalidParameterName(
+                            "schema v3 clipboard history shape is invalid".to_string(),
+                        ));
+                    }
+                    if !columns.iter().any(|column| column == "is_pinned") {
+                        transaction.execute(
+                            "ALTER TABLE clipboard_events ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1))",
+                            [],
+                        )?;
+                    }
+                    Self::maybe_fail_migration(failpoint, MigrationFailpoint::AfterPinColumn)?;
+                    4
+                }
                 version => {
                     return Err(rusqlite::Error::InvalidParameterName(format!(
                         "database schema version {version} has no migration to {CURRENT_SCHEMA_VERSION}"
@@ -468,7 +492,13 @@ impl Database {
 
     fn migrate_v2_to_v3(transaction: &Transaction<'_>) -> Result<()> {
         let columns = Self::table_columns_in(transaction, "clipboard_events")?;
-        if !Self::clipboard_events_schema_is_current(transaction, &columns)? {
+        if !Self::clipboard_events_schema_is_current(transaction, &columns)?
+            && !Self::clipboard_events_schema_matches(
+                transaction,
+                &columns,
+                &REQUIRED_EVENT_COLUMNS[..13],
+            )?
+        {
             return Err(rusqlite::Error::InvalidParameterName(
                 "schema v2 clipboard history shape is invalid".to_string(),
             ));
@@ -612,8 +642,13 @@ impl Database {
         } else {
             "ORDER BY timestamp DESC, rowid DESC"
         };
+        let pin_column = if columns.iter().any(|column| column == "is_pinned") {
+            "is_pinned"
+        } else {
+            "0"
+        };
         let query = format!(
-            "SELECT event_data, timestamp FROM clipboard_events {}",
+            "SELECT event_data, timestamp, {pin_column} FROM clipboard_events {}",
             order_clause
         );
 
@@ -622,6 +657,7 @@ impl Database {
             Ok(DbRow {
                 event_data: Self::event_blob_from_row(row, 0)?,
                 timestamp: Self::timestamp_from_row(row, 1)?,
+                is_pinned: row.get(2)?,
             })
         })?;
 
@@ -716,8 +752,20 @@ impl Database {
         connection: &Connection,
         columns: &[String],
     ) -> Result<bool> {
-        Ok(columns.len() == REQUIRED_EVENT_COLUMNS.len()
-            && REQUIRED_EVENT_COLUMNS
+        Ok(
+            Self::clipboard_events_schema_matches(connection, columns, &REQUIRED_EVENT_COLUMNS)?
+                && Self::column_declared_type_in(connection, "clipboard_events", "is_pinned")?
+                    .is_some_and(|column_type| column_type.eq_ignore_ascii_case("INTEGER")),
+        )
+    }
+
+    fn clipboard_events_schema_matches(
+        connection: &Connection,
+        columns: &[String],
+        required_columns: &[&str],
+    ) -> Result<bool> {
+        Ok(columns.len() == required_columns.len()
+            && required_columns
                 .iter()
                 .all(|required| columns.iter().any(|column| column == required))
             && Self::column_declared_type_in(connection, "clipboard_events", "event_data")?
@@ -790,6 +838,12 @@ impl Database {
             if classified.content_hash.is_empty()
                 || !seen_hashes.insert(classified.content_hash.clone())
             {
+                if row.is_pinned {
+                    connection.execute(
+                        &format!("UPDATE {table} SET is_pinned = 1 WHERE content_hash = ?1"),
+                        [&classified.content_hash],
+                    )?;
+                }
                 stats.duplicate_rows += 1;
                 continue;
             }
@@ -818,9 +872,9 @@ impl Database {
                         is_remote_clipboard,
                         byte_count,
                         timestamp,
-                        metadata_version
+                        metadata_version, is_pinned
                      ) VALUES (
-                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
                      )"
                 ),
                 params![
@@ -837,6 +891,7 @@ impl Database {
                     metadata.byte_count,
                     row.timestamp,
                     CLASSIFIER_METADATA_VERSION,
+                    row.is_pinned,
                 ],
             )?;
             stats.inserted_rows += 1;
@@ -888,6 +943,7 @@ impl Database {
     fn validate_clipboard_event_indexes(connection: &Connection) -> Result<()> {
         for index in [
             "idx_clipboard_events_timestamp",
+            "idx_clipboard_events_pinned",
             "idx_clipboard_events_compact",
         ] {
             let exists = connection
@@ -1079,6 +1135,7 @@ impl Database {
             menu_bar_item_limit: self.get_menu_bar_item_limit()?,
             move_restored_item_to_top: self.get_move_restored_item_to_top()?,
             compact_mode: self.get_compact_mode()?,
+            theme: self.get_theme()?.code().to_string(),
             language: language.code().to_string(),
             resolved_language: language.resolve().code().to_string(),
             history_count: history.total_items,
@@ -1142,6 +1199,14 @@ impl Database {
 
     pub(crate) fn set_language(&self, language: LanguagePreference) -> Result<()> {
         settings::set_language(&self.conn, language)
+    }
+
+    pub(crate) fn get_theme(&self) -> Result<ThemePreference> {
+        settings::get_theme(&self.conn)
+    }
+
+    pub(crate) fn set_theme(&self, theme: ThemePreference) -> Result<()> {
+        settings::set_theme(&self.conn, theme)
     }
 
     pub(crate) fn prepare_history_event(
@@ -1293,13 +1358,17 @@ impl Database {
     ) -> Result<bool> {
         let transaction = self.conn.unchecked_transaction()?;
         let mut stmt = transaction.prepare(
-            "SELECT content_hash, timestamp
+            "SELECT content_hash, timestamp, is_pinned
              FROM clipboard_events
              WHERE compact_content_hash = ?1
              ORDER BY timestamp DESC, content_hash ASC",
         )?;
         let rows = stmt.query_map([&classified.content_hash], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, bool>(2)?,
+            ))
         })?;
         let mut matching_rows = Vec::new();
         for row in rows {
@@ -1307,13 +1376,14 @@ impl Database {
         }
         drop(stmt);
 
-        if let Some((newest_content_hash, newest_timestamp)) = matching_rows.first() {
+        if let Some((newest_content_hash, newest_timestamp, _)) = matching_rows.first() {
+            let is_pinned = matching_rows.iter().any(|(_, _, pinned)| *pinned);
             let existing_target_hash = matching_rows
                 .iter()
-                .find(|(content_hash, _)| content_hash == &classified.content_hash)
-                .map(|(content_hash, _)| content_hash.as_str());
+                .find(|(content_hash, _, _)| content_hash == &classified.content_hash)
+                .map(|(content_hash, _, _)| content_hash.as_str());
             let row_to_update = existing_target_hash.unwrap_or(newest_content_hash);
-            for (content_hash, _) in &matching_rows {
+            for (content_hash, _, _) in &matching_rows {
                 if content_hash != row_to_update {
                     transaction.execute(
                         "DELETE FROM clipboard_events WHERE content_hash = ?1",
@@ -1335,7 +1405,8 @@ impl Database {
                      is_remote_clipboard = ?10,
                      byte_count = ?11,
                      timestamp = ?12,
-                     metadata_version = ?13
+                     metadata_version = ?13,
+                     is_pinned = ?15
                  WHERE content_hash = ?14",
                 params![
                     &classified.content_hash,
@@ -1352,6 +1423,7 @@ impl Database {
                     newest_timestamp,
                     CLASSIFIER_METADATA_VERSION,
                     row_to_update,
+                    is_pinned,
                 ],
             )?;
             Self::upsert_search_index_in(
@@ -1819,13 +1891,15 @@ impl Database {
         } else {
             "1 = 1"
         };
+        let pin_expression = Self::pin_summary_expression(compact_mode, "event");
         let cursor_filter = if cursor.is_some() {
-            "AND (
+            format!(
+                "AND ({pin_expression} < ?6 OR ({pin_expression} = ?6 AND (
                 event.timestamp < ?3
-                OR (event.timestamp = ?3 AND event.content_hash > ?4)
-             )"
+                OR (event.timestamp = ?3 AND event.content_hash > ?4))))"
+            )
         } else {
-            ""
+            String::new()
         };
         let limit_parameter = if cursor.is_some() { "?5" } else { "?3" };
         let data_type = if compact_mode {
@@ -1866,14 +1940,15 @@ impl Database {
                             THEN '…'
                             ELSE ''
                         END
-                END
+                END,
+                {pin_expression}
              FROM clipboard_events AS event
              JOIN clipboard_event_search
                ON clipboard_event_search.content_hash = event.content_hash
              WHERE {search_filter}
                AND {compact_filter}
              {cursor_filter}
-             ORDER BY event.timestamp DESC, event.content_hash ASC
+             ORDER BY {pin_expression} DESC, event.timestamp DESC, event.content_hash ASC
              LIMIT {limit_parameter}"
         );
         let mut statement = self.conn.prepare(&query_sql)?;
@@ -1890,6 +1965,7 @@ impl Database {
                 is_remote_clipboard: row.get(6)?,
                 byte_count: row.get::<_, i64>(7)?.max(0) as u64,
                 search_preview: row.get(8)?,
+                is_pinned: row.get(9)?,
             })
         };
         let rows = if let Some(cursor) = cursor.as_ref() {
@@ -1899,7 +1975,8 @@ impl Database {
                     query,
                     cursor.timestamp,
                     &cursor.content_hash,
-                    fetch_limit
+                    fetch_limit,
+                    cursor.is_pinned
                 ],
                 map_row,
             )?
@@ -1913,6 +1990,7 @@ impl Database {
         }
         let next_cursor = has_more.then(|| items.last()).flatten().map(|item| {
             HistoryCursor {
+                is_pinned: item.is_pinned,
                 timestamp: item.timestamp,
                 content_hash: item.content_hash.clone(),
             }
@@ -1962,6 +2040,7 @@ impl Database {
         }
         let next_cursor = has_more.then(|| items.last()).flatten().map(|item| {
             HistoryCursor {
+                is_pinned: item.is_pinned,
                 timestamp: item.timestamp,
                 content_hash: item.content_hash.clone(),
             }
@@ -2012,13 +2091,14 @@ impl Database {
         } else {
             "1 = 1"
         };
+        let pin_expression = Self::pin_summary_expression(compact_mode, alias);
         let cursor_filter = if cursor.is_some() {
-            "AND (
-                timestamp < ?1
-                OR (timestamp = ?1 AND content_hash > ?2)
-             )"
+            format!(
+                "AND ({pin_expression} < ?4 OR ({pin_expression} = ?4 AND (
+                timestamp < ?1 OR (timestamp = ?1 AND content_hash > ?2))))"
+            )
         } else {
-            ""
+            String::new()
         };
         let limit_parameter = if cursor.is_some() { "?3" } else { "?1" };
         let from = if compact_mode {
@@ -2035,11 +2115,12 @@ impl Database {
                 timestamp,
                 source_bundle_id,
                 is_remote_clipboard,
-                byte_count
+                byte_count,
+                {pin_expression}
              FROM {from}
              WHERE {compact_filter}
              {cursor_filter}
-             ORDER BY {alias}.timestamp DESC, {alias}.content_hash ASC
+             ORDER BY {pin_expression} DESC, {alias}.timestamp DESC, {alias}.content_hash ASC
              LIMIT {limit_parameter}"
         );
         let mut statement = self.conn.prepare(&query)?;
@@ -2056,17 +2137,31 @@ impl Database {
                 is_remote_clipboard: row.get(6)?,
                 byte_count: row.get::<_, i64>(7)?.max(0) as u64,
                 search_preview: None,
+                is_pinned: row.get(8)?,
             })
         };
         let rows = if let Some(cursor) = cursor {
             statement.query_map(
-                params![cursor.timestamp, &cursor.content_hash, limit],
+                params![
+                    cursor.timestamp,
+                    &cursor.content_hash,
+                    limit,
+                    cursor.is_pinned
+                ],
                 map_row,
             )?
         } else {
             statement.query_map([limit], map_row)?
         };
         rows.collect()
+    }
+
+    fn pin_summary_expression(compact_mode: bool, alias: &str) -> String {
+        if compact_mode {
+            format!("EXISTS (SELECT 1 FROM clipboard_events AS pinned WHERE pinned.compact_content_hash = {alias}.compact_content_hash AND pinned.is_pinned = 1)")
+        } else {
+            format!("{alias}.is_pinned")
+        }
     }
 
     fn data_type_has_detail(data_type: &str) -> bool {
@@ -2382,19 +2477,29 @@ impl Database {
         } else {
             "1 = 1"
         };
+        let pin_expression = Self::pin_summary_expression(
+            compact_mode,
+            if compact_mode {
+                "event"
+            } else {
+                "clipboard_events"
+            },
+        );
         let query = format!(
             "SELECT
                 content_hash,
                 {data_type},
-                summary_display
+                summary_display,
+                {pin_expression}
              FROM {from}
              WHERE {compact_filter}
-             ORDER BY timestamp DESC, content_hash ASC
+             ORDER BY {pin_expression} DESC, timestamp DESC, content_hash ASC
              LIMIT ?1"
         );
         let mut statement = self.conn.prepare(&query)?;
         let rows = statement.query_map([limit], |row| {
             Ok(TrayEvent {
+                is_pinned: row.get(3)?,
                 content_hash: row.get(0)?,
                 data_type: row.get(1)?,
                 display: row.get(2)?,
@@ -2578,15 +2683,41 @@ impl Database {
     }
 
     pub fn delete_event(&self, content_hash: &str) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM clipboard_events WHERE content_hash = ?1",
-            [content_hash],
-        )?;
+        let query = if self.get_compact_mode()? {
+            "DELETE FROM clipboard_events
+             WHERE content_hash = ?1 OR compact_content_hash = (
+                 SELECT compact_content_hash FROM clipboard_events WHERE content_hash = ?1
+             )"
+        } else {
+            "DELETE FROM clipboard_events WHERE content_hash = ?1"
+        };
+        self.conn.execute(query, [content_hash])?;
         Ok(())
     }
 
+    pub fn set_event_pinned(&self, content_hash: &str, pinned: bool) -> Result<bool> {
+        let transaction = self.conn.unchecked_transaction()?;
+        let changed = if self.get_compact_mode()? {
+            transaction.execute(
+                "UPDATE clipboard_events SET is_pinned = ?2 WHERE content_hash = ?1 OR compact_content_hash = (SELECT compact_content_hash FROM clipboard_events WHERE content_hash = ?1)",
+                params![content_hash, pinned],
+            )?
+        } else {
+            transaction.execute(
+                "UPDATE clipboard_events SET is_pinned = ?2 WHERE content_hash = ?1",
+                params![content_hash, pinned],
+            )?
+        };
+        if !pinned {
+            Self::cleanup_old_events_in(&transaction)?;
+        }
+        transaction.commit()?;
+        Ok(changed > 0)
+    }
+
     pub fn clear_all_events(&self) -> Result<()> {
-        self.conn.execute("DELETE FROM clipboard_events", [])?;
+        self.conn
+            .execute("DELETE FROM clipboard_events WHERE is_pinned = 0", [])?;
         Ok(())
     }
 
@@ -2609,6 +2740,7 @@ impl Database {
             connection.execute(
                 "DELETE FROM clipboard_events WHERE content_hash IN (
                     SELECT content_hash FROM clipboard_events
+                    WHERE is_pinned = 0
                     ORDER BY timestamp ASC, content_hash DESC
                     LIMIT ?1
                 )",
@@ -2627,6 +2759,7 @@ impl Database {
             let mut statement = connection.prepare(
                 "SELECT content_hash, byte_count
                  FROM clipboard_events
+                 WHERE is_pinned = 0
                  ORDER BY timestamp ASC, content_hash DESC",
             )?;
             let rows = statement.query_map([], |row| {
@@ -2934,6 +3067,393 @@ mod tests {
         assert_eq!(classified.display, expected);
     }
 
+    fn remove_pin_schema_for_migration_fixture(db: &Database, version: i64) {
+        db.conn
+            .execute_batch(
+                "DROP INDEX idx_clipboard_events_pinned;
+                 ALTER TABLE clipboard_events DROP COLUMN is_pinned;",
+            )
+            .expect("fixture should match the released pre-pin schema");
+        db.conn
+            .pragma_update(None, "user_version", version)
+            .expect("fixture version should update");
+    }
+
+    #[test]
+    fn pin_migration_is_atomic_and_persists_across_restarts() {
+        let path = temp_database_path("pin_migration");
+        let db = Database::open_path(&path).expect("database should initialize");
+        let clipboard_event = event(vec![data("public.utf8-plain-text", b"pin migration row")]);
+        db.insert_event(&clipboard_event)
+            .expect("fixture should insert");
+        let original = db.get_history_page(None, Some(1)).unwrap().items.remove(0);
+        remove_pin_schema_for_migration_fixture(&db, 3);
+        assert!(db
+            .initialize_schema_with_failpoint(Some(MigrationFailpoint::AfterPinColumn))
+            .is_err());
+        assert_eq!(schema::user_version(&db.conn).unwrap(), 3);
+        assert!(!db
+            .table_columns("clipboard_events")
+            .unwrap()
+            .iter()
+            .any(|name| name == "is_pinned"));
+        drop(db);
+
+        let migrated = Database::open_path(&path).expect("v3 should migrate to v4");
+        let row = migrated
+            .get_history_page(None, Some(1))
+            .unwrap()
+            .items
+            .remove(0);
+        assert_eq!(
+            row, original,
+            "migration should preserve payload and order and default to unpinned"
+        );
+        assert!(migrated.set_event_pinned(&row.content_hash, true).unwrap());
+        drop(migrated);
+        let reopened = Database::open_path(&path).expect("pinned history should reopen");
+        let pinned = reopened
+            .get_history_page(None, Some(1))
+            .unwrap()
+            .items
+            .remove(0);
+        assert!(pinned.is_pinned);
+        assert_eq!(pinned.timestamp, original.timestamp);
+        assert_eq!(
+            schema::user_version(&reopened.conn).unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+        drop(reopened);
+        remove_database_files(&path);
+    }
+
+    #[test]
+    fn pre_pin_migrations_reject_invalid_authoritative_column_types() {
+        for version in [2, 3] {
+            let db = in_memory_database();
+            remove_pin_schema_for_migration_fixture(&db, version);
+            // Same column names are insufficient: a text event_data column is schema drift.
+            db.conn
+                .execute_batch(
+                    "ALTER TABLE clipboard_events RENAME COLUMN event_data TO invalid_event_data;
+                 ALTER TABLE clipboard_events ADD COLUMN event_data TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE clipboard_events DROP COLUMN invalid_event_data;",
+                )
+                .unwrap();
+            assert!(db.initialize_schema().is_err());
+            assert_eq!(schema::user_version(&db.conn).unwrap(), version);
+            assert!(!db
+                .table_columns("clipboard_events")
+                .unwrap()
+                .iter()
+                .any(|name| name == "is_pinned"));
+        }
+    }
+
+    #[test]
+    fn pinned_history_and_search_paging_cross_groups_without_missing_or_repeating_rows() {
+        let db = in_memory_database();
+        let mut expected = Vec::new();
+        for index in 0..8 {
+            let body = format!("needle pin paging {index}");
+            let hash = Database::hash_bytes(body.as_bytes());
+            db.insert_event(&event(vec![data(
+                "public.utf8-plain-text",
+                body.as_bytes(),
+            )]))
+            .unwrap();
+            let pinned = index % 2 == 0;
+            let timestamp = 100 + index % 3;
+            db.conn
+                .execute(
+                    "UPDATE clipboard_events SET timestamp = ?1 WHERE content_hash = ?2",
+                    params![timestamp, &hash],
+                )
+                .unwrap();
+            db.set_event_pinned(&hash, pinned).unwrap();
+            expected.push((pinned, timestamp, hash));
+        }
+        expected.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| right.1.cmp(&left.1))
+                .then_with(|| left.2.cmp(&right.2))
+        });
+        for compact_mode in [false, true] {
+            db.set_compact_mode(compact_mode).unwrap();
+            for query in ["", "needle", "ne"] {
+                for page_size in [1, 2, 3] {
+                    let mut actual = Vec::new();
+                    let mut cursor = None;
+                    loop {
+                        let page = db
+                            .search_history_page(cursor.as_deref(), Some(page_size), query)
+                            .unwrap();
+                        assert_eq!(page.total_count, 8);
+                        actual.extend(
+                            page.items
+                                .into_iter()
+                                .map(|row| (row.is_pinned, row.timestamp, row.content_hash)),
+                        );
+                        assert!(
+                            actual.len() <= expected.len(),
+                            "cursor must make forward progress"
+                        );
+                        if !page.has_more {
+                            break;
+                        }
+                        cursor = page.next_cursor;
+                        assert!(cursor.is_some());
+                    }
+                    assert_eq!(
+                        actual, expected,
+                        "compact={compact_mode}, query={query}, size={page_size}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pinned_items_survive_clear_and_retention_but_can_be_deleted_or_unpinned() {
+        let db = in_memory_database();
+        let mut hashes = Vec::new();
+        for body in [
+            "old pinned",
+            "second pinned",
+            "old ordinary",
+            "new ordinary",
+        ] {
+            db.insert_event(&event(vec![data(
+                "public.utf8-plain-text",
+                body.as_bytes(),
+            )]))
+            .unwrap();
+            hashes.push(Database::hash_bytes(body.as_bytes()));
+        }
+        for hash in &hashes[..2] {
+            assert!(db.set_event_pinned(hash, true).unwrap());
+        }
+        db.set_max_items(3).unwrap();
+        db.cleanup_old_events().unwrap();
+        assert!(db.get_history_detail_seed(&hashes[2]).unwrap().is_none());
+        assert!(db.get_history_detail_seed(&hashes[3]).unwrap().is_some());
+        db.clear_all_events().unwrap();
+        assert_eq!(db.get_history_stats().unwrap().total_items, 2);
+        db.set_max_items(1).unwrap();
+        db.set_max_history_bytes(0).unwrap();
+        db.cleanup_old_events().unwrap();
+        assert_eq!(
+            db.get_history_stats().unwrap().total_items,
+            2,
+            "pins may exceed both limits"
+        );
+        db.insert_event(&event(vec![data(
+            "public.utf8-plain-text",
+            b"new copy over pinned limit",
+        )]))
+        .unwrap();
+        assert_eq!(
+            db.get_history_stats().unwrap().total_items,
+            2,
+            "automatic cleanup must only remove unpinned rows"
+        );
+        assert!(db.set_event_pinned(&hashes[0], false).unwrap());
+        assert!(
+            db.get_history_detail_seed(&hashes[0]).unwrap().is_none(),
+            "unpin applies retention immediately"
+        );
+        assert!(!db.set_event_pinned(&"a".repeat(64), true).unwrap());
+        db.delete_event(&hashes[1]).unwrap();
+        assert_eq!(
+            db.get_history_stats().unwrap().total_items,
+            0,
+            "explicit deletion may remove a pin"
+        );
+        Database::validate_search_index(&db.conn).unwrap();
+    }
+
+    #[test]
+    fn emitted_history_cursors_pass_command_validation_after_the_first_default_page() {
+        for pinned_count in [0, 52] {
+            let db = in_memory_database();
+            for index in 0..55 {
+                let text = format!("command cursor regression {index}");
+                let clipboard_event = event(vec![data("public.utf8-plain-text", text.as_bytes())]);
+                db.insert_event(&clipboard_event).unwrap();
+                if index < pinned_count {
+                    db.set_event_pinned(&Database::hash_bytes(text.as_bytes()), true)
+                        .unwrap();
+                }
+            }
+
+            for query in [None, Some("command cursor regression")] {
+                let page = |cursor: Option<&str>| match query {
+                    Some(query) => db.search_history_page(cursor, None, query).unwrap(),
+                    None => db.get_history_page(cursor, None).unwrap(),
+                };
+                let first = page(None);
+                assert_eq!(first.items.len(), 50);
+                let cursor = first
+                    .next_cursor
+                    .as_deref()
+                    .expect("55 rows need a second page");
+                assert!(
+                    crate::history_cursor_is_valid(cursor),
+                    "command rejected database cursor: {cursor}"
+                );
+                assert_eq!(
+                    HistoryCursor::decode(cursor).unwrap().is_pinned,
+                    pinned_count > 0
+                );
+
+                let second = page(Some(cursor));
+                assert_eq!(second.items.len(), 5);
+                assert!(!second.has_more);
+                let hashes = first
+                    .items
+                    .iter()
+                    .chain(&second.items)
+                    .map(|item| &item.content_hash)
+                    .collect::<HashSet<_>>();
+                assert_eq!(hashes.len(), 55, "paging must not omit or repeat rows");
+            }
+        }
+    }
+
+    #[test]
+    fn pin_survives_duplicate_capture_and_metadata_reclassification() {
+        let db = in_memory_database();
+        let clipboard_event = event(vec![data(
+            "public.utf8-plain-text",
+            b"pinned reclassified content",
+        )]);
+        db.insert_event(&clipboard_event).unwrap();
+        let before = db.get_history_page(None, Some(1)).unwrap().items.remove(0);
+        db.set_event_pinned(&before.content_hash, true).unwrap();
+        db.insert_event(&clipboard_event).unwrap();
+        let duplicate = db.get_history_page(None, Some(1)).unwrap().items.remove(0);
+        assert!(duplicate.is_pinned);
+        assert_eq!(duplicate.timestamp, before.timestamp);
+        // Reclassification can collapse two old identities; the older row's pin must survive.
+        db.conn
+            .execute(
+                "UPDATE clipboard_events SET content_hash = ?1",
+                ["0".repeat(64)],
+            )
+            .unwrap();
+        db.insert_event(&clipboard_event).unwrap();
+        assert_eq!(db.get_history_stats().unwrap().total_items, 2);
+        db.rebuild_history_metadata().unwrap();
+        let rebuilt = db.get_history_page(None, Some(10)).unwrap();
+        assert_eq!(rebuilt.items.len(), 1);
+        assert_eq!(rebuilt.items[0].content_hash, before.content_hash);
+        assert!(rebuilt.items[0].is_pinned);
+        Database::validate_search_index(&db.conn).unwrap();
+    }
+
+    #[test]
+    fn compact_pin_projection_merge_unpin_and_delete_apply_to_equivalent_content() {
+        let db = in_memory_database();
+        let plain = b"shared pinned effective text";
+        let rtf = event(vec![
+            data("public.utf8-plain-text", plain),
+            data("public.rtf", br"{\rtf1 shared pinned effective text}"),
+        ]);
+        let html = event(vec![
+            data("public.utf8-plain-text", plain),
+            data("public.html", b"<p>shared pinned effective text</p>"),
+        ]);
+        db.insert_event(&rtf).unwrap();
+        let oldest_hash = db.get_history_page(None, Some(1)).unwrap().items[0]
+            .content_hash
+            .clone();
+        db.set_event_pinned(&oldest_hash, true).unwrap();
+        db.insert_event(&html).unwrap();
+        db.insert_event(&event(vec![data(
+            "public.utf8-plain-text",
+            b"ordinary recent content",
+        )]))
+        .unwrap();
+        db.set_compact_mode(true).unwrap();
+        let pinned = db.get_history_page(None, Some(1)).unwrap().items.remove(0);
+        assert!(
+            pinned.is_pinned,
+            "an older format's pin applies to the compact representative"
+        );
+        assert_ne!(pinned.content_hash, oldest_hash);
+        assert!(db.get_tray_events().unwrap()[0].is_pinned);
+        assert!(
+            db.search_history_page(None, Some(1), "shared")
+                .unwrap()
+                .items[0]
+                .is_pinned
+        );
+        db.set_event_pinned(&pinned.content_hash, false).unwrap();
+        assert!(
+            !db.search_history_page(None, Some(1), "shared")
+                .unwrap()
+                .items[0]
+                .is_pinned
+        );
+        db.set_event_pinned(&pinned.content_hash, true).unwrap();
+        db.insert_event(&event(vec![data("public.utf8-plain-text", plain)]))
+            .unwrap();
+        let merged = db.get_history_page(None, Some(1)).unwrap().items.remove(0);
+        assert!(merged.is_pinned);
+        assert_eq!(merged.content_hash, Database::hash_bytes(plain));
+        assert_eq!(merged.timestamp, pinned.timestamp);
+        assert_eq!(db.get_history_stats().unwrap().total_items, 2);
+        // Restore multiple formats and verify direct deletion removes the whole visible item.
+        db.set_compact_mode(false).unwrap();
+        db.insert_event(&rtf).unwrap();
+        db.insert_event(&html).unwrap();
+        db.set_compact_mode(true).unwrap();
+        let representative = db.get_history_page(None, Some(1)).unwrap().items.remove(0);
+        db.delete_event(&representative.content_hash).unwrap();
+        assert_eq!(
+            db.search_history_page(None, Some(10), "shared")
+                .unwrap()
+                .total_count,
+            0
+        );
+        assert_eq!(db.get_history_stats().unwrap().total_items, 1);
+        Database::validate_search_index(&db.conn).unwrap();
+    }
+
+    #[test]
+    fn tray_pins_use_group_order_and_share_the_configured_item_limit() {
+        let db = in_memory_database();
+        let mut hashes = Vec::new();
+        for body in ["old pin", "old normal", "new pin", "new normal"] {
+            db.insert_event(&event(vec![data(
+                "public.utf8-plain-text",
+                body.as_bytes(),
+            )]))
+            .unwrap();
+            hashes.push(Database::hash_bytes(body.as_bytes()));
+        }
+        db.set_event_pinned(&hashes[0], true).unwrap();
+        db.set_event_pinned(&hashes[2], true).unwrap();
+        for compact_mode in [false, true] {
+            db.set_compact_mode(compact_mode).unwrap();
+            for limit in [1, 2, 3, 0] {
+                db.set_menu_bar_item_limit(limit).unwrap();
+                let rows = db.get_tray_events().unwrap();
+                let expected = [&hashes[2], &hashes[0], &hashes[3], &hashes[1]];
+                let count = if limit == 0 { 4 } else { limit as usize };
+                assert_eq!(rows.len(), count);
+                assert_eq!(
+                    rows.iter().map(|row| &row.content_hash).collect::<Vec<_>>(),
+                    expected[..count]
+                );
+                assert!(rows.iter().take(2).all(|row| row.is_pinned));
+                assert!(rows.iter().skip(2).all(|row| !row.is_pinned));
+            }
+        }
+    }
+
     #[test]
     fn migration_failpoints_roll_back_the_original_on_disk_database() {
         let clipboard_event = event(vec![data("public.utf8-plain-text", b"rollback row")]);
@@ -2943,6 +3463,7 @@ mod tests {
             MigrationFailpoint::AfterValidation,
             MigrationFailpoint::AfterDropOriginal,
             MigrationFailpoint::AfterSearchIndexBuild,
+            MigrationFailpoint::AfterPinColumn,
         ] {
             let path = temp_database_path("migration_rollback");
             create_version_one_database(&path, &clipboard_event);
@@ -2994,9 +3515,7 @@ mod tests {
                 [SEARCH_INDEX_METADATA_KEY],
             )
             .expect("search index version should clear");
-        db.conn
-            .pragma_update(None, "user_version", 2)
-            .expect("fixture should declare schema v2");
+        remove_pin_schema_for_migration_fixture(&db, 2);
 
         db.initialize_schema()
             .expect("schema v2 should migrate to current");
@@ -4742,6 +5261,59 @@ mod tests {
             db.get_language().expect("setting should load"),
             LanguagePreference::System
         );
+    }
+
+    #[test]
+    fn theme_setting_defaults_to_system_and_survives_reopening() {
+        let path = temp_database_path("theme_setting");
+        let db = Database::open_path(&path).expect("theme database should open");
+        assert_eq!(db.get_settings().unwrap().theme, "system");
+        drop(db);
+
+        for theme in [
+            ThemePreference::Dark,
+            ThemePreference::Light,
+            ThemePreference::System,
+        ] {
+            let db = Database::open_path(&path).expect("theme database should reopen");
+            db.set_theme(theme).expect("theme should persist");
+            drop(db);
+
+            let reopened = Database::open_path(&path).expect("saved theme should reopen");
+            assert_eq!(reopened.get_theme().unwrap(), theme);
+            let payload = serde_json::to_value(reopened.get_settings().unwrap()).unwrap();
+            assert_eq!(payload["theme"], theme.code());
+        }
+        remove_database_files(&path);
+    }
+
+    #[test]
+    fn existing_database_adds_theme_default_without_resetting_other_settings() {
+        let path = temp_database_path("missing_theme_setting");
+        let db = Database::open_path(&path).expect("theme database should open");
+        db.set_max_items(321).unwrap();
+        db.set_language(LanguagePreference::TraditionalChinese)
+            .unwrap();
+        db.conn
+            .execute("DELETE FROM settings WHERE key = 'theme'", [])
+            .expect("pre-theme fixture should initialize");
+        drop(db);
+
+        let reopened = Database::open_path(&path).expect("pre-theme database should reopen");
+        let settings = reopened.get_settings().unwrap();
+        assert_eq!(settings.theme, "system");
+        assert_eq!(settings.max_items, 321);
+        assert_eq!(settings.language, "zh-TW");
+        drop(reopened);
+        remove_database_files(&path);
+    }
+
+    #[test]
+    fn invalid_stored_theme_falls_back_to_system() {
+        let db = in_memory_database();
+        settings::set(&db.conn, settings::THEME_KEY, "unsupported").expect("fixture should update");
+        assert_eq!(db.get_theme().unwrap(), ThemePreference::System);
+        assert_eq!(db.get_settings().unwrap().theme, "system");
     }
 
     #[test]
