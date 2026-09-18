@@ -67,6 +67,8 @@ system appearance transitions, accessibility appearance preferences, and the
 full native tray interaction matrix also retain the gaps noted in feature QA.
 
 On 2026-09-18, the release owner explicitly approved publishing v0.3.0 with
-these documented manual coverage gaps after CI passes. This exception applies
-only to v0.3.0 and does not claim that the missing rows passed. Automated CI
-and release checks remain required. Builds remain ad-hoc signed and not notarized.
+these documented manual coverage gaps, then requested pushing the release
+without waiting for PR CI to finish. This exception applies only to v0.3.0
+and does not claim that pending checks passed. The tag-triggered release
+workflow still runs its automated gates before publishing artifacts.
+Builds remain ad-hoc signed and not notarized.

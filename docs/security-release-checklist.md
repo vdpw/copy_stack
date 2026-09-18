@@ -165,9 +165,10 @@ required.
 ## Release exception: v0.3.0 (2026-09-18)
 
 The release owner explicitly approved publishing v0.3.0 with the documented
-manual acceptance gaps, conditional on successful CI. This exception applies
-only to v0.3.0; it does not claim the missing checks passed or waive automated
-CI and release gates.
+manual acceptance gaps, then explicitly requested pushing the release without
+waiting for PR CI to finish. This exception applies only to v0.3.0; it does not
+claim that pending checks passed. The tag-triggered release workflow keeps its
+automated gates and must pass them before publishing artifacts.
 
 The frozen frontend install, security guardrail, type-check, lint, 70 frontend
 tests, production build, Rust format/check, and 166 Rust tests passed locally.
