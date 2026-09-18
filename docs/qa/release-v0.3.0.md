@@ -66,7 +66,7 @@ and post-download smoke tests remain unverified. Physical trackpad momentum,
 system appearance transitions, accessibility appearance preferences, and the
 full native tray interaction matrix also retain the gaps noted in feature QA.
 
-The v0.1.0, v0.1.1, and v0.2.0 release exceptions are version-specific. No
-v0.3.0 exception approval is recorded here. Per the existing release checklist,
-the release tag remains pending completion of the missing matrix or an
-explicit release-owner exception. Builds remain ad-hoc signed and not notarized.
+On 2026-09-18, the release owner explicitly approved publishing v0.3.0 with
+these documented manual coverage gaps after CI passes. This exception applies
+only to v0.3.0 and does not claim that the missing rows passed. Automated CI
+and release checks remain required. Builds remain ad-hoc signed and not notarized.

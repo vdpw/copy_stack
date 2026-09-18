@@ -161,3 +161,26 @@ search/tray/restore/Dock behavior, launch-at-login, and post-download smoke
 tests remain unverified risks. The release remains ad-hoc signed and not
 notarized, and the post-publish verification in `docs/release.md` is still
 required.
+
+## Release exception: v0.3.0 (2026-09-18)
+
+The release owner explicitly approved publishing v0.3.0 with the documented
+manual acceptance gaps, conditional on successful CI. This exception applies
+only to v0.3.0; it does not claim the missing checks passed or waive automated
+CI and release gates.
+
+The frozen frontend install, security guardrail, type-check, lint, 70 frontend
+tests, production build, Rust format/check, and 166 Rust tests passed locally.
+The separate fixture-v3 100/1000 text/mixed performance matrix passed. A local
+arm64 release `.app` and `.dmg` were built and passed strict signature and disk
+image verification. A listener dependency update dry run changed no packages.
+The existing byte-cleanup review signal remains above the historical 15 ms
+budget, measuring approximately 47–53 ms at 1000 rows, close to v0.2.0.
+
+Native Intel desktop/clipboard behavior, login/logout/reboot, app relocation,
+offline WebView behavior, the complete protocol and malicious-preview matrix,
+and post-download smoke tests remain unverified. The feature QA records also
+retain gaps for physical trackpad momentum, live system appearance changes,
+accessibility appearance preferences, and complete native tray interaction.
+See [v0.3.0 evidence](qa/release-v0.3.0.md) for scope and measurements.
+The release remains ad-hoc signed and not notarized.
