@@ -28,6 +28,7 @@ const operations = new Set<Operation>([
   "load_history",
   "load_history_detail",
   "restore_clipboard",
+  "pin_history",
   "delete_history",
   "clear_history",
   "load_settings",

@@ -17,9 +17,7 @@ const OPEN_HISTORY_ID: &str = "action::open-history";
 const OPEN_SETTINGS_ID: &str = "action::open-settings";
 const CLEAR_HISTORY_ID: &str = "action::clear-history";
 const QUIT_ID: &str = "action::quit";
-const HEADER_ID: &str = "label::recent-items";
 const EMPTY_STATE_ID: &str = "label::empty";
-pub(crate) const EVENT_MENU_START_INDEX: usize = 3;
 const MAX_MENU_LABEL_WIDTH: usize = 40;
 const TRUNCATION_SUFFIX: &str = "...";
 const ERROR_APP_STATE_UNAVAILABLE: &str = "app_state_unavailable";
@@ -38,9 +36,14 @@ pub const FOCUS_SEARCH_EVENT: &str = "app:focus-search";
 pub const HISTORY_PAGE: &str = "history";
 pub const SETTINGS_PAGE: &str = "settings";
 
+pub(crate) struct TrayPreviewItem {
+    pub content_hash: String,
+    pub is_pinned: bool,
+}
+
 struct BuiltTrayMenu<R: Runtime> {
     menu: Menu<R>,
-    event_hashes: Vec<String>,
+    event_hashes: Vec<Option<TrayPreviewItem>>,
 }
 
 pub fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
@@ -259,10 +262,6 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<BuiltTrayMenu<R>, String
     };
     let strings = native_strings(language);
 
-    let recent_items = MenuItemBuilder::with_id(HEADER_ID, strings.recent_clipboard_items)
-        .enabled(false)
-        .build(app)
-        .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
     let empty_state = MenuItemBuilder::with_id(EMPTY_STATE_ID, strings.no_clipboard_items)
         .enabled(false)
         .build(app)
@@ -284,28 +283,44 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<BuiltTrayMenu<R>, String
         .build(app)
         .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
 
-    let mut builder = MenuBuilder::new(app)
-        .item(&recent_items)
-        .item(&search_history)
-        .separator();
+    let mut builder = MenuBuilder::new(app).item(&search_history).separator();
 
+    let mut event_hashes = vec![None, None]; // Search action and separator.
     if events.is_empty() {
         builder = builder.item(&empty_state);
+        event_hashes.push(None);
     } else {
-        for event in &events {
+        for (index, event) in events.iter().enumerate() {
+            if index == 0 || events[index - 1].is_pinned != event.is_pinned {
+                if index > 0 {
+                    builder = builder.separator();
+                    event_hashes.push(None);
+                }
+                let label = if event.is_pinned {
+                    strings.pinned_items
+                } else {
+                    strings.recent_clipboard_items
+                };
+                let header = MenuItemBuilder::with_id(format!("history-group-{index}"), label)
+                    .enabled(false)
+                    .build(app)
+                    .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
+                builder = builder.item(&header);
+                event_hashes.push(None);
+            }
             let menu_label = event_menu_label(event, language);
             let event_item_id = format!("{}{}", EVENT_ITEM_PREFIX, event.content_hash.as_str());
             let item = MenuItemBuilder::with_id(event_item_id, menu_label)
                 .build(app)
                 .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
             builder = builder.item(&item);
+            event_hashes.push(Some(TrayPreviewItem {
+                content_hash: event.content_hash.clone(),
+                is_pinned: event.is_pinned,
+            }));
         }
     }
 
-    let event_hashes = events
-        .iter()
-        .map(|event| event.content_hash.clone())
-        .collect();
     let menu = builder
         .separator()
         .item(&open_history)
@@ -320,7 +335,12 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<BuiltTrayMenu<R>, String
 }
 
 fn event_menu_label(event: &TrayEvent, language: Language) -> String {
-    truncate_label(event_menu_full_label(event, language))
+    let label = event_menu_full_label(event, language);
+    truncate_label(if event.is_pinned {
+        format!("📌 {label}")
+    } else {
+        label
+    })
 }
 
 fn event_menu_full_label(event: &TrayEvent, language: Language) -> String {
@@ -552,6 +572,7 @@ mod tests {
     #[test]
     fn aggregate_file_fallbacks_are_localized() {
         let event = TrayEvent {
+            is_pinned: false,
             content_hash: "hash".to_string(),
             data_type: "files and folders".to_string(),
             display: Vec::new(),
@@ -564,9 +585,24 @@ mod tests {
     }
 
     #[test]
+    fn pinned_tray_labels_keep_the_pin_within_the_width_budget() {
+        let event = TrayEvent {
+            is_pinned: true,
+            content_hash: "a".repeat(64),
+            data_type: "text".to_string(),
+            display: "固定项目内容".repeat(20).into_bytes(),
+        };
+        let label = event_menu_label(&event, Language::SimplifiedChinese);
+        assert!(label.starts_with("📌 "));
+        assert!(display_width(&label) <= MAX_MENU_LABEL_WIDTH);
+        assert!(label.ends_with(TRUNCATION_SUFFIX));
+    }
+
+    #[test]
     fn first_and_last_tray_labels_preserve_boundary_items() {
         let events = (1..=25)
             .map(|index| TrayEvent {
+                is_pinned: false,
                 content_hash: format!("{index:064x}"),
                 data_type: "text".to_string(),
                 display: format!("clipboard item {index}").into_bytes(),

@@ -24,7 +24,7 @@ silently granted.
 
 Schema version is stored in `PRAGMA user_version`. Classifier/derived-metadata
 version is stored separately in `app_metadata`, because classifier policy can
-change without an unrelated SQL shape change. The current schema version is 3.
+change without an unrelated SQL shape change. The current schema version is 4.
 
 ```sql
 CREATE TABLE clipboard_events (
@@ -40,7 +40,8 @@ CREATE TABLE clipboard_events (
   is_remote_clipboard INTEGER NOT NULL,
   byte_count INTEGER NOT NULL,
   timestamp INTEGER NOT NULL,
-  metadata_version INTEGER NOT NULL
+  metadata_version INTEGER NOT NULL,
+  is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1))
 );
 
 CREATE TABLE settings (
@@ -61,8 +62,8 @@ CREATE VIRTUAL TABLE clipboard_event_search USING fts5(
 );
 ```
 
-Indexes support `(timestamp DESC, content_hash ASC)` paging and canonical
-compact-text selection. The current schema does not contain `id`, `sort_order`,
+Indexes support `(is_pinned DESC, timestamp DESC, content_hash ASC)` paging,
+timestamp ordering, and canonical compact-text selection. The current schema does not contain `id`, `sort_order`,
 or the removed legacy `source_app` heuristic.
 
 ## Stored Fields
@@ -79,6 +80,8 @@ or the removed legacy `source_app` heuristic.
 - `source_bundle_id`: exact valid UTF-8 source marker, including an explicit
   empty string; `NULL` means missing/invalid.
 - `is_remote_clipboard`: Apple remote-clipboard marker presence.
+- `is_pinned`: user-controlled protection from clear/retention and priority in
+  History, search, and menu ordering. New and migrated rows default to false.
 - `byte_count`: accounted event, display, summary, compact-display, and source
   bytes for retention. It is not a measurement of SQLite page overhead.
 - `timestamp`: Unix milliseconds and the persisted ordering key.
@@ -95,8 +98,13 @@ or the removed legacy `source_app` heuristic.
 - `compact_mode`: default `false`.
 - `language`: default `system`; other valid values are `en`, `zh-CN`, and
   `zh-TW`.
+- `theme`: default `system`; other valid values are `light` and `dark`.
+  Store the preference, not the currently resolved light/dark appearance, so
+  system mode continues following operating-system changes after restart.
 
 Autostart is not stored here. The operating system login item is authoritative.
+Existing databases receive a missing theme setting through default-setting
+initialization; adding this settings key does not change the history schema.
 
 ## Versioned Initialization And Migration
 
@@ -106,7 +114,7 @@ Initialization and every pending migration run inside one immediate transaction:
 2. create settings and metadata tables and insert missing defaults;
 3. create the latest schema directly for an empty unversioned database;
 4. bootstrap legacy/unversioned history to schema v2, then apply every explicit
-   migration in order (`v2 -> v3`, followed by future adjacent versions);
+   migration in order (`v2 -> v3 -> v4`, followed by future adjacent versions);
 5. validate each target schema before advancing `PRAGMA user_version`;
 6. rebuild separately-versioned classifier or search metadata only when stale;
 7. validate the final tables, indexes, triggers, and search row accounting;
@@ -114,6 +122,10 @@ Initialization and every pending migration run inside one immediate transaction:
 
 The current fast path does not decode, reclassify, deduplicate, or rewrite all
 history rows on every launch.
+
+The `v3 -> v4` migration adds `is_pinned` with a false default without changing
+existing payloads or timestamps. Gated classifier rebuilds retain pin flags;
+when identities collapse, any pinned source keeps the resulting row pinned.
 
 When a gated rebuild is required, a replacement table is created inside the
 same transaction. Legacy JSON event payloads are converted to the bounded binary
@@ -164,12 +176,13 @@ and returns an owned prepared row.
 Full-mode upsert:
 
 - updates payload and derived metadata for an existing `content_hash` without
-  moving it;
+  moving it or resetting its pin flag;
 - otherwise inserts at
   `max(current_unix_millis, MAX(timestamp) + 1)`.
 
 Compact-mode upsert canonicalizes all rows with the same effective text into
-one text-only row while preserving the newest matching timestamp.
+one text-only row while preserving the newest matching timestamp and the
+logical OR of their pin flags.
 
 Every successful upsert enforces both retention limits in the same transaction.
 
@@ -201,18 +214,24 @@ decode `event_data` and does not read local media.
 
 - default page size: 50;
 - hard maximum: 100;
-- cursor: `v1:<timestamp>:<lowercase-content-hash>`;
-- order: `timestamp DESC, content_hash ASC`;
+- cursor: `v2:<0|1>:<timestamp>:<lowercase-content-hash>`; the second field is
+  the summary's pin state;
+- order: `is_pinned DESC, timestamp DESC, content_hash ASC`;
 - response totals: visible item count and accounted history bytes.
 
-Cursor filtering compares the ordering tuple, so equal timestamps do not repeat
-or skip rows. Compact-mode paging selects the newest row for each effective
-text, including across page boundaries.
+Cursor filtering compares the complete ordering tuple, so equal timestamps and
+the pinned/unpinned boundary do not repeat or skip rows. Compact-mode paging
+selects the newest row for each effective text, including across page
+boundaries, and reports it pinned if any equivalent row is pinned. Search uses
+the same ordering and cursor. A pin mutation refreshes pages from the start
+rather than continuing with a cursor from the previous ordering.
 
 ## Menu Summary And Lazy Hover Preview
 
-Tray construction selects only `content_hash`, `data_type`, and the persisted
-512-byte `summary_display` for the configured rows. On macOS, highlighting one
+Tray construction selects only `content_hash`, `data_type`, `is_pinned`, and the
+persisted 512-byte `summary_display` for the configured rows. Pinned summaries
+come first and consume the same combined menu limit as ordinary summaries;
+`0` means all up to the 1000-row ceiling. On macOS, highlighting one
 text/HTML/RTF row triggers a separate query by content hash. That query selects
 only the line-preserving plain-text projection when one exists, applies SQLite
 `substr(...)` before the value reaches Rust, and returns at most 64 KiB plus a
@@ -248,24 +267,43 @@ before the pasteboard write.
 History order is:
 
 ```sql
-ORDER BY timestamp DESC, content_hash ASC
+ORDER BY is_pinned DESC, timestamp DESC, content_hash ASC
 ```
 
 New inserts and explicit restore-to-top updates use a monotonic timestamp.
 Duplicate capture updates preserve the old timestamp. When restore-to-top is
-disabled, listener suppression preserves order.
+disabled, listener suppression preserves order. Pin/Unpin changes only the
+group, not the timestamp; restore-to-top moves an item to the top of its own
+group. Compact reads use an aggregate pin flag for equivalent text rows.
+
+## Pin, Delete, And Clear
+
+`set_event_pinned` commits the pin flag in a transaction. In compact mode it
+updates the target and every row with the same effective text. Unpinning runs
+retention before commit; an old unpinned item can therefore be removed
+immediately. Explicit deletion remains allowed for pinned items; in compact
+mode it removes the entire equivalent-text group so a hidden member does not
+reappear as the next representative.
+
+`clear_all_events` retains its command name but executes
+`DELETE FROM clipboard_events WHERE is_pinned = 0`. Both Settings and the tray
+use this behavior. Neither pinning nor clearing changes content identity.
 
 ## Count And Byte Retention
 
-Cleanup first removes oldest rows beyond `max_items`, then recomputes accounted
-bytes and removes oldest remaining rows until total `byte_count` is at or below
-`max_history_bytes`.
+Cleanup first removes oldest unpinned rows beyond `max_items`, then recomputes
+accounted bytes and removes oldest remaining unpinned rows until total
+`byte_count` is at or below `max_history_bytes`, or no unpinned rows remain.
+Pinned rows count toward both budgets but are never evicted by cleanup. If
+pinned rows alone exceed a budget, they remain and newly captured unpinned rows
+may be evicted immediately.
 
 Cleanup runs:
 
 - during first-instance startup;
 - in every successful upsert transaction;
 - after changing either retention limit.
+- after unpinning an item.
 
 The settings response exposes both current totals so Settings never needs to
 load or count the full history list.
@@ -306,7 +344,7 @@ no database row and therefore no JSONL line.
 ```bash
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "PRAGMA user_version;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM app_metadata ORDER BY key;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, byte_count, timestamp FROM clipboard_events ORDER BY timestamp DESC, content_hash ASC LIMIT 20;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, is_pinned, byte_count, timestamp FROM clipboard_events ORDER BY is_pinned DESC, timestamp DESC, content_hash ASC LIMIT 20;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings ORDER BY key;"
 stat -f '%Sp %N' "$HOME/.copy_stack" "$HOME/.copy_stack/copy_stack.db"
 ```

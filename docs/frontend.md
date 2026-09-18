@@ -3,7 +3,8 @@
 ## Stack And Files
 
 - React 18, strict TypeScript, Vite 6, and the Tauri JavaScript API v2.
-- `src/App.tsx`: window-level composition and language synchronization.
+- `src/App.tsx`: window-level composition, language synchronization, and theme
+  application.
 - `src/features/history/`: History view, event cards, previews, and detail cache.
 - `src/features/settings/`: Settings view.
 - `src/hooks/useClipboardHistory.ts`: first-page refresh and cursor pagination.
@@ -17,17 +18,19 @@
 
 `App.tsx` owns the main window's `history` and `settings` page state. On macOS,
 the native application-menu Settings item (`Command+,`) selects Settings
-through `app:navigate`; the tray can also request Settings. There is no
-in-webview page switcher. Settings has a top-left back button that returns to
-History. It is rendered in the same webview without an additional category
-sidebar; when it is active, the History view is unmounted and does not load
-clipboard history.
+through `app:navigate`; the tray can also request Settings. Settings is rendered
+in the same webview with a left navigation sidebar and a right configuration
+area. The sidebar starts with a back-to-History button, followed by General,
+Appearance, Clipboard, and Menu Bar categories. Category navigation changes the
+configuration area without leaving Settings. When Settings is active, the
+History view is unmounted and does not load clipboard history.
 
 ## Commands Used By History
 
 - `get_copy_events_page({cursor, pageSize, query?})`
 - `get_history_detail({contentHash})`
 - `delete_copy_event({contentHash})`
+- `set_copy_event_pinned({contentHash, pinned})`
 - `copy_to_clipboard({contentHash})`
 - `get_app_settings()`
 - `get_safe_diagnostics()`
@@ -60,6 +63,7 @@ summaries expand without a detail command.
 - `set_move_restored_item_to_top({moveRestoredItemToTop})`
 - `set_compact_mode({compactMode})`
 - `set_language({language})`
+- `set_theme({theme})`
 - `clear_all_events()`
 
 Tauri maps camelCase frontend keys to snake_case Rust arguments. Update
@@ -93,6 +97,7 @@ interface HistorySummary {
   display_truncated: boolean;
   source_bundle_id: string | null;
   is_remote_clipboard: boolean;
+  is_pinned: boolean;
   timestamp: number;
   byte_count: number;
   has_detail: boolean;
@@ -166,7 +171,7 @@ hash drift.
 History has a sticky search field. Input is debounced for 180 ms, capped at 256
 characters, and sent to SQLite-backed search. `Command+F` focuses/selects the
 field. Escape clears a nonempty query and otherwise blurs it. Search results
-retain ordinary paging, expand, restore, and delete behavior, and show a
+retain ordinary paging, expand, restore, pin, and delete behavior, and show a
 localized result count and empty state. When a match falls outside the collapsed
 summary, the result includes a bounded plain-text match excerpt. A live clipboard
 update refreshes the active query instead of dropping back to unfiltered history.
@@ -185,22 +190,69 @@ update so the ordinary focused-window anchor restoration cannot undo the
 scroll. Restoring the first row or restoring while the setting is disabled does
 not issue a redundant reload.
 
-Restore and delete buttons stop card-toggle propagation. Each restore button is
+History and search results show a Pinned group before Recent History. Within
+each group, rows follow persisted `timestamp DESC, content_hash ASC` order.
+Every card has an accessible Pin/Unpin action (`aria-pressed`), and pinned cards
+have a visible badge. The action is disabled while its command is in flight;
+success refreshes authoritative pages and announces the change to assistive
+technology. Pinning does not copy the item, expand the card, or rewrite its
+timestamp. Unpinning returns it to the ordinary timeline and immediately
+applies retention, so it can disappear if it exceeds the current limits.
+
+Restore, pin, and delete buttons stop card-toggle propagation. Each restore button is
 disabled while its command is in flight, and a successful pasteboard write
 shows short copy feedback even if later post-processing reports a non-retryable
-failure. Load, detail, delete, clear, restore, settings, and listener failures
+failure. Load, detail, delete, pin, clear, restore, settings, and listener failures
 are visible and retryable only when the backend marks them so.
 
 ## Settings Shape And Behavior
 
 `get_app_settings` returns item and byte budgets, current item/byte totals,
-maximum encoded event bytes, menu/restore/compact settings, and persisted and
-resolved languages. Settings uses those aggregate values; it never counts
-History pages.
+maximum encoded event bytes, menu/restore/compact settings, persisted and
+resolved languages, and the persisted `theme` preference. Settings uses those
+aggregate values; it never counts History pages.
+
+The left sidebar groups configuration into four categories:
+
+| Category   | Controls in the right configuration area                                    |
+| ---------- | --------------------------------------------------------------------------- |
+| General    | Language and launch at login                                                |
+| Appearance | System/Light/Dark theme                                                     |
+| Clipboard  | Compact capture, restore ordering, item and byte limits, and Clear Unpinned |
+| Menu Bar   | Menu bar visibility and menu bar item limit                                 |
+
+The back-to-History control stays above the categories, making return navigation
+available from every category. Category labels and every setting remain
+localized. Keep keyboard focus and the active-category state distinguishable
+without relying on color alone. The right area scrolls independently and resets
+to the top when the category changes. Unapplied numeric drafts survive changes
+to unrelated settings in other categories.
+
+The document viewport stays fixed on every page and disables outer overscroll.
+The settings sidebar and main pane each own an inner scroller with vertical
+overscroll containment. Their backgrounds, the native-controls spacer, and the
+page header stay outside those scrollers, so boundary feedback cannot pull the
+whole window away from its background. History uses its own `.content-panel`
+scroller beneath the fixed native-controls area; the pagination observer,
+scroll-to-top animation, and scroll-anchor restoration all use that element.
+Entering History focuses the scroll container without moving it, so native
+keyboard paging works with the document locked. Search shortcuts focus/select
+the sticky input without changing the reading position; Escape from an empty
+search returns focus to the history scroller.
+
+General, Appearance, and Menu Bar omit persistent per-control descriptions.
+Category descriptions and actionable validation errors remain. Clipboard keeps
+its behavior descriptions; the two storage controls show short explanations
+behind adjacent question-mark buttons. Click to toggle help, click outside or
+press Escape to dismiss it, and close it when leaving the category. The menu
+item-count input keeps its zero-means-all explanation in a hover title.
 
 Item count accepts 1 through 1000. Reducing it below `history_count` requires
 confirmation. The history byte budget accepts 16 through 4096 MiB. Both limits
-are enforced immediately by the backend. Other SQLite-backed settings use an
+are enforced immediately by the backend against unpinned rows. Pinned rows
+count toward totals but survive both limits, even when they alone exceed a
+budget. Storage help explains the pin exception; unpinning applies the limits
+immediately. Other SQLite-backed settings use an
 optimistic value, invoke the command, re-read authoritative settings, and roll
 back/reconcile after failure.
 
@@ -213,9 +265,50 @@ The `system` language preference is resolved by the backend to `en`, `zh-CN`,
 or `zh-TW`. `app-language-changed` keeps the in-window pages synchronized and
 native menus are rebuilt by Rust.
 
-Clear All is presented only on Settings in the webview. After
+The `theme` preference accepts `system`, `light`, or `dark` and defaults to
+`system`. Selecting a theme persists it through `set_theme`, synchronizes native
+window appearance, and applies it to both History and Settings. Explicit light
+or dark selections override system appearance; system mode derives the webview
+appearance from `matchMedia('(prefers-color-scheme: dark)')` and follows changes
+while the app is running. Remove the media-query listener during effect cleanup.
+Theme application belongs at the window level so leaving Settings does not
+reset the selection.
+
+Clear Unpinned is presented only on Settings in the webview. Its confirmation
+explicitly states that pinned items are kept. The command name remains
+`clear_all_events` for compatibility, but it deletes only unpinned rows. After
 `clear_all_events` succeeds, Settings reloads the authoritative aggregate
 counts; returning to History mounts a fresh first-page query.
+Confirmation dialogs make the background inert, initially focus Cancel, contain
+Tab navigation, support Escape, and return focus to the triggering control or
+the nearest usable input after closing.
+
+## Window Appearance
+
+History and Settings share a macOS-inspired visual language: system typography,
+rounded grouped surfaces, restrained translucency on navigation and controls,
+and readable content backgrounds. Settings follows the macOS System Settings
+references: a sidebar with colored category icons, a compact sticky title area,
+and grouped rows with inset dividers. Light mode uses a gray sidebar, white
+content area, and pale gray groups; dark mode uses warm neutral grays. The
+sidebar selection is blue while focused and gray when unfocused. The theme
+selector uses compact blue desktop and overlapping-window previews in
+Light/Dark/System order, with labels beneath them and an offset blue selection
+ring. System combines light and dark halves while retaining system-following
+behavior. Settings-specific surface
+tokens are scoped to its shell; content width is capped at 680px in wide windows.
+
+The macOS window uses an overlay title bar with its native window buttons and
+hidden native title. Settings reserves 44px above sidebar navigation; History
+reserves a 40px draggable top strip. Explicit drag regions use Tauri's `deep`
+behavior, which excludes interactive controls. The main-window capability adds
+only `allow-start-dragging` and `allow-internal-toggle-maximize` for dragging and
+double-click zoom. Native menus and window behavior remain owned by macOS.
+Retain System/Light/Dark theme selection,
+reduced-motion, and contrast support. Explicit theme colors take precedence over system
+color-scheme queries; system mode should still respond to live appearance changes.
+Validate focus rings, disabled states, pinned badges, destructive confirmation,
+and long multilingual labels when changing the appearance.
 
 ## Error Boundary
 

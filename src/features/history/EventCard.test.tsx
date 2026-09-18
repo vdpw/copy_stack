@@ -15,6 +15,7 @@ const textSummary: HistorySummary = {
   display_truncated: false,
   source_bundle_id: null,
   is_remote_clipboard: false,
+  is_pinned: false,
   timestamp: 0,
   byte_count: 7,
   has_detail: false,
@@ -43,6 +44,8 @@ function renderCard(
 ): string {
   return renderToStaticMarkup(
     <EventCard
+      pinning={false}
+      onPin={vi.fn()}
       copied={false}
       detail={detail}
       detailFailed={false}
@@ -62,6 +65,66 @@ function renderCard(
 }
 
 describe("EventCard", () => {
+  it("exposes pin state and keeps pin click and keyboard input separate from expansion", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const onPin = vi.fn();
+    const onToggle = vi.fn();
+    const render = (isPinned: boolean, pinning: boolean) =>
+      flushSync(() => {
+        root.render(
+          <EventCard
+            summary={{ ...textSummary, is_pinned: isPinned }}
+            detail={undefined}
+            detailLoading={false}
+            detailFailed={false}
+            expanded={false}
+            copied={false}
+            restoring={false}
+            pinning={pinning}
+            language="en"
+            messages={getMessages("en")}
+            onPin={onPin}
+            onToggle={onToggle}
+            onRetryDetail={vi.fn()}
+            onRestore={vi.fn()}
+            onDelete={vi.fn()}
+          />
+        );
+      });
+    render(false, false);
+    const pin = container.querySelector<HTMLElement>(
+      'button[aria-label="Pin item"]'
+    )!;
+    expect(pin.getAttribute("aria-pressed")).toBe("false");
+    pin.dispatchEvent(
+      new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+    );
+    pin.click();
+    expect(onPin).toHaveBeenCalledOnce();
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(pin.closest('[role="button"]')).toBeNull();
+    expect(container.querySelector("article")?.getAttribute("role")).toBeNull();
+    const content = container.querySelector<HTMLElement>(".event-content")!;
+    expect(content.getAttribute("aria-expanded")).toBe("false");
+    content.dispatchEvent(
+      new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+    );
+    expect(onToggle).toHaveBeenCalledOnce();
+    render(true, true);
+    const unpin = container.querySelector<HTMLElement>(
+      'button[aria-label="Unpin item"]'
+    )!;
+    expect(unpin.getAttribute("aria-pressed")).toBe("true");
+    expect(unpin.hasAttribute("disabled")).toBe(true);
+    expect(container.querySelector(".event-pinned-badge")?.textContent).toBe(
+      "Pinned"
+    );
+    unpin.click();
+    expect(onPin).toHaveBeenCalledOnce();
+    flushSync(() => root.unmount());
+  });
+
   it("shows the event type label when collapsed or expanded", () => {
     expect(renderCard(false)).toContain(">文字</span>");
     expect(renderCard(true)).toContain(">文字</span>");
@@ -135,6 +198,8 @@ describe("EventCard", () => {
     flushSync(() => {
       root.render(
         <EventCard
+          pinning={false}
+          onPin={vi.fn()}
           copied={false}
           detail={htmlDetail}
           detailFailed={false}
@@ -168,6 +233,8 @@ describe("EventCard", () => {
     flushSync(() => {
       root.render(
         <EventCard
+          pinning={false}
+          onPin={vi.fn()}
           copied={false}
           detail={textPreviewDetail}
           detailFailed={false}

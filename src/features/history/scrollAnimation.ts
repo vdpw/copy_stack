@@ -4,8 +4,6 @@ interface ScrollAnimationDriver {
   now: () => number;
   prefersReducedMotion: () => boolean;
   requestFrame: (callback: (timestamp: number) => void) => void;
-  scrollTo: (top: number) => void;
-  scrollY: () => number;
 }
 
 function browserScrollAnimationDriver(): ScrollAnimationDriver {
@@ -17,20 +15,17 @@ function browserScrollAnimationDriver(): ScrollAnimationDriver {
     requestFrame: callback => {
       window.requestAnimationFrame(callback);
     },
-    scrollTo: top => {
-      window.scrollTo({ top });
-    },
-    scrollY: () => window.scrollY,
   };
 }
 
 export function animateHistoryScrollToTop(
+  container: Pick<HTMLElement, "scrollTop" | "scrollTo">,
   durationMs = historyScrollToTopDurationMs,
   driver: ScrollAnimationDriver = browserScrollAnimationDriver()
 ): Promise<void> {
-  const startY = Math.max(0, driver.scrollY());
+  const startY = Math.max(0, container.scrollTop);
   if (startY === 0 || durationMs <= 0 || driver.prefersReducedMotion()) {
-    driver.scrollTo(0);
+    container.scrollTo({ top: 0 });
     return Promise.resolve();
   }
 
@@ -42,7 +37,7 @@ export function animateHistoryScrollToTop(
         1
       );
       const easedProgress = 1 - Math.pow(1 - progress, 3);
-      driver.scrollTo(startY * (1 - easedProgress));
+      container.scrollTo({ top: startY * (1 - easedProgress) });
       if (progress < 1) {
         driver.requestFrame(step);
       } else {

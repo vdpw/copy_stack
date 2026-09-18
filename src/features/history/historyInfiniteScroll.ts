@@ -2,7 +2,8 @@ export const historyLoadAheadMargin = "320px 0px";
 
 export function observeHistoryEnd(
   target: HTMLElement,
-  onVisible: () => void
+  onVisible: () => void,
+  root: HTMLElement
 ): () => void {
   const Observer = globalThis.IntersectionObserver;
   if (typeof Observer !== "function") {
@@ -19,7 +20,7 @@ export function observeHistoryEnd(
       onVisible();
     },
     {
-      root: null,
+      root,
       rootMargin: historyLoadAheadMargin,
       threshold: 0,
     }

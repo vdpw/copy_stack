@@ -9,13 +9,15 @@ describe("animateHistoryScrollToTop", () => {
     let timestamp = 0;
     const frames: Array<(timestamp: number) => void> = [];
     const scrollTo = vi.fn();
-    const animation = animateHistoryScrollToTop(historyScrollToTopDurationMs, {
-      now: () => timestamp,
-      prefersReducedMotion: () => false,
-      requestFrame: callback => frames.push(callback),
-      scrollTo,
-      scrollY: () => 800,
-    });
+    const animation = animateHistoryScrollToTop(
+      { scrollTop: 800, scrollTo },
+      historyScrollToTopDurationMs,
+      {
+        now: () => timestamp,
+        prefersReducedMotion: () => false,
+        requestFrame: callback => frames.push(callback),
+      }
+    );
 
     while (frames.length > 0) {
       const frame = frames.shift();
@@ -26,23 +28,25 @@ describe("animateHistoryScrollToTop", () => {
 
     expect(historyScrollToTopDurationMs).toBe(320);
     expect(scrollTo).toHaveBeenCalledTimes(4);
-    expect(scrollTo).toHaveBeenLastCalledWith(0);
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 0 });
   });
 
   it("jumps immediately when reduced motion is enabled", async () => {
     const scrollTo = vi.fn();
     const requestFrame = vi.fn();
 
-    await animateHistoryScrollToTop(historyScrollToTopDurationMs, {
-      now: () => 0,
-      prefersReducedMotion: () => true,
-      requestFrame,
-      scrollTo,
-      scrollY: () => 800,
-    });
+    await animateHistoryScrollToTop(
+      { scrollTop: 800, scrollTo },
+      historyScrollToTopDurationMs,
+      {
+        now: () => 0,
+        prefersReducedMotion: () => true,
+        requestFrame,
+      }
+    );
 
     expect(scrollTo).toHaveBeenCalledOnce();
-    expect(scrollTo).toHaveBeenCalledWith(0);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
     expect(requestFrame).not.toHaveBeenCalled();
   });
 });

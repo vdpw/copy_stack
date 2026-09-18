@@ -10,6 +10,7 @@ function summary(index: number): HistorySummary {
     display_truncated: false,
     source_bundle_id: null,
     is_remote_clipboard: false,
+    is_pinned: false,
     timestamp: 10_000 - index,
     byte_count: 1,
     has_detail: true,

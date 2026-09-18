@@ -1,11 +1,13 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import "./App.css";
+import "./macos.css";
 import { DiagnosticErrorBanner } from "./components/DiagnosticErrorBanner";
 import { HistoryView } from "./features/history/HistoryView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { detectSystemLanguage, getMessages, isSupportedLanguage } from "./i18n";
 import { useAppSettings } from "./hooks/useAppSettings";
+import { useAppearance } from "./hooks/useAppearance";
 import { useStartupErrors } from "./hooks/useStartupErrors";
 import { isAppPage } from "./navigation";
 import type { AppPage } from "./navigation";
@@ -18,6 +20,7 @@ function App() {
     activePage === "settings",
     startup.ready
   );
+  useAppearance(settingsController.settings?.theme ?? "system");
   const { loadSettings, reportError } = settingsController;
   const language =
     settingsController.settings &&
@@ -25,6 +28,7 @@ function App() {
       ? settingsController.settings.resolved_language
       : detectSystemLanguage();
   const messages = getMessages(language);
+  const visiblePage = startup.ready ? activePage : "history";
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -111,12 +115,15 @@ function App() {
     };
   }, [reportError]);
 
-  useEffect(() => {
-    window.scrollTo({ top: 0 });
-  }, [activePage]);
-
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-page={visiblePage}>
+      {(!startup.ready || activePage === "history") && (
+        <div
+          aria-hidden="true"
+          className="window-titlebar"
+          data-tauri-drag-region="deep"
+        />
+      )}
       {startup.error && (
         <DiagnosticErrorBanner
           error={startup.error}

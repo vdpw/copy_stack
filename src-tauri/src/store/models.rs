@@ -6,6 +6,33 @@ pub const MAX_MENU_BAR_ITEM_LIMIT: usize = 1_000;
 pub const MAX_SUMMARY_DISPLAY_BYTES: usize = 512;
 pub const DEFAULT_MAX_HISTORY_BYTES: u64 = crate::resource_policy::MAX_HISTORY_BYTES;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ThemePreference {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    pub(crate) fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "system" => Some(Self::System),
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub max_items: u32,
@@ -14,6 +41,7 @@ pub struct AppSettings {
     pub menu_bar_item_limit: u32,
     pub move_restored_item_to_top: bool,
     pub compact_mode: bool,
+    pub theme: String,
     pub language: String,
     pub resolved_language: String,
     pub history_count: u64,
@@ -24,6 +52,7 @@ pub struct AppSettings {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistorySummary {
+    pub is_pinned: bool,
     pub content_hash: String,
     pub data_type: String,
     pub display: Vec<u8>,
@@ -68,6 +97,7 @@ pub struct HistoryDetail {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrayEvent {
+    pub is_pinned: bool,
     pub content_hash: String,
     pub data_type: String,
     pub display: Vec<u8>,
@@ -89,20 +119,32 @@ pub struct HistoryStats {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HistoryCursor {
+    pub is_pinned: bool,
     pub timestamp: i64,
     pub content_hash: String,
 }
 
 impl HistoryCursor {
-    const PREFIX: &'static str = "v1";
+    const PREFIX: &'static str = "v2";
 
     pub(crate) fn encode(&self) -> String {
-        format!("{}:{}:{}", Self::PREFIX, self.timestamp, self.content_hash)
+        format!(
+            "{}:{}:{}:{}",
+            Self::PREFIX,
+            u8::from(self.is_pinned),
+            self.timestamp,
+            self.content_hash
+        )
     }
 
     pub(crate) fn decode(value: &str) -> Result<Self, String> {
-        let mut parts = value.splitn(3, ':');
+        let mut parts = value.splitn(4, ':');
         let prefix = parts.next();
+        let is_pinned = match parts.next() {
+            Some("0") => false,
+            Some("1") => true,
+            _ => return Err("history cursor pin state is invalid".to_string()),
+        };
         let timestamp = parts.next();
         let content_hash = parts.next();
 
@@ -125,6 +167,7 @@ impl HistoryCursor {
         }
 
         Ok(Self {
+            is_pinned,
             timestamp,
             content_hash: content_hash.to_string(),
         })
@@ -138,6 +181,7 @@ mod tests {
     #[test]
     fn history_cursor_round_trips_and_rejects_malformed_values() {
         let cursor = HistoryCursor {
+            is_pinned: true,
             timestamp: 1_725_000_000_123,
             content_hash: "a".repeat(64),
         };
@@ -152,6 +196,11 @@ mod tests {
             "v1:nope:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "v1:1:short",
             "v1:1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "v2:2:1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "v2:1:nope:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "v2:0:1:short",
+            "v2:0:1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "v2:0:1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:extra",
         ] {
             assert!(HistoryCursor::decode(value).is_err(), "{value}");
         }

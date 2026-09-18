@@ -22,6 +22,7 @@ export interface RichPreviewVideoSegment {
 }
 
 export interface HistorySummary {
+  is_pinned: boolean;
   content_hash: string;
   data_type: string;
   display: number[];
@@ -49,7 +50,10 @@ export interface HistoryPage {
   total_bytes: number;
 }
 
+export type ThemePreference = "system" | "light" | "dark";
+
 export interface AppSettings {
+  theme: ThemePreference;
   max_items: number;
   max_history_bytes: number;
   show_in_menu_bar: boolean;
@@ -92,6 +96,7 @@ export type Operation =
   | "load_history"
   | "load_history_detail"
   | "restore_clipboard"
+  | "pin_history"
   | "delete_history"
   | "clear_history"
   | "load_settings"

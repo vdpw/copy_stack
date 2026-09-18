@@ -1,6 +1,6 @@
 use rusqlite::{Connection, Result, Transaction};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 3;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 4;
 pub(crate) const CLASSIFIER_METADATA_VERSION: i64 = 1;
 pub(crate) const CLASSIFIER_METADATA_KEY: &str = "classifier_metadata_version";
 pub(crate) const SEARCH_INDEX_VERSION: i64 = 1;
@@ -10,7 +10,7 @@ pub(crate) const SEARCH_INDEX_TABLE: &str = "clipboard_event_search";
 const SEARCH_DELETE_TRIGGER: &str = "clipboard_events_search_after_delete";
 const SEARCH_UPDATE_TRIGGER: &str = "clipboard_events_search_after_update";
 
-pub(crate) const REQUIRED_EVENT_COLUMNS: [&str; 13] = [
+pub(crate) const REQUIRED_EVENT_COLUMNS: [&str; 14] = [
     "content_hash",
     "event_data",
     "data_type",
@@ -24,6 +24,7 @@ pub(crate) const REQUIRED_EVENT_COLUMNS: [&str; 13] = [
     "byte_count",
     "timestamp",
     "metadata_version",
+    "is_pinned",
 ];
 
 pub(crate) fn user_version(connection: &Connection) -> Result<i64> {
@@ -72,7 +73,8 @@ pub(crate) fn create_clipboard_events_table(connection: &Connection, table: &str
                 is_remote_clipboard INTEGER NOT NULL,
                 byte_count INTEGER NOT NULL,
                 timestamp INTEGER NOT NULL,
-                metadata_version INTEGER NOT NULL
+                metadata_version INTEGER NOT NULL,
+                is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1))
             )"
         ),
         [],
@@ -85,6 +87,7 @@ pub(crate) fn drop_clipboard_event_indexes(connection: &Connection) -> Result<()
         "idx_clipboard_events_content_hash",
         "idx_clipboard_events_sort_order",
         "idx_clipboard_events_timestamp",
+        "idx_clipboard_events_pinned",
         "idx_clipboard_events_compact",
     ] {
         connection.execute(&format!("DROP INDEX IF EXISTS {index}"), [])?;
@@ -93,6 +96,11 @@ pub(crate) fn drop_clipboard_event_indexes(connection: &Connection) -> Result<()
 }
 
 pub(crate) fn create_clipboard_event_indexes(connection: &Connection) -> Result<()> {
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_clipboard_events_pinned
+         ON clipboard_events(is_pinned DESC, timestamp DESC, content_hash ASC)",
+        [],
+    )?;
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_clipboard_events_timestamp
          ON clipboard_events(timestamp DESC, content_hash ASC)",

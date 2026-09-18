@@ -132,20 +132,34 @@ The following is a checklist, not a record of completed testing:
    SQLite, History, tray, diagnostics, or JSONL.
 9. Exercise oversized formatted/image/event fixtures. Confirm safe text
    degradation or a localized rejection notice, with no oversized IPC payload.
-10. Lower item and byte limits and confirm oldest rows are trimmed.
-11. Delete one item from History; clear all from Settings and the menu bar.
+10. Lower item and byte limits and confirm oldest unpinned rows are trimmed
+    while pinned rows survive. Repeat with pinned rows alone exceeding each
+    limit; totals may stay above the configured limit. Unpin an old row and
+    confirm the current retention rules apply immediately.
+11. Pin and unpin synthetic rows from History and search results. Verify pinned
+    grouping, the badge/button state, keyboard activation, disabled state while
+    saving, and no unintended expansion or clipboard write. Re-copy a pinned
+    row, restore it with both ordering settings, and restart; verify its pin
+    survives and ordering stays within its group. Delete one pinned row
+    explicitly. Clear from Settings and then the menu bar; verify pinned rows
+    survive in SQLite, the main window, the menu, and the optional JSONL mirror.
 12. Toggle compact mode, menu visibility, restore ordering, and all languages.
     With menu visibility off, copy a synthetic item and confirm it is saved
     without attempting preview installation or showing a global runtime-error
     banner. Turn visibility on again and confirm the native item and hover
     preview return. Set the menu count to 20 and then 0; verify 20 and all
-    retained rows appear.
+    retained rows up to the 1000-item ceiling appear, with pinned entries first,
+    a pin marker, and separate section labels. With more pins than the limit,
+    confirm Open History reaches the remaining entries. Verify direct-click
+    restore and hover preview in both menu groups and across their separator.
 13. Close the main window and click the macOS Dock icon; confirm the existing
     window shows and focuses again. Then start a duplicate process and confirm
     the same window activates while only one owner/listener/tray remains.
 14. Open Settings from the macOS application menu and with `Command+,`; confirm
-    there is no in-window Settings switcher, confirm the tray Settings entry
-    still works, then use the top-left back button to return to History.
+    the tray Settings entry still works. Verify a left sidebar with a return
+    button above General, Appearance, Clipboard, and Menu Bar, and the selected
+    configuration on the right. Switch categories, then use the sidebar's top
+    button to return to History from each category.
 15. Enable and disable launch at login and reopen Settings to verify OS state.
 16. Launch with the autostart flag and confirm the main window stays hidden
     while capture and the menu bar remain active.
@@ -157,6 +171,33 @@ The following is a checklist, not a record of completed testing:
     external request.
 20. Run malicious HTML preview fixtures and verify scripts, navigation, forms,
     external resources, and unsafe URLs do not execute.
+21. With more than 50 mixed pinned/unpinned rows, page across the group boundary
+    in History and search; verify no duplicates or omissions. Pin a row from a
+    later page and verify authoritative refresh while preserving the active
+    query. In compact mode, use equivalent plain/HTML/RTF text with mixed pin
+    flags; verify one pinned summary, group-wide Pin/Unpin and deletion, and
+    retained pin after a new compact capture consolidates the rows.
+22. Open a sanitized schema-v3 fixture and confirm migration to v4 defaults all
+    existing pins to false without changing payloads or timestamps. Pin rows,
+    restart twice, and verify persisted flags and ordinary startup behavior.
+23. Inspect History and Settings in light/dark appearance, reduced motion,
+    reduced transparency, increased contrast, and narrow window sizes. Verify
+    text readability, keyboard focus, hover/pressed/disabled controls, all three
+    languages, and native title-bar controls. The shared visual style must not
+    obscure clipboard content or destructive-action confirmation.
+24. In General, verify language and launch at login. In Appearance, verify theme.
+    In Clipboard, verify compact capture, restore order, item/byte limits, and
+    Clear Unpinned. In Menu Bar, verify visibility and menu item limit. Check all
+    four categories by keyboard and pointer, localized labels, scroll behavior,
+    and the two-column layout at
+    the supported minimum window size.
+25. Select Light and Dark while the system uses the opposite appearance; verify
+    both main-window pages and native window appearance honor the explicit
+    choice. Return to System and change the macOS appearance while the app is
+    open; verify both layers follow it. Restart after each preference and
+    confirm persistence. Start from an existing database without a `theme` key
+    and confirm the default is System without rewriting clipboard history.
+    These are required manual checks, not a completed validation record.
 
 Record the full Apple Silicon and Intel evidence matrix in
 `docs/security-release-checklist.md` before release. Native dual-architecture CI
@@ -168,7 +209,7 @@ does not mark that manual matrix complete.
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "PRAGMA user_version;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM app_metadata ORDER BY key;"
 sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings ORDER BY key;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, byte_count, timestamp FROM clipboard_events ORDER BY timestamp DESC, content_hash ASC LIMIT 10;"
+sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, is_pinned, byte_count, timestamp FROM clipboard_events ORDER BY is_pinned DESC, timestamp DESC, content_hash ASC LIMIT 10;"
 stat -f '%Sp %N' "$HOME/.copy_stack" "$HOME/.copy_stack/copy_stack.db"
 ```
 
@@ -192,7 +233,8 @@ from detail payloads.
 
 ### Persistence Or Ordering
 
-Read both design records. Bump the schema or classifier metadata version as
+Read the ordering and pinned-history design records, plus the protocol record
+when relevant. Bump the schema or classifier metadata version as
 appropriate, make migration transactional, verify rollback and a second current
 startup, and preserve cursor ordering.
 
@@ -206,7 +248,8 @@ settings on real NSPasteboard.
 
 Keep the tray query summary-only, honor `menu_bar_item_limit` (`0` means all,
 with a 1000-row ceiling), and do not introduce event decoding or local media
-reads during menu construction. The macOS hover panel may perform only its
+reads during menu construction. Include pinned entries in the same limit and
+keep their leading section and marker. The macOS hover panel may perform only its
 existing single-row, 64 KiB display lookup; verify that it preserves line
 breaks, stays beside the menu on each display, and disappears when the menu
 closes.

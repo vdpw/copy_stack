@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { Search as SearchIcon, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ElementRef } from "react";
 import {
   invokeCommand,
@@ -34,7 +34,7 @@ interface HistoryViewProps {
 interface ScrollAnchor {
   contentHash: string | null;
   offset: number;
-  scrollY: number;
+  scrollTop: number;
 }
 
 interface ActionFailure {
@@ -42,39 +42,49 @@ interface ActionFailure {
   retry: (() => void) | null;
 }
 
-function captureScrollAnchor(container: HTMLElement | null): ScrollAnchor {
-  if (!container) {
-    return { contentHash: null, offset: 0, scrollY: window.scrollY };
+function captureScrollAnchor(
+  scrollContainer: HTMLElement | null
+): ScrollAnchor {
+  if (!scrollContainer) {
+    return { contentHash: null, offset: 0, scrollTop: 0 };
   }
 
+  const viewportTop = scrollContainer.getBoundingClientRect().top;
   const cards = Array.from(
-    container.querySelectorAll<HTMLElement>("[data-history-hash]")
+    scrollContainer.querySelectorAll<HTMLElement>("[data-history-hash]")
   );
   const anchor =
-    cards.find(card => card.getBoundingClientRect().bottom > 0) ?? null;
+    cards.find(card => card.getBoundingClientRect().bottom > viewportTop) ??
+    null;
   return {
     contentHash: anchor?.dataset.historyHash ?? null,
-    offset: anchor?.getBoundingClientRect().top ?? 0,
-    scrollY: window.scrollY,
+    offset: anchor ? anchor.getBoundingClientRect().top - viewportTop : 0,
+    scrollTop: scrollContainer.scrollTop,
   };
 }
 
 function restoreScrollAnchor(
-  container: HTMLElement | null,
+  scrollContainer: HTMLElement | null,
   anchor: ScrollAnchor
 ): void {
+  if (!scrollContainer) {
+    return;
+  }
   window.requestAnimationFrame(() => {
     const anchoredCard = anchor.contentHash
-      ? container?.querySelector<HTMLElement>(
+      ? scrollContainer.querySelector<HTMLElement>(
           `[data-history-hash="${anchor.contentHash}"]`
         )
       : null;
     if (anchoredCard) {
-      window.scrollBy({
-        top: anchoredCard.getBoundingClientRect().top - anchor.offset,
+      scrollContainer.scrollBy({
+        top:
+          anchoredCard.getBoundingClientRect().top -
+          scrollContainer.getBoundingClientRect().top -
+          anchor.offset,
       });
     } else {
-      window.scrollTo({ top: anchor.scrollY });
+      scrollContainer.scrollTo({ top: anchor.scrollTop });
     }
   });
 }
@@ -109,10 +119,15 @@ export function HistoryView({
     reset: resetDetails,
     retain: retainDetails,
   } = useHistoryDetails();
-  const listRef = useRef<ElementRef<"div"> | null>(null);
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
   const loadMoreSentinelRef = useRef<ElementRef<"div"> | null>(null);
   const searchInputRef = useRef<ElementRef<"input"> | null>(null);
   const copiedFeedbackTimerRef = useRef<number | null>(null);
+  const pinningHashesRef = useRef(new Set<string>());
+  const [pinningHashes, setPinningHashes] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [pinNotice, setPinNotice] = useState(false);
   const restoringHashesRef = useRef(new Set<string>());
   const pendingRestoreToTopIntentsRef = useRef(new Set<number>());
   const restoreToTopIntentSequenceRef = useRef(0);
@@ -136,9 +151,13 @@ export function HistoryView({
   }, [searchInput]);
 
   useEffect(() => {
+    scrollContainerRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  useEffect(() => {
     if (focusSearchRequest > 0) {
       window.requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
+        searchInputRef.current?.focus({ preventScroll: true });
         searchInputRef.current?.select();
       });
     }
@@ -148,7 +167,7 @@ export function HistoryView({
     const focusSearch = (event: globalThis.KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
-        searchInputRef.current?.focus();
+        searchInputRef.current?.focus({ preventScroll: true });
         searchInputRef.current?.select();
       }
     };
@@ -157,16 +176,18 @@ export function HistoryView({
   }, []);
 
   const refreshPreservingView = useCallback(async () => {
-    const anchor = captureScrollAnchor(listRef.current);
+    const anchor = captureScrollAnchor(scrollContainerRef.current);
     const refreshed = await refreshHistory();
     if (refreshed) {
-      restoreScrollAnchor(listRef.current, anchor);
+      restoreScrollAnchor(scrollContainerRef.current, anchor);
     }
     return refreshed;
   }, [refreshHistory]);
 
   const resetScrollToTop = useCallback((): Promise<void> => {
-    return animateHistoryScrollToTop();
+    return scrollContainerRef.current
+      ? animateHistoryScrollToTop(scrollContainerRef.current)
+      : Promise.resolve();
   }, []);
 
   const refreshForClipboardUpdate = useCallback(
@@ -200,6 +221,43 @@ export function HistoryView({
       copiedFeedbackTimerRef.current = null;
     }, 1400);
   }, []);
+
+  const setPinned = useCallback(
+    async (contentHash: string, pinned: boolean) => {
+      if (pinningHashesRef.current.has(contentHash)) return;
+      pinningHashesRef.current.add(contentHash);
+      setPinningHashes(new Set(pinningHashesRef.current));
+      setPinNotice(false);
+      try {
+        await invokeCommand<void>("set_copy_event_pinned", "pin_history", {
+          contentHash,
+          pinned,
+        });
+        setActionFailure(null);
+        if (pinned) {
+          await refreshHistoryToTop(refreshHistory, resetScrollToTop);
+        } else {
+          await refreshPreservingView();
+        }
+        await onHistoryChanged();
+        setPinNotice(true);
+      } catch (caught) {
+        reportActionFailure(caught, "pin_history", () => {
+          void setPinned(contentHash, pinned);
+        });
+      } finally {
+        pinningHashesRef.current.delete(contentHash);
+        setPinningHashes(new Set(pinningHashesRef.current));
+      }
+    },
+    [
+      onHistoryChanged,
+      refreshHistory,
+      refreshPreservingView,
+      reportActionFailure,
+      resetScrollToTop,
+    ]
+  );
 
   const deleteEvent = useCallback(
     async (contentHash: string) => {
@@ -325,13 +383,24 @@ export function HistoryView({
 
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current;
-    if (!sentinel || !hasMore || loadingMore || historyError) {
+    const scrollContainer = scrollContainerRef.current;
+    if (
+      !sentinel ||
+      !scrollContainer ||
+      !hasMore ||
+      loadingMore ||
+      historyError
+    ) {
       return;
     }
 
-    return observeHistoryEnd(sentinel, () => {
-      void loadMore();
-    });
+    return observeHistoryEnd(
+      sentinel,
+      () => {
+        void loadMore();
+      },
+      scrollContainer
+    );
   }, [hasMore, historyError, loadMore, loadingMore]);
 
   useEffect(() => {
@@ -340,7 +409,10 @@ export function HistoryView({
 
     const register = async () => {
       const historyUnlisten = await listen("clipboard-history-updated", () => {
-        if (pendingRestoreToTopIntentsRef.current.size === 0) {
+        if (
+          pendingRestoreToTopIntentsRef.current.size === 0 &&
+          pinningHashesRef.current.size === 0
+        ) {
           void refreshForClipboardUpdate();
         }
         void onHistoryChanged();
@@ -399,8 +471,16 @@ export function HistoryView({
 
   return (
     <div className="workspace">
-      <main className="content-panel">
-        <h1 className="sr-only">{messages.clipboardHistory}</h1>
+      <main
+        aria-labelledby="history-title"
+        className="content-panel"
+        ref={scrollContainerRef}
+        tabIndex={-1}
+      >
+        <header className="history-header">
+          <h1 id="history-title">{messages.clipboardHistory}</h1>
+          <span className="history-count">{totalCount}</span>
+        </header>
 
         {visibleFailure && (
           <DiagnosticErrorBanner
@@ -444,7 +524,7 @@ export function HistoryView({
                   setSearchInput("");
                   setSearchQuery("");
                 } else {
-                  event.currentTarget.blur();
+                  scrollContainerRef.current?.focus({ preventScroll: true });
                 }
               }
             }}
@@ -461,7 +541,7 @@ export function HistoryView({
               onClick={() => {
                 setSearchInput("");
                 setSearchQuery("");
-                searchInputRef.current?.focus();
+                searchInputRef.current?.focus({ preventScroll: true });
               }}
               type="button"
             >
@@ -495,40 +575,57 @@ export function HistoryView({
           </div>
         ) : (
           <>
-            <div className="events-list" ref={listRef}>
-              {historyItems.map(summary => (
-                <EventCard
-                  copied={copiedEventHash === summary.content_hash}
-                  detail={
-                    canLoadHistoryDetail(compactMode, summary.has_detail)
-                      ? loadedDetails.get(summary.content_hash)
-                      : undefined
-                  }
-                  detailFailed={
-                    canLoadHistoryDetail(compactMode, summary.has_detail) &&
-                    detailErrors.has(summary.content_hash)
-                  }
-                  detailLoading={
-                    canLoadHistoryDetail(compactMode, summary.has_detail) &&
-                    loadingDetails.has(summary.content_hash)
-                  }
-                  expanded={expandedEventHashes.has(summary.content_hash)}
-                  key={summary.content_hash}
-                  language={language}
-                  messages={messages}
-                  onDelete={() => void deleteEvent(summary.content_hash)}
-                  onRestore={() => void restoreEvent(summary.content_hash)}
-                  onRetryDetail={() => void loadDetail(summary.content_hash)}
-                  onToggle={() =>
-                    toggleExpansion(
-                      summary.content_hash,
+            <span className="sr-only" role="status">
+              {pinNotice ? messages.pinUpdated : ""}
+            </span>
+            <div className="events-list">
+              {historyItems.map((summary, index) => (
+                <Fragment key={summary.content_hash}>
+                  {(index === 0 ||
+                    historyItems[index - 1].is_pinned !==
+                      summary.is_pinned) && (
+                    <h2 className="history-group-heading">
+                      {summary.is_pinned
+                        ? messages.pinned
+                        : messages.recentHistory}
+                    </h2>
+                  )}
+                  <EventCard
+                    copied={copiedEventHash === summary.content_hash}
+                    detail={
                       canLoadHistoryDetail(compactMode, summary.has_detail)
-                    )
-                  }
-                  restoring={restoringEventHashes.has(summary.content_hash)}
-                  searchQuery={searchQuery}
-                  summary={summary}
-                />
+                        ? loadedDetails.get(summary.content_hash)
+                        : undefined
+                    }
+                    detailFailed={
+                      canLoadHistoryDetail(compactMode, summary.has_detail) &&
+                      detailErrors.has(summary.content_hash)
+                    }
+                    detailLoading={
+                      canLoadHistoryDetail(compactMode, summary.has_detail) &&
+                      loadingDetails.has(summary.content_hash)
+                    }
+                    expanded={expandedEventHashes.has(summary.content_hash)}
+                    language={language}
+                    messages={messages}
+                    onDelete={() => void deleteEvent(summary.content_hash)}
+                    onPin={() =>
+                      void setPinned(summary.content_hash, !summary.is_pinned)
+                    }
+                    pinning={pinningHashes.has(summary.content_hash)}
+                    onRestore={() => void restoreEvent(summary.content_hash)}
+                    onRetryDetail={() => void loadDetail(summary.content_hash)}
+                    onToggle={() =>
+                      toggleExpansion(
+                        summary.content_hash,
+                        canLoadHistoryDetail(compactMode, summary.has_detail)
+                      )
+                    }
+                    restoring={restoringEventHashes.has(summary.content_hash)}
+                    searchQuery={searchQuery}
+                    summary={summary}
+                  />
+                </Fragment>
               ))}
             </div>
 

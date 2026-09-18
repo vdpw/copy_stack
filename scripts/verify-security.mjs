@@ -180,10 +180,13 @@ check(
   exactPermissions(mainPermissions, [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "allow-get-startup-error",
     "allow-get-copy-events-page",
     "allow-get-history-detail",
     "allow-delete-copy-event",
+    "allow-set-copy-event-pinned",
     "allow-clear-all-events",
     "allow-copy-to-clipboard",
     "allow-get-app-settings",
@@ -197,8 +200,31 @@ check(
     "allow-set-move-restored-item-to-top",
     "allow-set-compact-mode",
     "allow-set-language",
+    "allow-set-theme",
   ]),
   "The main capability allowlist changed; review and update the audited snapshot."
+);
+check(
+  exactPermissions(
+    mainPermissions.filter(permission => permission.startsWith("core:window:")),
+    [
+      "core:window:allow-start-dragging",
+      "core:window:allow-internal-toggle-maximize",
+    ]
+  ) &&
+    exactPermissions(capabilitiesByName.get("main.json")?.windows ?? [], [
+      "main",
+    ]),
+  "Custom title-bar permissions must be limited to dragging and double-click zoom in the main window."
+);
+const mainWindowConfig = tauriConfig.app?.windows?.find(
+  window => (window.label ?? "main") === "main"
+);
+check(
+  mainWindowConfig?.decorations === true &&
+    mainWindowConfig?.titleBarStyle === "Overlay" &&
+    mainWindowConfig?.hiddenTitle === true,
+  "The overlay title bar must preserve native window controls and hide only the title."
 );
 check(
   mainPermissions.includes("allow-get-startup-error") &&

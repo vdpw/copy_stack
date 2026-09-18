@@ -6,10 +6,13 @@
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "allow-get-startup-error",
     "allow-get-copy-events-page",
     "allow-get-history-detail",
     "allow-delete-copy-event",
+    "allow-set-copy-event-pinned",
     "allow-clear-all-events",
     "allow-copy-to-clipboard",
     "allow-get-app-settings",
@@ -22,6 +25,7 @@
     "allow-set-menu-bar-item-limit",
     "allow-set-move-restored-item-to-top",
     "allow-set-compact-mode",
-    "allow-set-language"
+    "allow-set-language",
+    "allow-set-theme"
   ]
 }
