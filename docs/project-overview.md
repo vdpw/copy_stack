@@ -50,8 +50,10 @@ after releasing the lock, replaces protocol metadata with exactly one source
 marker and the stored remote marker when applicable, then writes it to the
 system clipboard.
 
-When restore-to-top is disabled, a short suppression window prevents the app's
-own clipboard write from being captured as a new event. When it is enabled, the
+Every restore uses a short one-shot suppression window to prevent the app's
+own clipboard write from being captured as a new event, including older items
+that exceed a newly lowered capture limit. Other copied content still follows
+the configured limit. When restore-to-top is enabled, the
 row receives a new persisted ordering timestamp and History and the menu bar are
 refreshed.
 

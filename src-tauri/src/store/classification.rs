@@ -4,8 +4,10 @@
 //! owns persistence and delegates representation selection to these functions.
 
 use crate::pasteboard_protocol::{REMOTE_CLIPBOARD_TYPE, SOURCE_TYPE};
+use crate::resource_policy::MAX_DISPLAY_BYTES;
 use copy_event_listener::event::{Data, Event, Item};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 pub(super) const FILE_DISPLAY_FORMAT: &str = "copy_stack.file-items.v1";
@@ -36,7 +38,9 @@ pub(super) fn classify_event(event: &Event) -> Option<ClassifiedEvent> {
         return Some(classified_from_single_data(
             "rtf",
             &data.data,
-            display_bytes(find_utf8_display(event).unwrap_or_else(|| "RTF".to_string())),
+            find_utf8_display(event)
+                .unwrap_or_else(|| "RTF".to_string())
+                .into_bytes(),
         ));
     }
 
@@ -44,7 +48,11 @@ pub(super) fn classify_event(event: &Event) -> Option<ClassifiedEvent> {
         return Some(classified_from_single_data(
             "png",
             &data.data,
-            data.data.clone(),
+            if data.data.len() <= MAX_DISPLAY_BYTES {
+                data.data.clone()
+            } else {
+                b"PNG".to_vec()
+            },
         ));
     }
 
@@ -52,7 +60,9 @@ pub(super) fn classify_event(event: &Event) -> Option<ClassifiedEvent> {
         return Some(classified_from_single_data(
             "html",
             &data.data,
-            display_bytes(find_utf8_display(event).unwrap_or_else(|| "HTML".to_string())),
+            find_utf8_display(event)
+                .unwrap_or_else(|| "HTML".to_string())
+                .into_bytes(),
         ));
     }
 
@@ -142,14 +152,18 @@ pub(super) fn compact_text_event(event: &Event) -> Option<Event> {
         return None;
     }
 
-    let text = text.chars().filter(|ch| *ch != '\0').collect::<String>();
+    let text = if text.contains('\0') {
+        Cow::Owned(text.replace('\0', ""))
+    } else {
+        Cow::Borrowed(text)
+    };
     if text.trim().is_empty() {
         return None;
     }
 
     let mut data_list = vec![Data {
         r#type: "public.utf8-plain-text".to_string(),
-        data: text.into_bytes(),
+        data: text.into_owned().into_bytes(),
     }];
     if let Some(source) = find_data(event, SOURCE_TYPE) {
         data_list.push(source.clone());
@@ -183,7 +197,7 @@ pub(super) fn find_data_in_item<'item>(item: &'item Item, data_type: &str) -> Op
     item.data_list.iter().find(|data| data.r#type == data_type)
 }
 
-pub(super) fn find_raw_utf8_display(event: &Event) -> Option<String> {
+pub(super) fn find_raw_utf8_display(event: &Event) -> Option<Cow<'_, str>> {
     event.items.iter().find_map(find_raw_utf8_display_in_item)
 }
 
@@ -230,8 +244,25 @@ fn classify_plain_utf8_text(event: &Event) -> Option<ClassifiedEvent> {
     Some(ClassifiedEvent {
         content_hash: hash_bytes(&data.data),
         data_type: "text".to_string(),
-        display: data.data.clone(),
+        display: bounded_plain_text_display(&data.data),
     })
+}
+
+fn bounded_plain_text_display(bytes: &[u8]) -> Vec<u8> {
+    if bytes.len() <= MAX_DISPLAY_BYTES {
+        return bytes.to_vec();
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return b"text".to_vec();
+    };
+    let mut end = MAX_DISPLAY_BYTES - 3;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut display = Vec::with_capacity(MAX_DISPLAY_BYTES);
+    display.extend_from_slice(&bytes[..end]);
+    display.extend_from_slice(b"...");
+    display
 }
 
 fn image_file_url_type(item: &Item, file_url_data: &Data) -> Option<String> {
@@ -308,7 +339,10 @@ fn file_display_bytes(items: Vec<FileDisplayItem>) -> Vec<u8> {
     .unwrap_or_else(|_| label_for_data_type("files").into_bytes())
 }
 
-fn file_display_item(item: &Item, display_name: Option<String>) -> Option<FileDisplayItem> {
+pub(super) fn file_display_item(
+    item: &Item,
+    display_name: Option<String>,
+) -> Option<FileDisplayItem> {
     let file_url = find_data_in_item(item, "public.file-url")?;
     let file_url = String::from_utf8_lossy(&file_url.data);
     let item_type = if file_url.ends_with('/') {
@@ -339,7 +373,7 @@ fn file_display_item_for_url(
     }
 }
 
-fn file_display_names(event: &Event) -> Vec<String> {
+pub(super) fn file_display_names(event: &Event) -> Vec<String> {
     event
         .items
         .iter()
@@ -377,8 +411,8 @@ fn safe_text_file_display_name(display: &str) -> Option<String> {
 }
 
 fn is_aggregate_file_label(display: &str) -> bool {
-    let normalized = display.split_whitespace().collect::<Vec<_>>().join(" ");
-    let Some((count, kind)) = normalized.split_once(' ') else {
+    let mut words = display.split_whitespace();
+    let (Some(count), Some(kind), None) = (words.next(), words.next(), words.next()) else {
         return false;
     };
     count.parse::<usize>().is_ok()
@@ -424,26 +458,55 @@ fn find_utf8_display(event: &Event) -> Option<String> {
     event.items.iter().find_map(find_utf8_display_in_item)
 }
 
-fn find_raw_utf8_display_in_item(item: &Item) -> Option<String> {
+fn find_raw_utf8_display_in_item(item: &Item) -> Option<Cow<'_, str>> {
     find_data_in_item(item, "public.utf8-plain-text")
-        .map(|data| String::from_utf8_lossy(&data.data).into_owned())
+        .map(|data| String::from_utf8_lossy(&data.data))
 }
 
 fn find_utf8_display_in_item(item: &Item) -> Option<String> {
     find_data_in_item(item, "public.utf8-plain-text")
-        .map(|data| String::from_utf8_lossy(&data.data).into_owned())
-        .map(|text| normalize_text(&text))
+        .map(|data| {
+            normalize_display_characters(data.data.utf8_chunks().flat_map(|chunk| {
+                chunk
+                    .valid()
+                    .chars()
+                    .chain((!chunk.invalid().is_empty()).then_some('\u{fffd}'))
+            }))
+        })
         .filter(|text| !text.is_empty())
 }
 
 fn normalize_text(input: &str) -> String {
-    input
-        .chars()
-        .filter(|ch| *ch != '\0')
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    normalize_display_characters(input.chars())
+}
+
+fn normalize_display_characters(characters: impl Iterator<Item = char>) -> String {
+    let mut output = String::new();
+    let mut pending_space = false;
+    for character in characters {
+        if character == '\0' {
+            continue;
+        }
+        if character.is_whitespace() {
+            pending_space = !output.is_empty();
+            continue;
+        }
+        if pending_space {
+            output.push(' ');
+            pending_space = false;
+        }
+        output.push(character);
+        if output.len() > MAX_DISPLAY_BYTES {
+            let mut end = MAX_DISPLAY_BYTES - 3;
+            while !output.is_char_boundary(end) {
+                end -= 1;
+            }
+            output.truncate(end);
+            output.push_str("...");
+            break;
+        }
+    }
+    output
 }
 
 fn event_contains_attachment(event: &Event) -> bool {
@@ -473,16 +536,21 @@ fn event_contains_attachment(event: &Event) -> bool {
 }
 
 fn html_contains_attachment(data: &[u8]) -> bool {
-    let html = String::from_utf8_lossy(data).to_ascii_lowercase();
-    ["<img", "<picture", "<video", "<object", "<embed"]
-        .iter()
-        .any(|tag| html.contains(tag))
+    data.split(|byte| *byte == b'<').skip(1).any(|part| {
+        [b"img".as_slice(), b"picture", b"video", b"object", b"embed"]
+            .iter()
+            .any(|tag| {
+                part.get(..tag.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(tag))
+            })
+    })
 }
 
 fn rtf_contains_attachment(data: &[u8]) -> bool {
-    String::from_utf8_lossy(data)
-        .to_ascii_lowercase()
-        .contains("\\pict")
+    data.split(|byte| *byte == b'\\').skip(1).any(|part| {
+        part.get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"pict"))
+    })
 }
 
 fn percent_decode(value: &str) -> String {
@@ -546,6 +614,70 @@ mod tests {
     }
 
     #[test]
+    fn display_normalization_preserves_null_and_unicode_whitespace_semantics() {
+        for (input, expected) in [
+            (" \t\r\n", ""),
+            (
+                "  alpha\0beta\t \n gamma\u{2003}delta  ",
+                "alphabeta gamma delta",
+            ),
+            ("one \0 two", "one two"),
+            ("你\0好\u{00a0}世界", "你好 世界"),
+        ] {
+            assert_eq!(normalize_text(input), expected);
+        }
+    }
+
+    #[test]
+    fn large_many_word_displays_are_bounded_without_changing_content_identity() {
+        let text = "a ".repeat(4 * MAX_DISPLAY_BYTES).into_bytes();
+        let plain = classify_event(&event(vec![Data {
+            r#type: "public.utf8-plain-text".to_string(),
+            data: text.clone(),
+        }]))
+        .unwrap();
+        assert_eq!(plain.content_hash, hash_bytes(&text));
+        assert!(plain.display.len() <= MAX_DISPLAY_BYTES);
+        assert!(plain.display.ends_with(b"..."));
+
+        for data_type in ["public.html", "public.rtf"] {
+            let rich_body = b"synthetic formatted body";
+            let rich = classify_event(&event(vec![
+                Data {
+                    r#type: data_type.to_string(),
+                    data: rich_body.to_vec(),
+                },
+                Data {
+                    r#type: "public.utf8-plain-text".to_string(),
+                    data: text.clone(),
+                },
+            ]))
+            .unwrap();
+            assert_eq!(rich.content_hash, hash_bytes(rich_body));
+            assert!(rich.display.len() <= MAX_DISPLAY_BYTES);
+            assert!(rich.display.ends_with(b"..."));
+            assert!(std::str::from_utf8(&rich.display)
+                .unwrap()
+                .starts_with("a a a "));
+        }
+
+        let unicode = normalize_text(&"界 ".repeat(MAX_DISPLAY_BYTES));
+        assert!(unicode.len() <= MAX_DISPLAY_BYTES);
+        assert!(unicode.ends_with("..."));
+    }
+
+    #[test]
+    fn attachment_marker_detection_is_case_insensitive_without_body_copies() {
+        assert!(html_contains_attachment(
+            b"prefix <IMG src='synthetic'> suffix"
+        ));
+        assert!(html_contains_attachment(b"\xff <PiCtUrE>"));
+        assert!(!html_contains_attachment(b"plain img text <p>body</p>"));
+        assert!(rtf_contains_attachment(br"{\rtf1\PICT synthetic}"));
+        assert!(!rtf_contains_attachment(br"{\rtf1 picture}"));
+    }
+
+    #[test]
     fn compact_projection_preserves_protocol_markers_but_rejects_attachments() {
         let projected = compact_text_event(&event(vec![
             Data {
@@ -559,6 +691,18 @@ mod tests {
         ]))
         .unwrap();
         assert!(find_data(&projected, REMOTE_CLIPBOARD_TYPE).is_some());
+
+        let with_nulls = compact_text_event(&event(vec![Data {
+            r#type: "public.utf8-plain-text".to_string(),
+            data: b"hel\0lo\0".to_vec(),
+        }]))
+        .unwrap();
+        assert_eq!(
+            find_data(&with_nulls, "public.utf8-plain-text")
+                .unwrap()
+                .data,
+            b"hello"
+        );
 
         assert!(compact_text_event(&event(vec![
             Data {

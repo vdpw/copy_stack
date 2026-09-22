@@ -195,6 +195,7 @@ check(
     "allow-set-autostart-enabled",
     "allow-set-max-items",
     "allow-set-max-history-bytes",
+    "allow-set-max-event-bytes",
     "allow-set-show-in-menu-bar",
     "allow-set-menu-bar-item-limit",
     "allow-set-move-restored-item-to-top",

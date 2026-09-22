@@ -10,10 +10,10 @@ use crate::resource_policy::{
     MAX_PREVIEW_IMAGE_BYTES, MAX_PREVIEW_SEGMENTS,
 };
 use crate::store::classification::{
-    file_url_display_name, file_url_extension, file_url_path, find_data, find_data_in_item,
-    find_raw_utf8_display,
+    file_display_item, file_display_names, file_url_display_name, file_url_extension,
+    file_url_path, find_data, find_data_in_item, find_raw_utf8_display,
 };
-use crate::store::models::{HistoryDetail, HistoryDetailSeed};
+use crate::store::models::{FileDetailItem, HistoryDetail, HistoryDetailSeed};
 use copy_event_listener::event::{Event, Item};
 use rusqlite::Result;
 use std::fs::File;
@@ -52,12 +52,39 @@ pub(super) fn build_history_detail(
         html_preview: None,
         text_preview: None,
         rich_preview: Vec::new(),
+        file_items: Vec::new(),
     };
     if compact_mode {
         return Ok(detail);
     }
 
     let event = event_from_blob(&seed.event_data)?;
+    if matches!(
+        seed.data_type.as_str(),
+        "file" | "folder" | "files" | "folders" | "files and folders"
+    ) {
+        let display_names = file_display_names(&event);
+        for (index, item) in event.items.iter().enumerate() {
+            let Some(display_item) = file_display_item(item, display_names.get(index).cloned())
+            else {
+                continue;
+            };
+            let path = find_data_in_item(item, "public.file-url")
+                .and_then(|data| std::str::from_utf8(&data.data).ok())
+                .and_then(file_detail_path);
+            detail.file_items.push(FileDetailItem {
+                item_type: display_item.item_type,
+                name: display_item.name,
+                path,
+            });
+            if !history_detail_fits_ipc_budget(&detail)? {
+                detail.file_items.pop();
+                break;
+            }
+        }
+        return Ok(detail);
+    }
+
     detail.html_preview = bounded_html_preview(&event);
     if find_data(&event, "public.html").is_some() && detail.html_preview.is_none() {
         detail.text_preview = bounded_text_preview(&event);
@@ -85,6 +112,30 @@ pub(super) fn build_history_detail(
         ));
     }
     Ok(detail)
+}
+
+// Finder can supply stable file-reference URLs (/.file/id=...) instead of paths.
+// Resolve them only for expanded details, after releasing the database lock.
+#[cfg(target_os = "macos")]
+fn file_detail_path(file_url: &str) -> Option<String> {
+    use objc2_foundation::{NSString, NSURL};
+
+    let url = NSURL::URLWithString(&NSString::from_str(file_url.trim_end_matches('\0')))?;
+    if !url.isFileURL() {
+        return None;
+    }
+    let path = url.filePathURL()?.path()?.to_string();
+    valid_detail_path(path)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn file_detail_path(file_url: &str) -> Option<String> {
+    valid_detail_path(file_url_path(file_url)?.to_string_lossy().into_owned())
+}
+
+fn valid_detail_path(path: String) -> Option<String> {
+    (Path::new(&path).is_absolute() && !path.contains('\0') && !path.starts_with("/.file/"))
+        .then_some(path)
 }
 
 #[cfg(test)]
@@ -423,6 +474,126 @@ mod tests {
         Event {
             items: vec![Item { data_list }],
         }
+    }
+
+    fn file_detail(event: &Event, compact_mode: bool) -> HistoryDetail {
+        let classified = crate::store::classification::classify_event(event).unwrap();
+        build_history_detail(
+            HistoryDetailSeed {
+                content_hash: classified.content_hash,
+                event_data: encode_event_blob(event).unwrap(),
+                data_type: classified.data_type,
+                display: classified.display,
+                compact_display: None,
+                timestamp: 0,
+                source_bundle_id: None,
+                is_remote_clipboard: false,
+                byte_count: 0,
+            },
+            compact_mode,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn file_details_preserve_names_and_decode_full_paths_in_clipboard_order() {
+        let event = Event {
+            items: vec![
+                Item {
+                    data_list: vec![
+                        Data {
+                            r#type: "public.utf8-plain-text".into(),
+                            data: "Report final.pdf\r档案".as_bytes().to_vec(),
+                        },
+                        Data {
+                            r#type: "public.file-url".into(),
+                            data: b"file:///Users/demo/Documents/Report%20final.pdf".to_vec(),
+                        },
+                    ],
+                },
+                Item {
+                    data_list: vec![Data {
+                        r#type: "public.file-url".into(),
+                        data: b"file:///Users/demo/Documents/%E6%A1%A3%E6%A1%88/".to_vec(),
+                    }],
+                },
+            ],
+        };
+        let detail = file_detail(&event, false);
+        assert_eq!(detail.file_items.len(), 2);
+        assert_eq!(detail.file_items[0].name, "Report final.pdf");
+        assert_eq!(detail.file_items[0].item_type, "file");
+        assert_eq!(
+            detail.file_items[0].path.as_deref(),
+            Some("/Users/demo/Documents/Report final.pdf")
+        );
+        assert_eq!(detail.file_items[1].name, "档案");
+        assert_eq!(detail.file_items[1].item_type, "folder");
+        assert_eq!(
+            detail.file_items[1]
+                .path
+                .as_deref()
+                .map(|path| path.trim_end_matches('/')),
+            Some("/Users/demo/Documents/档案")
+        );
+        assert!(history_detail_fits_ipc_budget(&detail).unwrap());
+        assert!(file_detail(&event, true).file_items.is_empty());
+    }
+
+    #[test]
+    fn file_details_do_not_reuse_the_truncated_list_summary() {
+        let event = Event {
+            items: (0..64)
+                .map(|index| Item {
+                    data_list: vec![Data {
+                        r#type: "public.file-url".into(),
+                        data: format!("file:///Users/demo/Documents/archive-{index}/report.txt")
+                            .into_bytes(),
+                    }],
+                })
+                .collect(),
+        };
+        let detail = file_detail(&event, false);
+        assert_eq!(detail.file_items.len(), 64);
+        assert_eq!(
+            detail.file_items[63].path.as_deref(),
+            Some("/Users/demo/Documents/archive-63/report.txt")
+        );
+        assert!(history_detail_fits_ipc_budget(&detail).unwrap());
+    }
+
+    #[test]
+    fn invalid_or_unresolved_file_paths_are_not_displayed() {
+        assert!(file_detail_path("https://example.test/report.pdf").is_none());
+        assert!(file_detail_path("file:///.file/id=999999999.999999999").is_none());
+        assert!(valid_detail_path("relative/report.pdf".into()).is_none());
+        assert!(valid_detail_path("/tmp/invalid\0path".into()).is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn finder_file_reference_resolves_to_its_current_path() {
+        use objc2_foundation::{NSString, NSURL};
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("copy-stack-path-detail-{unique}.txt"));
+        let file = std::fs::File::create_new(&path).unwrap();
+        let canonical_path = path.canonicalize().unwrap();
+        let path_url =
+            NSURL::fileURLWithPath(&NSString::from_str(canonical_path.to_str().unwrap()));
+        let reference = path_url
+            .fileReferenceURL()
+            .unwrap()
+            .absoluteString()
+            .unwrap()
+            .to_string();
+        let resolved = file_detail_path(&reference);
+        drop(file);
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(resolved.as_deref(), canonical_path.to_str());
     }
 
     #[test]

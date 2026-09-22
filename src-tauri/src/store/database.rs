@@ -1,6 +1,4 @@
-use crate::event::{
-    decode_event_blob, encode_event_blob, event_from_legacy_json, MAX_EVENT_BLOB_BYTES,
-};
+use crate::event::{decode_event_blob, encode_event_blob, event_from_legacy_json};
 use crate::i18n::LanguagePreference;
 use crate::pasteboard_protocol::{
     assess_event, PasteboardMetadata, REMOTE_CLIPBOARD_TYPE, SOURCE_TYPE,
@@ -107,6 +105,7 @@ pub(crate) struct PreparedHistoryEvent {
     compact_mode: bool,
 }
 
+#[cfg(test)]
 impl PreparedHistoryEvent {
     pub(crate) fn content_hash(&self) -> &str {
         &self.classified.content_hash
@@ -1141,7 +1140,7 @@ impl Database {
             history_count: history.total_items,
             history_bytes: history.total_bytes,
             history_limit_bytes: max_history_bytes,
-            max_event_bytes: MAX_EVENT_BLOB_BYTES as u64,
+            max_event_bytes: self.get_max_event_bytes()?,
         })
     }
 
@@ -1159,6 +1158,14 @@ impl Database {
 
     pub fn set_max_history_bytes(&self, max_history_bytes: u64) -> Result<()> {
         settings::set_max_history_bytes(&self.conn, max_history_bytes)
+    }
+
+    pub fn get_max_event_bytes(&self) -> Result<u64> {
+        settings::get_max_event_bytes(&self.conn)
+    }
+
+    pub fn set_max_event_bytes(&self, max_event_bytes: u64) -> Result<()> {
+        settings::set_max_event_bytes(&self.conn, max_event_bytes)
     }
 
     pub fn get_show_in_menu_bar(&self) -> Result<bool> {
@@ -1274,6 +1281,12 @@ impl Database {
     pub(crate) fn insert_prepared_event(&self, prepared: PreparedHistoryEvent) -> Result<bool> {
         let defense = assess_event(&prepared.event);
         if !defense.should_record() {
+            return Ok(false);
+        }
+
+        // A settings change can race capture preparation. Check the current limit
+        // again while the caller holds the database lock, before any upsert.
+        if prepared.event_data.len() as u64 > self.get_max_event_bytes()? {
             return Ok(false);
         }
 
@@ -1535,17 +1548,21 @@ impl Database {
 
     #[cfg(test)]
     pub fn event_content_hash(&self, event: &Event) -> Result<Option<String>> {
+        Ok(Self::capture_content_hash(event, self.get_compact_mode()?))
+    }
+
+    pub(crate) fn capture_content_hash(event: &Event, compact_mode: bool) -> Option<String> {
         if !assess_event(event).should_record() {
-            return Ok(None);
+            return None;
         }
-        if self.get_compact_mode()? {
+        if compact_mode {
             let Some(event) = Self::compact_text_event(event) else {
-                return Ok(None);
+                return None;
             };
-            return Ok(Self::classify_event(&event).map(|classified| classified.content_hash));
+            return Self::classify_event(&event).map(|classified| classified.content_hash);
         }
 
-        Ok(Self::classify_event(event).map(|classified| classified.content_hash))
+        Self::classify_event(event).map(|classified| classified.content_hash)
     }
 
     fn classify_event(event: &Event) -> Option<ClassifiedEvent> {
@@ -2180,6 +2197,11 @@ impl Database {
                 | "heic"
                 | "heif"
                 | "video"
+                | "file"
+                | "folder"
+                | "files"
+                | "folders"
+                | "files and folders"
         )
     }
 
@@ -4532,6 +4554,51 @@ mod tests {
     }
 
     #[test]
+    fn file_and_folder_summaries_advertise_lazy_path_details() {
+        for urls in [
+            vec!["file:///Users/demo/report.txt"],
+            vec!["file:///Users/demo/Archives/"],
+            vec![
+                "file:///Users/demo/report.txt",
+                "file:///Users/demo/notes.txt",
+            ],
+            vec![
+                "file:///Users/demo/Archives/",
+                "file:///Users/demo/Designs/",
+            ],
+            vec![
+                "file:///Users/demo/report.txt",
+                "file:///Users/demo/Archives/",
+            ],
+        ] {
+            let db = in_memory_database();
+            db.insert_event(&Event {
+                items: urls
+                    .iter()
+                    .map(|url| Item {
+                        data_list: vec![data("public.file-url", url.as_bytes())],
+                    })
+                    .collect(),
+            })
+            .unwrap();
+            let page = db.get_history_page(None, Some(50)).unwrap();
+            assert_eq!(page.items.len(), 1);
+            let summary = &page.items[0];
+            assert!(summary.has_detail);
+            assert!(!String::from_utf8_lossy(&summary.display).contains("/Users/demo"));
+            let detail = Database::build_history_detail(
+                db.get_history_detail_seed(&summary.content_hash)
+                    .unwrap()
+                    .unwrap(),
+                false,
+            )
+            .unwrap();
+            assert_eq!(detail.file_items.len(), urls.len());
+            assert!(detail.file_items.iter().all(|item| item.path.is_some()));
+        }
+    }
+
+    #[test]
     fn detail_builder_rejects_png_bombs_and_degrades_oversized_html() {
         let bomb = valid_png(100_000, 100_000, 0);
         let bomb_event = event(vec![
@@ -4755,6 +4822,115 @@ mod tests {
     }
 
     #[test]
+    fn max_event_bytes_persists_and_limits_new_captures_without_trimming_history() {
+        let path = temp_database_path("max_event_bytes");
+        let db = Database::open_path(&path).expect("database should open");
+        let mib = crate::resource_policy::MIB_BYTES;
+        let large_event = event(vec![data(
+            "public.utf8-plain-text",
+            &vec![b'x'; mib as usize],
+        )]);
+        assert!(db.insert_event(&large_event).unwrap());
+        let before = db.get_history_page(None, Some(50)).unwrap();
+        let saved_hash = before.items[0].content_hash.clone();
+        let prepared_before_update = Database::prepare_history_event(
+            &event(vec![data(
+                "public.utf8-plain-text",
+                &vec![b'y'; mib as usize],
+            )]),
+            false,
+        )
+        .unwrap()
+        .unwrap();
+
+        db.set_max_event_bytes(mib).expect("limit should save");
+        assert_eq!(db.get_settings().unwrap().max_event_bytes, mib);
+        assert_eq!(db.get_history_page(None, Some(50)).unwrap(), before);
+        assert!(!db.insert_prepared_event(prepared_before_update).unwrap());
+        assert!(!db.insert_event(&large_event).unwrap());
+        drop(db);
+
+        let reopened = Database::open_path(&path).expect("database should reopen");
+        assert_eq!(reopened.get_max_event_bytes().unwrap(), mib);
+        assert_eq!(reopened.get_history_page(None, Some(50)).unwrap(), before);
+        let restored = reopened
+            .get_event_by_content_hash(&saved_hash)
+            .unwrap()
+            .expect("older large row remains restorable");
+        assert_eq!(restored.items[0].data_list[0].data.len(), mib as usize);
+        assert!(reopened
+            .insert_event(&event(vec![data(
+                "public.utf8-plain-text",
+                b"small new event"
+            )]))
+            .unwrap());
+        drop(reopened);
+        remove_database_files(&path);
+    }
+
+    #[test]
+    fn event_limit_above_thirty_two_mib_saves_full_payload_with_bounded_previews() {
+        let db = in_memory_database();
+        let mib = crate::resource_policy::MIB_BYTES;
+        let original = event(vec![data("public.html", &vec![b'x'; 33 * mib as usize])]);
+        assert!(crate::resource_policy::prepare_capture_event(
+            original.clone(),
+            db.get_max_event_bytes().unwrap() as usize,
+        )
+        .is_err());
+        db.set_max_event_bytes(64 * mib).unwrap();
+        let capture = crate::resource_policy::prepare_capture_event(
+            original,
+            db.get_max_event_bytes().unwrap() as usize,
+        )
+        .expect("configured limit should accept more than 32 MiB");
+        assert!(db.insert_event(&capture.event).unwrap());
+        let page = db.get_history_page(None, Some(50)).unwrap();
+        assert_eq!(page.total_count, 1);
+        assert!(page.items[0].display.len() <= MAX_SUMMARY_DISPLAY_BYTES);
+        let content_hash = &page.items[0].content_hash;
+        let restored = db.get_event_by_content_hash(content_hash).unwrap().unwrap();
+        assert_eq!(restored.items[0].data_list[0].data.len(), 33 * mib as usize);
+        let detail = Database::build_history_detail(
+            db.get_history_detail_seed(content_hash).unwrap().unwrap(),
+            false,
+        )
+        .unwrap();
+        assert!(
+            detail.html_preview.is_none(),
+            "oversized HTML must not reach the renderer"
+        );
+        assert!(serde_json::to_vec(&detail).unwrap().len() <= MAX_DETAIL_IPC_BYTES);
+    }
+
+    #[test]
+    fn existing_database_receives_default_event_limit_without_changing_rows() {
+        let path = temp_database_path("missing_max_event_bytes");
+        let db = Database::open_path(&path).expect("database should open");
+        db.insert_event(&event(vec![data(
+            "public.utf8-plain-text",
+            b"existing history",
+        )]))
+        .unwrap();
+        db.set_max_items(321).unwrap();
+        let before = db.get_history_page(None, Some(50)).unwrap();
+        db.conn
+            .execute("DELETE FROM settings WHERE key = 'max_event_bytes'", [])
+            .unwrap();
+        drop(db);
+
+        let reopened = Database::open_path(&path).expect("existing database should reopen");
+        assert_eq!(
+            reopened.get_max_event_bytes().unwrap(),
+            crate::resource_policy::DEFAULT_MAX_EVENT_BYTES
+        );
+        assert_eq!(reopened.get_max_items().unwrap(), 321);
+        assert_eq!(reopened.get_history_page(None, Some(50)).unwrap(), before);
+        drop(reopened);
+        remove_database_files(&path);
+    }
+
+    #[test]
     fn app_settings_include_current_history_and_resource_limits() {
         let db = in_memory_database();
         db.insert_event(&event(vec![data(
@@ -4770,7 +4946,10 @@ mod tests {
         assert!(settings.history_bytes > 0);
         assert_eq!(settings.history_limit_bytes, 123_456);
         assert_eq!(settings.max_history_bytes, settings.history_limit_bytes);
-        assert_eq!(settings.max_event_bytes, MAX_EVENT_BLOB_BYTES as u64);
+        assert_eq!(
+            settings.max_event_bytes,
+            crate::resource_policy::DEFAULT_MAX_EVENT_BYTES
+        );
         assert_eq!(settings.menu_bar_item_limit, 0);
     }
 

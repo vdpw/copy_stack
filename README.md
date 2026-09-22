@@ -14,9 +14,10 @@ clipboard data to a remote service.
 
 ## Screenshots
 
-| Clipboard history                                                                                 | Settings                                                    |
-| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| ![Copy Stack clipboard history containing synthetic examples](docs/images/copy-stack-history.png) | ![Copy Stack settings](docs/images/copy-stack-settings.png) |
+| View | Light | Dark |
+| --- | --- | --- |
+| Clipboard history | ![Light clipboard history with pinned items and expanded file paths](docs/images/copy-stack-history-light.jpg) | ![Dark clipboard history with pinned items and expanded file paths](docs/images/copy-stack-history-dark.jpg) |
+| Clipboard settings | ![Light clipboard settings with a maximum item size in MiB](docs/images/copy-stack-settings-light.jpg) | ![Dark clipboard settings with a maximum item size in MiB](docs/images/copy-stack-settings-dark.jpg) |
 
 > Every clipboard item shown in these screenshots is synthetic QA data.
 
@@ -28,12 +29,18 @@ clipboard data to a remote service.
   folders, and bounded media metadata.
 - **Quick restore:** restores an item from either the History page or the macOS
   menu bar.
+- **Pinned items:** keeps important clips through automatic cleanup and asks
+  for confirmation before deleting a pinned item.
+- **File paths on demand:** expands files and folders to show their full paths
+  beneath their names.
 - **Private by default:** stores accepted content locally and gives database,
   sidecar, and optional mirror files private permissions.
 - **Clipboard-aware filtering:** excludes transient, auto-generated,
   concealed, and supported password-manager content before persistence.
-- **Storage controls:** enforces configurable item and byte limits and includes
-  an optional text-only compact mode.
+- **Storage controls:** configures history count, total storage, and maximum
+  item size (1–256 MiB, default 32 MiB), with an optional text-only compact mode.
+  Larger items keep bounded previews; reducing the item size limit preserves
+  existing history.
 - **Native lifecycle:** supports single-instance activation and opt-in launch
   at login.
 - **Localized UI:** supports English, Simplified Chinese, and Traditional

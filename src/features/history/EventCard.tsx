@@ -12,7 +12,7 @@ import {
   Trash2,
   Video,
 } from "lucide-react";
-import type { KeyboardEvent } from "react";
+import type { ElementRef, KeyboardEvent } from "react";
 import type { Messages, SupportedLanguage } from "../../i18n";
 import { getEventTypeLabel } from "../../i18n";
 import {
@@ -23,6 +23,7 @@ import {
 } from "../../lib/display";
 import type { FileDisplayItem } from "../../lib/display";
 import type {
+  FileDetailItem,
   HistoryDetail,
   HistorySummary,
   RichPreviewSegment,
@@ -43,13 +44,14 @@ interface EventCardProps {
   copied: boolean;
   restoring: boolean;
   pinning: boolean;
+  deleting?: boolean;
   searchQuery?: string;
   language: SupportedLanguage;
   messages: Messages;
   onToggle: () => void;
   onRetryDetail: () => void;
   onRestore: () => void;
-  onDelete: () => void;
+  onDelete: (trigger: ElementRef<"button">) => void;
   onPin: () => void;
 }
 
@@ -164,7 +166,7 @@ function FileItems({
   messages,
 }: {
   expanded: boolean;
-  items: FileDisplayItem[];
+  items: (FileDisplayItem | FileDetailItem)[];
   messages: Messages;
 }) {
   const visibleItems = expanded ? items : items.slice(0, 1);
@@ -203,7 +205,12 @@ function FileItems({
             ) : (
               <File aria-hidden="true" className="event-type-icon" size={18} />
             )}
-            <span>{label}</span>
+            <span className="event-file-description">
+              <span>{label}</span>
+              {expanded && "path" in item && item.path && (
+                <span className="event-file-path">{item.path}</span>
+              )}
+            </span>
           </li>
         );
       })}
@@ -220,6 +227,7 @@ export function EventCard({
   copied,
   restoring,
   pinning,
+  deleting = false,
   searchQuery = "",
   language,
   messages,
@@ -231,7 +239,11 @@ export function EventCard({
 }: EventCardProps) {
   const fallbackLabel = getEventTypeLabel(messages, summary.data_type);
   const text = decodeSummaryDisplay(summary, fallbackLabel, messages.video);
-  const fileItems = parseFileDisplay(text);
+  const summaryFileItems = parseFileDisplay(text);
+  const fileItems =
+    expanded && detail?.file_items?.length
+      ? detail.file_items
+      : summaryFileItems;
   const searchPreview = summary.search_preview?.trim() ?? "";
   const collapsedSearchSurface = fileItems
     ? (fileItems[0]?.name ?? "")
@@ -367,7 +379,7 @@ export function EventCard({
           aria-label={summary.is_pinned ? messages.unpinItem : messages.pinItem}
           aria-pressed={summary.is_pinned}
           className={`btn btn-secondary ${summary.is_pinned ? "btn-pinned" : ""}`}
-          disabled={pinning}
+          disabled={pinning || deleting}
           title={summary.is_pinned ? messages.unpinItem : messages.pinItem}
           onClick={event => {
             event.stopPropagation();
@@ -396,7 +408,7 @@ export function EventCard({
             event.stopPropagation();
             onRestore();
           }}
-          disabled={restoring}
+          disabled={restoring || deleting}
           title={
             copied
               ? messages.copiedToClipboard
@@ -413,11 +425,12 @@ export function EventCard({
           )}
         </button>
         <button
-          aria-label={messages.deleteItem}
+          aria-label={deleting ? messages.deletingItem : messages.deleteItem}
           className="btn btn-danger"
+          disabled={deleting || pinning}
           onClick={event => {
             event.stopPropagation();
-            onDelete();
+            onDelete(event.currentTarget);
           }}
           title={messages.deleteItem}
           type="button"
