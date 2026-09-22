@@ -14,12 +14,12 @@ clipboard data to a remote service.
 
 ## Screenshots
 
-| Clipboard history                                                                                 | Settings                                                    |
-| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| ![ClipEcho clipboard history containing synthetic examples](docs/images/clipecho-history.png) | ![ClipEcho settings](docs/images/clipecho-settings.png) |
+| View | Light | Dark |
+| --- | --- | --- |
+| Clipboard history | ![Light clipboard history with pinned items and expanded file paths](docs/images/clipecho-history-light.jpg) | ![Dark clipboard history with pinned items and expanded file paths](docs/images/clipecho-history-dark.jpg) |
+| Clipboard settings | ![Light clipboard settings with a maximum item size in MiB](docs/images/clipecho-settings-light.jpg) | ![Dark clipboard settings with a maximum item size in MiB](docs/images/clipecho-settings-dark.jpg) |
 
-> These screenshots predate the ClipEcho rename. Every clipboard item shown is
-> synthetic QA data.
+> Every clipboard item shown in these screenshots is synthetic QA data.
 
 ## Highlights
 
@@ -29,12 +29,18 @@ clipboard data to a remote service.
   folders, and bounded media metadata.
 - **Quick restore:** restores an item from either the History page or the macOS
   menu bar.
+- **Pinned items:** keeps important clips through automatic cleanup and asks
+  for confirmation before deleting a pinned item.
+- **File paths on demand:** expands files and folders to show their full paths
+  beneath their names.
 - **Private by default:** stores accepted content locally and gives database,
   sidecar, and optional mirror files private permissions.
 - **Clipboard-aware filtering:** excludes transient, auto-generated,
   concealed, and supported password-manager content before persistence.
-- **Storage controls:** enforces configurable item and byte limits and includes
-  an optional text-only compact mode.
+- **Storage controls:** configures history count, total storage, and maximum
+  item size (1–256 MiB, default 32 MiB), with an optional text-only compact mode.
+  Larger items keep bounded previews; reducing the item size limit preserves
+  existing history.
 - **Native lifecycle:** supports single-instance activation and opt-in launch
   at login.
 - **Localized UI:** supports English, Simplified Chinese, and Traditional
@@ -57,8 +63,6 @@ corepack enable
 pnpm install
 pnpm desktop:dev
 ```
-
-The GitHub repository and checkout directory retain their existing names.
 
 The development app uses the real macOS pasteboard. For isolated manual QA,
 follow the temporary-data workflow in
@@ -102,11 +106,6 @@ The default database is:
 ```text
 $HOME/.copy_stack/copy_stack.db
 ```
-
-This legacy path is retained so existing history and settings remain available
-after the ClipEcho rename. The bundle identifier, clipboard payload marker,
-and existing `--copy-stack-*` startup flags also remain compatible; see
-[`docs/project-overview.md`](docs/project-overview.md#naming).
 
 The data directory is restricted to the current user, but clipboard history is
 not encrypted at rest. Anyone who can access your macOS account may be able to

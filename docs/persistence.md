@@ -8,9 +8,6 @@ The database is:
 $HOME/.copy_stack/copy_stack.db
 ```
 
-This legacy location is intentionally unchanged by the ClipEcho rename, which
-keeps existing history and settings available without a data migration.
-
 On the supported Unix/macOS path, startup:
 
 - creates or tightens `.copy_stack` to `0700`;
@@ -74,8 +71,8 @@ or the removed legacy `source_app` heuristic.
 - `content_hash`: lowercase SHA-256 identity of the selected public
   representation.
 - `event_data`: bounded binary encoding of the accepted event used for restore.
-- `data_type` / `display`: classified display metadata bounded by the selected
-  content-type capture policy.
+- `data_type` / `display`: classified display metadata capped at 1 MiB;
+  full restorable content remains in `event_data`.
 - `summary_display`: at most 512 bytes for History and the menu bar.
 - `summary_truncated`: tells the UI that the summary is incomplete.
 - `compact_content_hash` / `compact_display`: effective plain-text projection
@@ -94,6 +91,9 @@ or the removed legacy `source_app` heuristic.
 
 - `max_items`: default `100`, accepted UI range 1–1000.
 - `max_history_bytes`: default `268435456` (256 MiB).
+- `max_event_bytes`: default `33554432` (32 MiB), accepted range 1–256 whole
+  MiB stored as bytes. Includes encoded-event overhead; restricts new capture
+  only and never trims existing rows.
 - `show_in_menu_bar`: default `true`.
 - `menu_bar_item_limit`: default `0` (all retained rows), accepted UI range
   0–1000.
@@ -106,8 +106,10 @@ or the removed legacy `source_app` heuristic.
   system mode continues following operating-system changes after restart.
 
 Autostart is not stored here. The operating system login item is authoritative.
-Existing databases receive a missing theme setting through default-setting
-initialization; adding this settings key does not change the history schema.
+Existing databases receive missing settings through default-setting
+initialization; adding `theme` or `max_event_bytes` does not change the history
+schema or rewrite existing clipboard rows. Invalid single-event byte settings
+are rejected; writes must use whole MiB values within the codec safety ceiling.
 
 ## Versioned Initialization And Migration
 
@@ -253,13 +255,17 @@ database lock. Event decoding and local media inspection happen after the lock
 is released.
 
 Detail construction is display-only and bounded to 32 segments and 8 MiB.
-Formatted HTML throughout the 2 MiB capture budget uses the same isolated
-renderer. Malformed or legacy values outside that budget use a bounded 1 MiB
+Formatted HTML up to the 2 MiB rendering budget uses the same isolated
+renderer. Values outside that budget use a bounded 1 MiB
 plain-text fallback.
 Local images must be ordinary files whose identity remains stable before,
 during, and after a bounded read. PNG previews also enforce a 20-million-pixel
-header limit. Video bytes and local paths are never copied through IPC; video
-detail contains only a display label and media type.
+header limit. Video bytes and video paths are never copied through IPC; video
+detail contains only a display label and media type. File and folder details
+decode the stored event only on expansion, returning display names and full
+paths within the same serialized response budget. Finder references resolve to
+their current paths outside the database lock; unresolved paths remain null.
+The persisted file summaries stay name-only and retain their 512-byte bound.
 
 Restore uses the original encoded event (or its compact projection) plus stored
 source/remote metadata. Canonical protocol markers are applied immediately

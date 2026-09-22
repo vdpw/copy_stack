@@ -43,6 +43,7 @@ function createController(): AppSettingsController {
     loadSettings: vi.fn().mockResolvedValue(settings),
     updateMaxItems: vi.fn(),
     updateMaxHistoryBytes: vi.fn(),
+    updateMaxEventBytes: vi.fn(),
     updateMenuBarVisibility: vi.fn(),
     updateMenuBarItemLimit: vi.fn(),
     updateRestoreOrdering: vi.fn(),
@@ -251,7 +252,7 @@ describe("SettingsView", () => {
     const helpButtons = container.querySelectorAll<HTMLButtonElement>(
       ".settings-help-trigger"
     );
-    expect(helpButtons).toHaveLength(2);
+    expect(helpButtons).toHaveLength(3);
     expect(container.querySelector('[role="note"]')).toBeNull();
     expect(helpButtons[0].getAttribute("aria-label")).toBe("存储数量说明");
     expect(helpButtons[0].getAttribute("aria-expanded")).toBe("false");
@@ -320,6 +321,7 @@ describe("SettingsView", () => {
     selectCategory("剪贴板");
     editInput(container, "#max-items-input", "250");
     editInput(container, "#history-budget-input", "512");
+    editInput(container, "#event-budget-input", "4");
     selectCategory("菜单栏");
     editInput(container, "#menu-bar-item-limit-input", "20");
     selectCategory("外观");
@@ -333,6 +335,9 @@ describe("SettingsView", () => {
     expect(
       container.querySelector<HTMLInputElement>("#history-budget-input")?.value
     ).toBe("512");
+    expect(
+      container.querySelector<HTMLInputElement>("#event-budget-input")?.value
+    ).toBe("4");
     selectCategory("菜单栏");
     expect(
       container.querySelector<HTMLInputElement>("#menu-bar-item-limit-input")
@@ -350,6 +355,60 @@ describe("SettingsView", () => {
     expect(
       container.querySelector<HTMLInputElement>("#history-budget-input")?.value
     ).toBe("512");
+  });
+
+  it.each(["", "0", "257", "1.5", "-1"])(
+    "rejects invalid maximum item size %s without saving",
+    value => {
+      const { container, controller, selectCategory } = renderSettings();
+      selectCategory("剪贴板");
+      const input = editInput(container, "#event-budget-input", value);
+      const button = input
+        .closest(".preference-row")!
+        .querySelector("button.btn") as HTMLButtonElement;
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+      expect(button.disabled).toBe(true);
+      expect(container.querySelector("#event-budget-error")?.textContent).toBe(
+        getMessages("zh-CN").eventBudgetError
+      );
+      button.click();
+      expect(controller.updateMaxEventBytes).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([1, 64, 256])("saves a %s MiB item limit as bytes", value => {
+    const { container, controller, selectCategory, render } = renderSettings();
+    selectCategory("剪贴板");
+    const input = editInput(container, "#event-budget-input", String(value));
+    const button = input
+      .closest(".preference-row")!
+      .querySelector("button.btn") as HTMLButtonElement;
+    flushSync(() => button.click());
+    expect(controller.updateMaxEventBytes).toHaveBeenCalledExactlyOnceWith(
+      value * 1024 * 1024
+    );
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    controller.settings = { ...settings, max_event_bytes: value * 1024 * 1024 };
+    render();
+    expect(button.disabled).toBe(true);
+    expect(input.value).toBe(String(value));
+  });
+
+  it("disables maximum item size while saving and exposes help on demand", () => {
+    const controller = createController();
+    controller.updating = true;
+    const { container, selectCategory } = renderSettings(controller);
+    selectCategory("剪贴板");
+    expect(
+      container.querySelector<HTMLInputElement>("#event-budget-input")?.disabled
+    ).toBe(true);
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="单条大小上限说明"]'
+    )!;
+    flushSync(() => trigger.click());
+    expect(container.querySelector("#event-budget-help")?.textContent).toBe(
+      getMessages("zh-CN").eventBudgetHelp
+    );
   });
 
   it("contains confirmation focus and restores it when Escape cancels clearing", () => {

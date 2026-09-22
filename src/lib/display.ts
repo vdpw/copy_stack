@@ -1,6 +1,5 @@
 import type { HistorySummary } from "../types";
 
-// Persisted format tag shared with Rust; existing history keeps this identity.
 const fileDisplayFormat = "copy_stack.file-items.v1";
 const defaultDisplayWidth = 40;
 const truncationSuffix = "...";

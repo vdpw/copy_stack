@@ -50,8 +50,10 @@ after releasing the lock, replaces protocol metadata with exactly one source
 marker and the stored remote marker when applicable, then writes it to the
 system clipboard.
 
-When restore-to-top is disabled, a short suppression window prevents the app's
-own clipboard write from being captured as a new event. When it is enabled, the
+Every restore uses a short one-shot suppression window to prevent the app's
+own clipboard write from being captured as a new event, including older items
+that exceed a newly lowered capture limit. Other copied content still follows
+the configured limit. When restore-to-top is enabled, the
 row receives a new persisted ordering timestamp and History and the menu bar are
 refreshed.
 
@@ -91,9 +93,8 @@ is limited to the highlighted row and 64 KiB.
 
 ## Data Privacy And Failure Model
 
-History retains its legacy location at `$HOME/.copy_stack/copy_stack.db` so the
-ClipEcho rename preserves existing history and settings. The directory is
-created or tightened to `0700`; the database, SQLite sidecars, JSONL output, and JSONL
+History lives at `$HOME/.copy_stack/copy_stack.db`. The directory is created or
+tightened to `0700`; the database, SQLite sidecars, JSONL output, and JSONL
 temporary files are created or tightened to `0600`. Unsafe symlink,
 non-regular, wrong-owner, multiply linked, or insecure targets are rejected
 instead of falling back to a public path.
@@ -114,20 +115,6 @@ launch at login, paging, and mirror fault behavior.
 ## Naming
 
 - Product name: ClipEcho.
-- Frontend package name: `clipecho`.
-- Rust package/binary name: `clip_echo`; Rust library name: `clip_echo_lib`.
-- Tauri identifier: `com.copy-stack.desktop` (retained for installed-app identity).
+- Package name: `clip_echo`.
+- Tauri identifier: `com.copy-stack.desktop`.
 - Clipboard event type: `copy_event_listener::event::Event`.
-
-The product rename preserves compatibility identifiers: the repository remains
-`vdpw/copy_stack`, existing checkouts can keep their `copy_stack` directory, data
-remains at `$HOME/.copy_stack/copy_stack.db`, and file-item payloads retain
-`copy_stack.file-items.v1`. Existing `--copy-stack-*` startup flags and the
-debug-only `COPY_STACK_QA_DATA_DIR` override also keep their names. These are
-storage, integration, and development contracts rather than product labels.
-
-The macOS login-item key also remains `Copy Stack` so existing enable/disable
-state refers to the same LaunchAgent. A release launch refreshes an already
-enabled item to the current executable path after the app rename; it never
-enables a disabled item. Debug builds skip this refresh to avoid redirecting
-the installed login item to a development binary.

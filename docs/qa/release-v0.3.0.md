@@ -34,7 +34,7 @@ AC power. Foreground workload was not controlled; timings are observations.
 - An ad-hoc signed arm64 release `.app` and `.dmg` were built with
   `APPLE_SIGNING_IDENTITY=- pnpm desktop:build`. The bundle reports `0.3.0`.
   Strict deep signature verification and `hdiutil verify` passed.
-- Historical pre-rename artifact `Copy Stack_0.3.0_aarch64.dmg` SHA-256:
+- Local `Copy Stack_0.3.0_aarch64.dmg` SHA-256:
   `8ce1fe335a5d0dd200197f9396beac7ee1a8a172becef1b3f135c3cf61fa1372`.
   GitHub builds produce separate artifacts and need their own verification.
 

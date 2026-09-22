@@ -2,10 +2,8 @@ use crate::event::{event_encoded_size, MAX_EVENT_BLOB_BYTES};
 use crate::pasteboard_protocol::{REMOTE_CLIPBOARD_TYPE, SOURCE_TYPE};
 use copy_event_listener::event::{Data, Event, Item};
 
-pub const MAX_TEXT_BYTES: usize = 4 * 1024 * 1024;
+pub const DEFAULT_MAX_EVENT_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_HTML_BYTES: usize = 2 * 1024 * 1024;
-pub const MAX_RTF_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_PNG_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_FILE_URL_BYTES: usize = 64 * 1024;
 pub const MAX_DISPLAY_BYTES: usize = 1024 * 1024;
 pub const MAX_TRAY_PREVIEW_BYTES: usize = 64 * 1024;
@@ -14,6 +12,11 @@ pub const MAX_PREVIEW_IMAGE_PIXELS: u64 = 20_000_000;
 pub const MAX_PREVIEW_SEGMENTS: usize = 32;
 pub const MAX_DETAIL_IPC_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_HISTORY_BYTES: u64 = 256 * 1024 * 1024;
+pub const MIB_BYTES: u64 = 1024 * 1024;
+
+pub fn is_valid_max_event_bytes(bytes: u64) -> bool {
+    (MIB_BYTES..=MAX_EVENT_BLOB_BYTES as u64).contains(&bytes) && bytes % MIB_BYTES == 0
+}
 
 const INLINE_ATTACHMENT_PLACEHOLDER: char = '\u{fffc}';
 
@@ -81,20 +84,21 @@ pub struct PreparedCaptureEvent {
 
 pub fn prepare_capture_event(
     event: Event,
+    max_event_bytes: usize,
 ) -> Result<PreparedCaptureEvent, CaptureResourceRejection> {
+    let max_event_bytes = max_event_bytes.min(MAX_EVENT_BLOB_BYTES);
     let encoded_size = event_encoded_size(&event).unwrap_or(MAX_EVENT_BLOB_BYTES + 1);
-    let mut rejection = (encoded_size > MAX_EVENT_BLOB_BYTES).then_some(CaptureResourceRejection {
+    let mut rejection = (encoded_size > max_event_bytes).then_some(CaptureResourceRejection {
         kind: CaptureResourceKind::Event,
         size_bucket: size_bucket(encoded_size),
     });
 
     for data in event.items.iter().flat_map(|item| item.data_list.iter()) {
         let (kind, limit) = match data.r#type.as_str() {
-            "public.utf8-plain-text" => (CaptureResourceKind::Text, MAX_TEXT_BYTES),
-            "public.html" => (CaptureResourceKind::FormattedText, MAX_HTML_BYTES),
-            "public.rtf" => (CaptureResourceKind::FormattedText, MAX_RTF_BYTES),
+            "public.utf8-plain-text" => (CaptureResourceKind::Text, max_event_bytes),
+            "public.html" | "public.rtf" => (CaptureResourceKind::FormattedText, max_event_bytes),
             "public.png" | "public.tiff" | "public.jpeg" | "public.jpg" => {
-                (CaptureResourceKind::Image, MAX_PNG_BYTES)
+                (CaptureResourceKind::Image, max_event_bytes)
             }
             "public.file-url" => (CaptureResourceKind::FileReference, MAX_FILE_URL_BYTES),
             _ => continue,
@@ -117,7 +121,9 @@ pub fn prepare_capture_event(
         });
     };
 
-    if let Some(event) = safe_plain_text_projection(&event) {
+    if let Some(event) = safe_plain_text_projection(&event, max_event_bytes)
+        .filter(|event| event_encoded_size(event).is_ok_and(|size| size <= max_event_bytes))
+    {
         return Ok(PreparedCaptureEvent {
             event,
             #[cfg(test)]
@@ -364,14 +370,14 @@ fn bmp_dimensions(bytes: &[u8]) -> Option<(u64, u64)> {
     Some((width, height))
 }
 
-fn safe_plain_text_projection(event: &Event) -> Option<Event> {
+fn safe_plain_text_projection(event: &Event, max_event_bytes: usize) -> Option<Event> {
     let text = event
         .items
         .iter()
         .flat_map(|item| item.data_list.iter())
         .find(|data| data.r#type == "public.utf8-plain-text")?;
     let value = std::str::from_utf8(&text.data).ok()?;
-    if text.data.len() > MAX_TEXT_BYTES
+    if text.data.len() > max_event_bytes
         || value.trim().is_empty()
         || value.contains(INLINE_ATTACHMENT_PLACEHOLDER)
     {
@@ -414,18 +420,86 @@ mod tests {
     }
 
     #[test]
+    fn configurable_event_limit_accepts_only_whole_mib_within_safety_ceiling() {
+        for mib in 1..=256 {
+            assert!(is_valid_max_event_bytes(mib * MIB_BYTES));
+        }
+        for bytes in [0, MIB_BYTES - 1, MIB_BYTES + 1, 257 * MIB_BYTES, u64::MAX] {
+            assert!(!is_valid_max_event_bytes(bytes));
+        }
+    }
+
+    #[test]
+    fn configurable_limit_accounts_for_encoded_overhead_at_the_boundary() {
+        let limit = MIB_BYTES as usize;
+        let overhead = event_encoded_size(&event(vec![data("public.utf8-plain-text", 0)]))
+            .expect("fixture size should be valid");
+        let exact = event(vec![data("public.utf8-plain-text", limit - overhead)]);
+        let accepted = prepare_capture_event(exact, limit).expect("exact limit should pass");
+        assert_eq!(event_encoded_size(&accepted.event).unwrap(), limit);
+        assert_eq!(accepted.preparation, CapturePreparation::Accepted);
+
+        let oversized = event(vec![data("public.utf8-plain-text", limit - overhead + 1)]);
+        let rejection = prepare_capture_event(oversized, limit)
+            .expect_err("one extra byte cannot bypass the limit through a text projection");
+        assert_eq!(rejection.kind, CaptureResourceKind::Event);
+    }
+
+    #[test]
+    fn configured_limit_degrades_rich_content_only_when_complete_projection_fits() {
+        let limit = MIB_BYTES as usize;
+        let rich = event(vec![
+            data("public.utf8-plain-text", 32),
+            data("public.html", limit),
+            data(SOURCE_TYPE, 24),
+            data(REMOTE_CLIPBOARD_TYPE, 0),
+        ]);
+        let accepted = prepare_capture_event(rich, limit).expect("bounded text should pass");
+        assert_eq!(
+            accepted.preparation,
+            CapturePreparation::DegradedToPlainText
+        );
+        assert!(event_encoded_size(&accepted.event).unwrap() <= limit);
+        assert_eq!(accepted.event.items[0].data_list.len(), 3);
+
+        let oversized_text = event(vec![
+            data("public.utf8-plain-text", limit),
+            data("public.html", limit),
+        ]);
+        assert!(prepare_capture_event(oversized_text, limit).is_err());
+
+        let oversized_markers = event(vec![
+            data("public.utf8-plain-text", 32),
+            data("public.html", limit),
+            data(SOURCE_TYPE, limit),
+        ]);
+        assert!(prepare_capture_event(oversized_markers, limit).is_err());
+    }
+
+    #[test]
+    fn configured_limit_keeps_file_references_bounded() {
+        let oversized_file_url = event(vec![data("public.file-url", MAX_FILE_URL_BYTES + 1)]);
+        let rejection = prepare_capture_event(oversized_file_url, MAX_EVENT_BLOB_BYTES)
+            .expect_err("file URL keeps its independent safety limit");
+        assert_eq!(rejection.kind, CaptureResourceKind::FileReference);
+    }
+
+    #[test]
     fn oversized_formatted_content_degrades_to_safe_plain_text() {
-        let prepared = prepare_capture_event(event(vec![
-            Data {
-                r#type: "public.utf8-plain-text".to_string(),
-                data: b"synthetic safe fallback".to_vec(),
-            },
-            data("public.html", MAX_HTML_BYTES + 1),
-            Data {
-                r#type: SOURCE_TYPE.to_string(),
-                data: b"com.example.synthetic".to_vec(),
-            },
-        ]))
+        let prepared = prepare_capture_event(
+            event(vec![
+                Data {
+                    r#type: "public.utf8-plain-text".to_string(),
+                    data: b"synthetic safe fallback".to_vec(),
+                },
+                data("public.html", MIB_BYTES as usize + 1),
+                Data {
+                    r#type: SOURCE_TYPE.to_string(),
+                    data: b"com.example.synthetic".to_vec(),
+                },
+            ]),
+            MIB_BYTES as usize,
+        )
         .expect("plain-text fallback should be accepted");
 
         assert_eq!(
@@ -441,8 +515,11 @@ mod tests {
 
     #[test]
     fn oversized_binary_content_without_text_is_rejected_safely() {
-        let rejection = prepare_capture_event(event(vec![data("public.png", MAX_PNG_BYTES + 1)]))
-            .expect_err("oversized image should be rejected");
+        let rejection = prepare_capture_event(
+            event(vec![data("public.png", MIB_BYTES as usize + 1)]),
+            MIB_BYTES as usize,
+        )
+        .expect_err("oversized image should be rejected");
 
         assert_eq!(rejection.kind, CaptureResourceKind::Image);
         assert_eq!(rejection.kind.code(), "capture.image_too_large");

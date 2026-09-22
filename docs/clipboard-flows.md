@@ -45,6 +45,16 @@ Protocol assessment always precedes hashing, resource classification, compact
 projection, persistence, previews, tray, and mirror export. A marker on any item
 applies to the complete event.
 
+The persisted `max_event_bytes` setting limits the complete encoded capture,
+including metadata and encoding overhead (1–256 whole MiB, default 32 MiB).
+Oversized rich captures can fall back to plain text only when the fallback,
+including preserved markers, fits the same limit. Text, formatted content,
+and images can use a larger configured capture limit; file URLs retain their
+64 KiB cap and all display/preview/IPC budgets remain bounded independently.
+Before upsert the current setting is checked again in case it changed while
+the event was being prepared. Changing it never deletes or rewrites older
+rows, which remain restorable even above the new limit.
+
 On macOS, highlighting a text row in the open tray menu performs a separate
 display-only lookup for that content hash and shows up to 64 KiB in a
 nonactivating panel beside the menu. Line breaks are preserved. Moving to an
@@ -55,7 +65,8 @@ restore path.
 Accepted events are classified once before the database lock used for the
 upsert. Duplicate identity updates the stored body and source/remote metadata
 without moving the row or resetting its pin flag. New rows receive a monotonic timestamp. Restore
-suppression is checked before insertion.
+suppression is checked by content identity before capture size limits, so an
+older restored item above a lowered limit does not show a rejection notice.
 
 Mirror scheduling happens after commit. The worker coalesces row-free refresh
 signals, reads the latest committed state through its own SQLite connection,
@@ -124,7 +135,7 @@ Both entry points:
 4. add exactly one source marker to the first item, using the stored exact
    UTF-8 value or an empty value when unknown;
 5. add exactly one empty remote marker only when stored provenance is remote;
-6. queue one-shot suppression when restore-to-top is disabled;
+6. queue one-shot suppression of the app's listener echo;
 7. write the prepared event to NSPasteboard.
 
 When restore-to-top is enabled, the backend then updates the timestamp, takes

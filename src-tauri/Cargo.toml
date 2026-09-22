@@ -61,6 +61,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
   "NSGeometry",
   "NSObject",
   "NSString",
+  "NSURL",
 ] }
 objc2-quartz-core = { version = "=0.3.2", default-features = false, features = [
   "std",

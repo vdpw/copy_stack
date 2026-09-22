@@ -38,9 +38,8 @@ CLIPECHO_QA_RUN_DIR="$(mktemp -d)"
 COPY_STACK_QA_DATA_DIR="$CLIPECHO_QA_RUN_DIR/data" pnpm desktop:dev
 ```
 
-The `COPY_STACK_QA_DATA_DIR` environment variable keeps its legacy name for
-existing QA scripts. This override is compiled only with debug assertions.
-Relative paths are rejected, the resulting `copy_stack.db` still passes the private-file checks,
+This override is compiled only with debug assertions. Relative paths are
+rejected, the resulting `copy_stack.db` still passes the private-file checks,
 and release builds continue to use `$HOME/.copy_stack`. Do not substitute a
 fixed child directly under `/tmp` or `/private/tmp`: their public immediate
 parent is intentionally rejected. Reuse the generated directory for one QA
@@ -133,6 +132,11 @@ The following is a checklist, not a record of completed testing:
    SQLite, History, tray, diagnostics, or JSONL.
 9. Exercise oversized formatted/image/event fixtures. Confirm safe text
    degradation or a localized rejection notice, with no oversized IPC payload.
+   Set Maximum item size to 64 MiB and capture a synthetic 33 MiB item. Lower
+   it to 32 MiB: new oversized captures must be rejected, while the existing
+   item remains restorable without a rejection notice from its own echo.
+   Restart and verify the configured limit persists. Check blank, fractional,
+   zero, and greater-than-256 MiB input validation.
 10. Lower item and byte limits and confirm oldest unpinned rows are trimmed
     while pinned rows survive. Repeat with pinned rows alone exceeding each
     limit; totals may stay above the configured limit. Unpin an old row and
@@ -141,8 +145,10 @@ The following is a checklist, not a record of completed testing:
     grouping, the badge/button state, keyboard activation, disabled state while
     saving, and no unintended expansion or clipboard write. Re-copy a pinned
     row, restore it with both ordering settings, and restart; verify its pin
-    survives and ordering stays within its group. Delete one pinned row
-    explicitly. Clear from Settings and then the menu bar; verify pinned rows
+    survives and ordering stays within its group. Request deletion of a pinned
+    row; verify default Cancel focus, Escape cancellation, and explicit
+    confirmation before deletion. Unpinned deletion remains immediate.
+    Clear from Settings and then the menu bar; verify pinned rows
     survive in SQLite, the main window, the menu, and the optional JSONL mirror.
 12. Toggle compact mode, menu visibility, restore ordering, and all languages.
     With menu visibility off, copy a synthetic item and confirm it is saved
@@ -187,7 +193,7 @@ The following is a checklist, not a record of completed testing:
     languages, and native title-bar controls. The shared visual style must not
     obscure clipboard content or destructive-action confirmation.
 24. In General, verify language and launch at login. In Appearance, verify theme.
-    In Clipboard, verify compact capture, restore order, item/byte limits, and
+    In Clipboard, verify compact capture, restore order, count/total/per-item limits, and
     Clear Unpinned. In Menu Bar, verify visibility and menu item limit. Check all
     four categories by keyboard and pointer, localized labels, scroll behavior,
     and the two-column layout at
@@ -199,6 +205,10 @@ The following is a checklist, not a record of completed testing:
     confirm persistence. Start from an existing database without a `theme` key
     and confirm the default is System without rewriting clipboard history.
     These are required manual checks, not a completed validation record.
+26. Expand single and mixed file/folder clips in both themes. Verify each full
+    path appears under its name in smaller, secondary-color text, long paths
+    wrap, and collapsed cards show names only. Repeat for Finder reference
+    URLs and missing paths; unavailable paths must not be invented.
 
 Record the full Apple Silicon and Intel evidence matrix in
 `docs/security-release-checklist.md` before release. Native dual-architecture CI

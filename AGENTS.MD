@@ -19,7 +19,7 @@ history in the Tauri window, and mirrors recent items into the macOS menu bar.
 - Frontend dev server: Vite on port `5173`.
 - Desktop shell: Tauri 2.
 - Rust edition: 2021.
-- Database: `$HOME/.copy_stack/copy_stack.db` (legacy path retained for continuity).
+- Database: `$HOME/.copy_stack/copy_stack.db`.
 - Local clipboard dependency: `copy_event_listener = { path = "../../copy_event_listener" }`.
 - Release workflow swaps that local dependency to `copy_event_listener = "0.1.2"`.
 

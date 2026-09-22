@@ -14,6 +14,7 @@ fn main() {
             "set_autostart_enabled",
             "set_max_items",
             "set_max_history_bytes",
+            "set_max_event_bytes",
             "set_show_in_menu_bar",
             "set_menu_bar_item_limit",
             "set_move_restored_item_to_top",

@@ -40,6 +40,13 @@ export interface HistoryDetail {
   html_preview: string | null;
   text_preview: string | null;
   rich_preview: RichPreviewSegment[];
+  file_items?: FileDetailItem[];
+}
+
+export interface FileDetailItem {
+  type: string;
+  name: string;
+  path: string | null;
 }
 
 export interface HistoryPage {

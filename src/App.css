@@ -523,6 +523,25 @@ button {
   word-break: break-word;
 }
 
+.event-file-description {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.event-file-path {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.event-card-expanded .event-file-items {
+  gap: 8px;
+}
+
 .event-text {
   color: #14213d;
   line-height: 1.45;

@@ -3,7 +3,6 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 const DEFAULT_JSONL_MAX_DATA_BYTES: usize = 4096;
-// Keep existing launcher and script arguments valid across the ClipEcho rebrand.
 const JSONL_PATH_FLAG: &str = "--copy-stack-history-jsonl";
 const JSONL_MAX_DATA_BYTES_FLAG: &str = "--copy-stack-history-jsonl-max-data-bytes";
 pub(crate) const AUTOSTART_LAUNCH_FLAG: &str = "--copy-stack-autostart";

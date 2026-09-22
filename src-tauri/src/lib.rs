@@ -40,7 +40,9 @@ use crate::history_mirror::{HistoryMirror, HistoryMirrorConfig};
 use crate::i18n::{native_strings, Language, LanguagePreference};
 use crate::lifecycle::AutostartBackend;
 use crate::pasteboard_protocol::{assess_event, prepare_event_for_restore};
-use crate::resource_policy::prepare_capture_event;
+use crate::resource_policy::{
+    is_valid_max_event_bytes, prepare_capture_event, CaptureResourceRejection,
+};
 use crate::store::{
     AppSettings, Database, HistoryCursor, HistoryDetail, HistoryPage, ThemePreference,
     MAX_MENU_BAR_ITEM_LIMIT,
@@ -55,7 +57,7 @@ use tauri::menu::{
     WINDOW_SUBMENU_ID,
 };
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime, State, WindowEvent};
-use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 const RESTORE_SUPPRESSION_TTL: Duration = Duration::from_secs(5);
 const HISTORY_MIRROR_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -444,7 +446,7 @@ fn copy_to_clipboard(
             )
         })?;
 
-    if !move_restored_item_to_top {
+    {
         let mut pending = state
             .pending_restore_suppression
             .lock()
@@ -517,12 +519,44 @@ pub(crate) fn clear_restore_suppression_if_matches(state: &AppState, content_has
     }
 }
 
-fn should_skip_pending_restore_event(state: &AppState, content_hash: &str) -> bool {
-    should_consume_pending_restore(
-        &state.pending_restore_suppression,
-        content_hash,
-        Instant::now(),
-    )
+fn should_skip_pending_restore_capture(
+    pending_restore_suppression: &Mutex<Option<PendingRestoreSuppression>>,
+    event: &Event,
+    compact_mode: bool,
+    now: Instant,
+) -> bool {
+    {
+        let Ok(mut pending) = pending_restore_suppression.lock() else {
+            return false;
+        };
+        let Some(suppression) = pending.as_ref() else {
+            return false;
+        };
+        if now.saturating_duration_since(suppression.created_at) > RESTORE_SUPPRESSION_TTL {
+            *pending = None;
+            return false;
+        }
+    }
+
+    // Restoring an older item is allowed after its capture limit was lowered.
+    // Match its one-shot identity before resource policy can reject its echo.
+    // No full event encoding is needed, and unrelated copies retain normal checks.
+    Database::capture_content_hash(event, compact_mode).is_some_and(|content_hash| {
+        should_consume_pending_restore(pending_restore_suppression, &content_hash, now)
+    })
+}
+
+fn prepare_listener_capture(
+    pending_restore_suppression: &Mutex<Option<PendingRestoreSuppression>>,
+    event: Event,
+    compact_mode: bool,
+    max_event_bytes: usize,
+    now: Instant,
+) -> Result<Option<Event>, CaptureResourceRejection> {
+    if should_skip_pending_restore_capture(pending_restore_suppression, &event, compact_mode, now) {
+        return Ok(None);
+    }
+    prepare_capture_event(event, max_event_bytes).map(|prepared| Some(prepared.event))
 }
 
 fn should_consume_pending_restore(
@@ -818,6 +852,22 @@ fn set_max_history_bytes(
 }
 
 #[tauri::command]
+fn set_max_event_bytes(state: State<'_, AppState>, max_event_bytes: u64) -> CommandResult<()> {
+    if !is_valid_max_event_bytes(max_event_bytes) {
+        return Err(record_command_error(
+            &state,
+            CommandError::new(ErrorCode::InvalidSetting, Operation::UpdateSettings, false),
+        ));
+    }
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| database_unavailable(&state, Operation::UpdateSettings))?;
+    db.set_max_event_bytes(max_event_bytes)
+        .map_err(|_| database_error(&state, Operation::UpdateSettings))
+}
+
+#[tauri::command]
 fn set_show_in_menu_bar(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -974,8 +1024,41 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                     continue;
                 }
 
-                let event = match prepare_capture_event(event) {
-                    Ok(prepared) => prepared.event,
+                let capture_settings = match state.db.lock() {
+                    Ok(db) => match db.get_compact_mode().and_then(|compact_mode| {
+                        db.get_max_event_bytes().map(|limit| (compact_mode, limit))
+                    }) {
+                        Ok(settings) => settings,
+                        Err(_) => {
+                            let _ = state
+                                .diagnostics
+                                .record(&CommandError::database(Operation::CaptureClipboard));
+                            debug_error!("[clipecho] clipboard settings unavailable");
+                            continue;
+                        }
+                    },
+                    Err(_) => {
+                        let _ = state
+                            .diagnostics
+                            .record(&CommandError::state(Operation::CaptureClipboard));
+                        debug_error!("[clipecho] database state unavailable");
+                        continue;
+                    }
+                };
+                let (compact_mode, max_event_bytes) = capture_settings;
+
+                let event = match prepare_listener_capture(
+                    &state.pending_restore_suppression,
+                    event,
+                    compact_mode,
+                    max_event_bytes as usize,
+                    Instant::now(),
+                ) {
+                    Ok(Some(event)) => event,
+                    Ok(None) => {
+                        debug_log!("[clipecho] skipped the app's restored clipboard event");
+                        continue;
+                    }
                     Err(rejection) => {
                         let error = CommandError::new(
                             ErrorCode::CaptureRejected,
@@ -995,26 +1078,6 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                     }
                 };
 
-                let compact_mode = match state.db.lock() {
-                    Ok(db) => match db.get_compact_mode() {
-                        Ok(compact_mode) => compact_mode,
-                        Err(_) => {
-                            let _ = state
-                                .diagnostics
-                                .record(&CommandError::database(Operation::CaptureClipboard));
-                            debug_error!("[clipecho] clipboard settings unavailable");
-                            continue;
-                        }
-                    },
-                    Err(_) => {
-                        let _ = state
-                            .diagnostics
-                            .record(&CommandError::state(Operation::CaptureClipboard));
-                        debug_error!("[clipecho] database state unavailable");
-                        continue;
-                    }
-                };
-
                 let prepared = match Database::prepare_history_event(&event, compact_mode) {
                     Ok(Some(prepared)) => prepared,
                     Ok(None) => {
@@ -1029,13 +1092,6 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                         continue;
                     }
                 };
-                let event_hash = prepared.content_hash().to_string();
-
-                if should_skip_pending_restore_event(&state, &event_hash) {
-                    debug_log!("[clipecho] skipped restored clipboard event to preserve order");
-                    continue;
-                }
-
                 debug_log!("[clipecho] storing clipboard listener event");
                 let insert_result = {
                     let db = match state.db.lock() {
@@ -1112,14 +1168,10 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
                 );
             }
         }))
-        .plugin(
-            tauri_plugin_autostart::Builder::new()
-                // Stable login-item identity: preserve enabled state and disable the existing item.
-                .app_name("Copy Stack")
-                .arg(startup::AUTOSTART_LAUNCH_FLAG)
-                // The builder defaults to LaunchAgent on macOS.
-                .build(),
-        )
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![startup::AUTOSTART_LAUNCH_FLAG]),
+        ))
         .menu(|app| build_app_menu(app, Language::detect_system()))
         .on_menu_event(|app, event| {
             handle_app_menu_event(app, event.id().as_ref());
@@ -1247,21 +1299,6 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
                 tray_refresh,
                 diagnostics: DiagnosticLog::default(),
             });
-            // Refresh an enabled login item's executable after the bundle rename. Debug
-            // builds must not redirect the user's login item to a development binary.
-            #[cfg(all(target_os = "macos", not(debug_assertions)))]
-            if lifecycle::refresh_enabled_autostart(&TauriAutostartBackend { app: &app_handle })
-                .is_err()
-            {
-                let _ = record_command_error(
-                    &app_handle.state::<AppState>(),
-                    CommandError::new(
-                        ErrorCode::AutostartUnavailable,
-                        Operation::UpdateAutostart,
-                        true,
-                    ),
-                );
-            }
             if let (Some(status), Some(state)) = (
                 app_handle.try_state::<StartupStatus>(),
                 app_handle.try_state::<AppState>(),
@@ -1339,6 +1376,7 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
             set_autostart_enabled,
             set_max_items,
             set_max_history_bytes,
+            set_max_event_bytes,
             set_show_in_menu_bar,
             set_menu_bar_item_limit,
             set_move_restored_item_to_top,
@@ -1483,6 +1521,78 @@ mod lib_tests {
             .send(TrayRefreshMessage::Shutdown)
             .expect("shutdown should queue");
         worker.join().expect("tray refresh worker should stop");
+    }
+
+    #[test]
+    fn restored_item_above_lowered_limit_skips_rejection_without_bypassing_other_captures() {
+        let limit = crate::resource_policy::MIB_BYTES as usize;
+        let original = Event {
+            items: vec![Item {
+                data_list: vec![Data {
+                    r#type: "public.utf8-plain-text".to_string(),
+                    data: vec![b'x'; 2 * limit],
+                }],
+            }],
+        };
+        let unrelated = Event {
+            items: vec![Item {
+                data_list: vec![Data {
+                    r#type: "public.utf8-plain-text".to_string(),
+                    data: vec![b'y'; 2 * limit],
+                }],
+            }],
+        };
+        let restored =
+            prepare_event_for_restore(original.clone(), Some("com.example.synthetic"), false)
+                .unwrap();
+
+        for compact_mode in [false, true] {
+            let now = Instant::now();
+            let content_hash = Database::capture_content_hash(&original, compact_mode).unwrap();
+            let pending = Mutex::new(Some(PendingRestoreSuppression {
+                content_hash: content_hash.clone(),
+                created_at: now,
+            }));
+
+            assert!(
+                prepare_listener_capture(&pending, unrelated.clone(), compact_mode, limit, now)
+                    .is_err(),
+                "different external content still follows the lowered limit"
+            );
+            assert!(
+                pending.lock().unwrap().is_some(),
+                "unrelated capture must not consume suppression"
+            );
+            assert!(
+                prepare_listener_capture(&pending, restored.clone(), compact_mode, limit, now)
+                    .unwrap()
+                    .is_none(),
+                "the app's restore echo must skip resource rejection"
+            );
+            assert!(pending.lock().unwrap().is_none());
+            assert!(
+                prepare_listener_capture(&pending, restored.clone(), compact_mode, limit, now)
+                    .is_err(),
+                "suppression applies exactly once, not to subsequent copies"
+            );
+
+            *pending.lock().unwrap() = Some(PendingRestoreSuppression {
+                content_hash,
+                created_at: now,
+            });
+            assert!(
+                prepare_listener_capture(
+                    &pending,
+                    restored.clone(),
+                    compact_mode,
+                    limit,
+                    now + RESTORE_SUPPRESSION_TTL + Duration::from_millis(1)
+                )
+                .is_err(),
+                "expired suppression cannot bypass the capture limit"
+            );
+            assert!(pending.lock().unwrap().is_none());
+        }
     }
 
     #[test]

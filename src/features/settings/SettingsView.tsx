@@ -118,6 +118,7 @@ export function SettingsView({
   const [pendingMaxItemsInput, setPendingMaxItemsInput] = useState("100");
   const [pendingHistoryBudgetInput, setPendingHistoryBudgetInput] =
     useState("256");
+  const [pendingEventBudgetInput, setPendingEventBudgetInput] = useState("32");
   const [pendingMenuBarItemLimitInput, setPendingMenuBarItemLimitInput] =
     useState("0");
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -126,6 +127,7 @@ export function SettingsView({
   const dialogOpen = showConfirmDialog || showClearHistoryDialog;
   const savedMaxItems = settings?.max_items;
   const savedHistoryBudget = settings?.max_history_bytes;
+  const savedEventBudget = settings?.max_event_bytes;
   const savedMenuBarItemLimit = settings?.menu_bar_item_limit;
 
   const cancelDialog = () => {
@@ -258,6 +260,12 @@ export function SettingsView({
   }, [savedHistoryBudget]);
 
   useEffect(() => {
+    if (savedEventBudget !== undefined) {
+      setPendingEventBudgetInput(String(savedEventBudget / mebibyte));
+    }
+  }, [savedEventBudget]);
+
+  useEffect(() => {
     if (savedMenuBarItemLimit !== undefined) {
       setPendingMenuBarItemLimitInput(String(savedMenuBarItemLimit));
     }
@@ -336,6 +344,15 @@ export function SettingsView({
     isHistoryBudgetValid &&
     parsedHistoryBudget * mebibyte !== settings.max_history_bytes;
   const parsedMenuBarItemLimit = Number(pendingMenuBarItemLimitInput);
+  const parsedEventBudget = Number(pendingEventBudgetInput);
+  const isEventBudgetValid =
+    pendingEventBudgetInput.trim() !== "" &&
+    Number.isInteger(parsedEventBudget) &&
+    parsedEventBudget >= 1 &&
+    parsedEventBudget <= 256;
+  const isEventBudgetDirty =
+    isEventBudgetValid &&
+    parsedEventBudget * mebibyte !== settings.max_event_bytes;
   const isMenuBarItemLimitValid =
     pendingMenuBarItemLimitInput.trim() !== "" &&
     Number.isInteger(parsedMenuBarItemLimit) &&
@@ -699,6 +716,65 @@ export function SettingsView({
                     {!isHistoryBudgetValid && (
                       <p className="settings-error" role="alert">
                         {messages.historyBudgetError}
+                      </p>
+                    )}
+                  </div>
+                  <div className="preference-row preference-row-stacked">
+                    <div className="preference-copy">
+                      <div className="preference-label-with-help">
+                        <label htmlFor="event-budget-input">
+                          {messages.eventBudget}
+                        </label>
+                        <SettingsHelp
+                          id="event-budget-help"
+                          label={messages.settingHelp(messages.eventBudget)}
+                          text={messages.eventBudgetHelp}
+                        />
+                      </div>
+                    </div>
+                    <div className="preference-control storage-input-row">
+                      <input
+                        aria-describedby={
+                          isEventBudgetValid ? undefined : "event-budget-error"
+                        }
+                        aria-invalid={!isEventBudgetValid}
+                        className="storage-input"
+                        disabled={controller.updating}
+                        id="event-budget-input"
+                        max="256"
+                        min="1"
+                        step="1"
+                        onChange={event =>
+                          setPendingEventBudgetInput(event.target.value)
+                        }
+                        type="number"
+                        value={pendingEventBudgetInput}
+                      />
+                      <span className="storage-unit">MiB</span>
+                      <button
+                        className="btn btn-primary"
+                        disabled={
+                          controller.updating ||
+                          !isEventBudgetValid ||
+                          !isEventBudgetDirty
+                        }
+                        onClick={() =>
+                          void controller.updateMaxEventBytes(
+                            parsedEventBudget * mebibyte
+                          )
+                        }
+                        type="button"
+                      >
+                        {messages.apply}
+                      </button>
+                    </div>
+                    {!isEventBudgetValid && (
+                      <p
+                        className="settings-error"
+                        id="event-budget-error"
+                        role="alert"
+                      >
+                        {messages.eventBudgetError}
                       </p>
                     )}
                   </div>
