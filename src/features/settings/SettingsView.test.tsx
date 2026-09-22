@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/* global HTMLButtonElement, HTMLInputElement */
+/* global HTMLButtonElement, HTMLInputElement, HTMLSelectElement */
 
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -16,6 +16,7 @@ vi.mock("../../api/tauri", async importOriginal => ({
 }));
 
 const settings: AppSettings = {
+  storage_directory: "/private/example/ClipEcho",
   max_items: 100,
   max_history_bytes: 256 * 1024 * 1024,
   show_in_menu_bar: true,
@@ -36,6 +37,7 @@ function createController(): AppSettingsController {
     settings,
     loading: false,
     updating: false,
+    movingStorage: false,
     error: null,
     autostartEnabled: false,
     autostartLoading: false,
@@ -50,6 +52,7 @@ function createController(): AppSettingsController {
     updateCompactMode: vi.fn(),
     updateLanguage: vi.fn(),
     updateTheme: vi.fn(),
+    changeStorageDirectory: vi.fn(),
     updateAutostart: vi.fn(),
     reportError: vi.fn(),
     retryError: vi.fn(),
@@ -252,31 +255,77 @@ describe("SettingsView", () => {
     const helpButtons = container.querySelectorAll<HTMLButtonElement>(
       ".settings-help-trigger"
     );
-    expect(helpButtons).toHaveLength(3);
+    expect(helpButtons).toHaveLength(4);
     expect(container.querySelector('[role="note"]')).toBeNull();
-    expect(helpButtons[0].getAttribute("aria-label")).toBe("存储数量说明");
-    expect(helpButtons[0].getAttribute("aria-expanded")).toBe("false");
+    const itemHelp = helpButtons[1];
+    expect(itemHelp.getAttribute("aria-label")).toBe("存储数量说明");
+    expect(itemHelp.getAttribute("aria-expanded")).toBe("false");
 
-    flushSync(() => helpButtons[0].click());
-    expect(helpButtons[0].getAttribute("aria-expanded")).toBe("true");
-    expect(helpButtons[0].getAttribute("aria-controls")).toBe(
-      "stored-items-help"
-    );
-    expect(helpButtons[0].getAttribute("aria-describedby")).toBe(
-      "stored-items-help"
-    );
+    flushSync(() => itemHelp.click());
+    expect(itemHelp.getAttribute("aria-expanded")).toBe("true");
+    expect(itemHelp.getAttribute("aria-controls")).toBe("stored-items-help");
+    expect(itemHelp.getAttribute("aria-describedby")).toBe("stored-items-help");
     expect(container.querySelector('[role="note"]')?.textContent).toBe(
       getMessages("zh-CN").storedItemsHelp
     );
-    flushSync(() => helpButtons[0].click());
+    flushSync(() => itemHelp.click());
     expect(container.querySelector('[role="note"]')).toBeNull();
 
-    flushSync(() => helpButtons[1].click());
+    flushSync(() => helpButtons[2].click());
     expect(container.querySelector('[role="note"]')?.textContent).toContain(
       "单条最多 8 MB"
     );
     expect(controller.updateMaxItems).not.toHaveBeenCalled();
     expect(controller.updateMaxHistoryBytes).not.toHaveBeenCalled();
+  });
+
+  it("shows the current directory and opens the native picker only on request", () => {
+    const { container, controller, selectCategory } = renderSettings();
+    selectCategory("剪贴板");
+    expect(container.querySelector("#storage-directory")?.textContent).toBe(
+      settings.storage_directory
+    );
+    const change = container.querySelector<HTMLButtonElement>(
+      ".settings-storage-location button.btn"
+    )!;
+    expect(change.textContent).toBe(
+      getMessages("zh-CN").changeStorageDirectory
+    );
+    flushSync(() => change.click());
+    expect(controller.changeStorageDirectory).toHaveBeenCalledOnce();
+    expect(container.querySelector("#storage-directory-help")).toBeNull();
+    flushSync(() =>
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="存储位置说明"]')!
+        .click()
+    );
+    expect(
+      container.querySelector("#storage-directory-help")?.textContent
+    ).toBe(getMessages("zh-CN").storageDirectoryHelp);
+  });
+
+  it("keeps the current path visible and disables settings mutations while moving", () => {
+    const controller = createController();
+    controller.updating = true;
+    controller.movingStorage = true;
+    const { container, selectCategory } = renderSettings(controller);
+    selectCategory("剪贴板");
+    expect(container.querySelector("#storage-directory")?.textContent).toBe(
+      settings.storage_directory
+    );
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      getMessages("zh-CN").movingStorage
+    );
+    for (const category of ["通用", "外观", "剪贴板", "菜单栏"]) {
+      selectCategory(category);
+      const controls = container.querySelectorAll<
+        HTMLButtonElement | HTMLInputElement | HTMLSelectElement
+      >("main input, main select, main button.btn");
+      expect(controls.length).toBeGreaterThan(0);
+      expect(Array.from(controls).every(control => control.disabled)).toBe(
+        true
+      );
+    }
   });
 
   it("dismisses storage help on outside click, Escape, and category navigation", () => {

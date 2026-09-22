@@ -60,6 +60,7 @@ export interface HistoryPage {
 export type ThemePreference = "system" | "light" | "dark";
 
 export interface AppSettings {
+  storage_directory: string;
   theme: ThemePreference;
   max_items: number;
   max_history_bytes: number;
@@ -95,6 +96,10 @@ export type ErrorCode =
   | "autostart_verification_failed"
   | "history_mirror_failed"
   | "capture_rejected"
+  | "storage_destination_exists"
+  | "storage_permission_denied"
+  | "storage_invalid_directory"
+  | "storage_move_failed"
   | "unknown";
 
 export type Operation =
@@ -109,6 +114,7 @@ export type Operation =
   | "load_settings"
   | "update_settings"
   | "update_autostart"
+  | "move_storage"
   | "write_history_mirror";
 
 export interface CommandError {

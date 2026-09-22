@@ -16,6 +16,8 @@
     "allow-clear-all-events",
     "allow-copy-to-clipboard",
     "allow-get-app-settings",
+    "allow-choose-storage-directory",
+    "allow-set-storage-directory",
     "allow-get-safe-diagnostics",
     "allow-get-autostart-status",
     "allow-set-autostart-enabled",

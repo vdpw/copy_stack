@@ -68,8 +68,8 @@ and should still create exactly one listener and tray.
 Expected modes are:
 
 ```text
-$HOME/.copy_stack                  0700
-$HOME/.copy_stack/copy_stack.db    0600
+$HOME/.clipecho                  0700
+$HOME/.clipecho/clipecho.db    0600
 SQLite sidecars                    0600
 JSONL and mirror temp files        0600
 ```
@@ -77,7 +77,7 @@ JSONL and mirror temp files        0600
 Inspect with:
 
 ```bash
-stat -f '%Sp %Su %N' "$HOME/.copy_stack" "$HOME/.copy_stack/copy_stack.db"
+stat -f '%Sp %Su %N' "$HOME/.clipecho" "$HOME/.clipecho/clipecho.db"
 ```
 
 Startup deliberately rejects symlinks, non-regular/wrong-owner/multiply-linked
@@ -98,9 +98,9 @@ Do not delete or upload a real clipboard database while troubleshooting.
 Inspect only schema metadata first:
 
 ```bash
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "PRAGMA user_version;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM app_metadata ORDER BY key;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" ".schema clipboard_events"
+sqlite3 "$HOME/.clipecho/clipecho.db" "PRAGMA user_version;"
+sqlite3 "$HOME/.clipecho/clipecho.db" "SELECT key, value FROM app_metadata ORDER BY key;"
+sqlite3 "$HOME/.clipecho/clipecho.db" ".schema clipboard_events"
 ```
 
 Migrations are transactional. A failure should preserve the original table. A
@@ -121,8 +121,8 @@ Both limits apply:
 Inspect safe aggregate values:
 
 ```bash
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings WHERE key IN ('max_items', 'max_history_bytes', 'menu_bar_item_limit') ORDER BY key;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT COUNT(*), COALESCE(SUM(byte_count), 0) FROM clipboard_events;"
+sqlite3 "$HOME/.clipecho/clipecho.db" "SELECT key, value FROM settings WHERE key IN ('max_items', 'max_history_bytes', 'menu_bar_item_limit') ORDER BY key;"
+sqlite3 "$HOME/.clipecho/clipecho.db" "SELECT COUNT(*), COALESCE(SUM(byte_count), 0) FROM clipboard_events;"
 ```
 
 Cleanup removes oldest rows until both constraints are satisfied.

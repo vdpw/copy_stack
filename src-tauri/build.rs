@@ -9,6 +9,8 @@ fn main() {
             "clear_all_events",
             "copy_to_clipboard",
             "get_app_settings",
+            "choose_storage_directory",
+            "set_storage_directory",
             "get_safe_diagnostics",
             "get_autostart_status",
             "set_autostart_enabled",

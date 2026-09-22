@@ -202,6 +202,14 @@ state again or restores its previous value.
 
 ## Failure Presentation
 
+Changing the storage directory pauses database access under the shared mutex,
+drains the optional mirror's current read, and transfers a consistent SQLite
+snapshot. Queued clipboard events resume against the new database after a
+successful move, or the old database after a failed move. The UI changes its
+displayed path only after success and shows a localized failure reason on
+rollback. The JSONL output location remains the explicit command-line path;
+its database source follows a successful move.
+
 Tauri commands return stable `{code, operation, retryable}` errors. The UI
 shows localized operation-level feedback and retry controls, never raw
 database/filesystem/plugin errors. The backend diagnostic ring contains only

@@ -57,6 +57,8 @@ list response.
 
 - `get_app_settings()`
 - `get_autostart_status()`
+- `choose_storage_directory()`
+- `set_storage_directory({directory})`
 - `set_autostart_enabled({enabled})`
 - `set_max_items({maxItems})`
 - `set_max_history_bytes({maxHistoryBytes})`
@@ -72,6 +74,13 @@ list response.
 Tauri maps camelCase frontend keys to snake_case Rust arguments. Update
 `src/types.ts`, the invoking hook, Rust serialization, command permissions, and
 the main-window capability together when a contract changes.
+
+Clipboard settings displays `storage_directory` with a Change button opening
+the native macOS folder picker. Cancellation makes no change. During a move,
+settings controls are disabled and the original path stays visible until the
+backend returns the committed settings. Localized move errors distinguish
+existing destination files, permissions, invalid directories, and other move
+failures; every failure keeps the original configured location.
 
 ## Events
 

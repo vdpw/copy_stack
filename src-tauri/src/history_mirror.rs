@@ -16,7 +16,7 @@ use copy_event_listener::event::Event;
 use serde::Serialize;
 use std::fmt;
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
@@ -203,7 +203,7 @@ impl HistoryMirror {
             .map_err(|error| HistoryMirrorError::path(error, "validate database source"))?;
         Self::start_with_source(
             config,
-            SnapshotSource::Database(database_path),
+            SnapshotSource::Database(Mutex::new(database_path)),
             Arc::new(NoopHook),
         )
     }
@@ -232,6 +232,40 @@ impl HistoryMirror {
             ));
         }
         self.schedule_pending(None)
+    }
+
+    /// Excludes independent snapshot readers while the application's database
+    /// is moved, and retargets later reads only after that move succeeds.
+    ///
+    /// The caller must hold the application's database mutex for the move.
+    /// The callback must finish closing/moving/reopening SQLite before returning
+    /// success. It must not wait for mirror flush or shutdown: the worker may
+    /// itself be waiting for this source lock. The outer result reports source
+    /// validation failures; the inner result preserves the callback's error.
+    pub fn with_database_relocation<T, E>(
+        &self,
+        database_path: &Path,
+        relocate: impl FnOnce() -> Result<T, E>,
+    ) -> Result<Result<T, E>, HistoryMirrorError> {
+        let database_path = resolve_private_path(database_path).map_err(|error| {
+            HistoryMirrorError::path(error, "resolve relocated database source")
+        })?;
+        validate_database_destination(&database_path, &self.shared.config.path)?;
+        match &self.shared.source {
+            SnapshotSource::Database(source) => {
+                let mut source = lock_recover(source);
+                let result = relocate();
+                if result.is_ok() {
+                    *source = database_path;
+                }
+                Ok(result)
+            }
+            #[cfg(test)]
+            SnapshotSource::ScheduledRows => Err(HistoryMirrorError::new(
+                HistoryMirrorErrorKind::SnapshotRead,
+                "relocate source for owned-row mirror",
+            )),
+        }
     }
 
     fn schedule_pending(
@@ -393,11 +427,12 @@ impl HistoryMirror {
     ) -> Result<Self, HistoryMirrorError> {
         config.path = prepare_private_output_path(&config.path)
             .map_err(|error| HistoryMirrorError::path(error, "start path validation"))?;
-        if matches!(&source, SnapshotSource::Database(path) if path == &config.path) {
-            return Err(HistoryMirrorError::new(
-                HistoryMirrorErrorKind::SnapshotRead,
-                "reject database as mirror destination",
-            ));
+        match &source {
+            SnapshotSource::Database(path) => {
+                validate_database_destination(&lock_recover(path), &config.path)?;
+            }
+            #[cfg(test)]
+            SnapshotSource::ScheduledRows => {}
         }
 
         let shared = Arc::new(Shared {
@@ -468,7 +503,35 @@ struct Shared {
 enum SnapshotSource {
     #[cfg(test)]
     ScheduledRows,
-    Database(PathBuf),
+    Database(Mutex<PathBuf>),
+}
+
+fn validate_database_destination(
+    database_path: &Path,
+    mirror_path: &Path,
+) -> Result<(), HistoryMirrorError> {
+    // Reserve all SQLite filenames even when they have not been created yet.
+    // Otherwise the asynchronous mirror could replace a newly moved database
+    // or a sidecar after the relocation's own collision check has passed.
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let mut candidate = database_path.as_os_str().to_os_string();
+        candidate.push(suffix);
+        let conflicts = Path::new(&candidate) == mirror_path;
+        // Default macOS volumes ignore ASCII case. Reserve those aliases even
+        // before either path exists so the mirror cannot replace SQLite later.
+        #[cfg(target_os = "macos")]
+        let conflicts = conflicts
+            || candidate
+                .as_encoded_bytes()
+                .eq_ignore_ascii_case(mirror_path.as_os_str().as_encoded_bytes());
+        if conflicts {
+            return Err(HistoryMirrorError::new(
+                HistoryMirrorErrorKind::SnapshotRead,
+                "reject database or sidecar as mirror destination",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -498,6 +561,7 @@ enum WriteOutcome {
 enum WriteStage {
     BeforeTempCreate,
     AfterTempCreate,
+    BeforeDatabaseRead,
     AfterSerialize,
     AfterFlush,
     AfterSync,
@@ -608,8 +672,14 @@ fn write_snapshot_inner(
         } else {
             match &shared.source {
                 SnapshotSource::Database(path) => {
+                    // Keep the source lock through connection close so a
+                    // relocation cannot unlink a database still being read.
+                    let path = lock_recover(path);
+                    shared
+                        .hook
+                        .reach(WriteStage::BeforeDatabaseRead, generation)?;
                     let mut write_error = None;
-                    Database::visit_history_snapshot_rows_from_path(path, |row| {
+                    Database::visit_history_snapshot_rows_from_path(&path, |row| {
                         match write_jsonl_row(&mut writer, &row, shared.config.max_data_bytes) {
                             Ok(()) => true,
                             Err(error) => {
@@ -936,7 +1006,7 @@ mod tests {
             .map_err(|error| HistoryMirrorError::path(error, "validate test database source"))?;
         HistoryMirror::start_with_source(
             config,
-            SnapshotSource::Database(database_path),
+            SnapshotSource::Database(Mutex::new(database_path)),
             Arc::new(ClosureHook(hook)),
         )
     }
@@ -1280,6 +1350,219 @@ mod tests {
         mirror
             .shutdown(Duration::from_secs(2))
             .expect("database mirror should stop");
+    }
+
+    #[test]
+    fn database_relocation_retargets_future_refreshes() {
+        let root = TestDirectory::new("database-relocation");
+        let original_path = root.path.join("original.db");
+        let relocated_path = root.path.join("clipecho.db");
+        let output = root.path.join("history.jsonl");
+        let db = Database::open_path(&original_path).expect("database should open");
+        let insert_text = |db: &Database, text: &[u8]| {
+            db.insert_event(&Event {
+                items: vec![Item {
+                    data_list: vec![Data {
+                        r#type: "public.utf8-plain-text".to_string(),
+                        data: text.to_vec(),
+                    }],
+                }],
+            })
+            .expect("row should commit");
+        };
+        insert_text(&db, b"before relocation");
+        let mirror = HistoryMirror::start_database(
+            HistoryMirrorConfig::new(output.clone(), 4_096).with_debounce(Duration::ZERO),
+            original_path.clone(),
+        )
+        .expect("database mirror should start");
+        mirror.schedule_refresh().expect("refresh should schedule");
+        mirror
+            .flush(Duration::from_secs(2))
+            .expect("original source should flush");
+
+        mirror
+            .with_database_relocation(&relocated_path, || {
+                drop(db);
+                std::fs::rename(&original_path, &relocated_path)
+            })
+            .expect("relocated source should validate")
+            .expect("database should move");
+        assert!(!original_path.exists());
+        let moved_db = Database::open_path(&relocated_path).expect("moved database should reopen");
+        insert_text(&moved_db, b"after relocation");
+        mirror.schedule_refresh().expect("refresh should schedule");
+        mirror
+            .flush(Duration::from_secs(2))
+            .expect("relocated source should flush");
+        let values = jsonl_values(&output);
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0]["display"]["value"], "after relocation");
+        assert_eq!(values[1]["display"]["value"], "before relocation");
+        mirror
+            .shutdown(Duration::from_secs(2))
+            .expect("database mirror should stop");
+    }
+
+    #[test]
+    fn failed_database_relocation_keeps_reading_original_source() {
+        let root = TestDirectory::new("failed-database-relocation");
+        let original_path = root.path.join("original.db");
+        let relocated_path = root.path.join("clipecho.db");
+        let output = root.path.join("history.jsonl");
+        let db = Database::open_path(&original_path).expect("database should open");
+        let mirror = HistoryMirror::start_database(
+            HistoryMirrorConfig::new(output.clone(), 4_096).with_debounce(Duration::ZERO),
+            original_path.clone(),
+        )
+        .expect("database mirror should start");
+        let result = mirror
+            .with_database_relocation(&relocated_path, || Err::<(), _>("move failed"))
+            .expect("relocated source should validate");
+        assert_eq!(result, Err("move failed"));
+        db.insert_event(&Event {
+            items: vec![Item {
+                data_list: vec![Data {
+                    r#type: "public.utf8-plain-text".to_string(),
+                    data: b"saved after failure".to_vec(),
+                }],
+            }],
+        })
+        .expect("original database should remain writable");
+        mirror.schedule_refresh().expect("refresh should schedule");
+        mirror
+            .flush(Duration::from_secs(2))
+            .expect("original source should still flush");
+        assert_eq!(
+            jsonl_values(&output)[0]["display"]["value"],
+            "saved after failure"
+        );
+        assert!(original_path.exists());
+        assert!(!relocated_path.exists());
+        mirror
+            .shutdown(Duration::from_secs(2))
+            .expect("database mirror should stop");
+    }
+
+    #[test]
+    fn database_relocation_waits_until_snapshot_reader_releases_source() {
+        let root = TestDirectory::new("database-relocation-reader");
+        let original_path = root.path.join("original.db");
+        let relocated_path = root.path.join("clipecho.db");
+        let output = root.path.join("history.jsonl");
+        drop(Database::open_path(&original_path).expect("database should initialize"));
+        let (reader_entered_tx, reader_entered_rx) = mpsc::sync_channel(1);
+        let (release_reader_tx, release_reader_rx) = mpsc::sync_channel(1);
+        let reader_entered_tx = Mutex::new(Some(reader_entered_tx));
+        let release_reader_rx = Mutex::new(release_reader_rx);
+        let mirror = Arc::new(
+            start_database_with(
+                config(output, Duration::ZERO),
+                original_path.clone(),
+                move |stage, _| {
+                    if stage == WriteStage::BeforeDatabaseRead {
+                        if let Some(sender) = lock_recover(&reader_entered_tx).take() {
+                            sender.send(()).expect("reader should signal source lock");
+                            lock_recover(&release_reader_rx)
+                                .recv_timeout(Duration::from_secs(2))
+                                .expect("reader should be released");
+                        }
+                    }
+                    Ok(())
+                },
+            )
+            .expect("database mirror should start"),
+        );
+        mirror.schedule_refresh().expect("refresh should schedule");
+        reader_entered_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("reader should acquire source lock");
+        let relocation_mirror = Arc::clone(&mirror);
+        let (moving_tx, moving_rx) = mpsc::sync_channel(1);
+        let relocation = thread::spawn(move || {
+            relocation_mirror
+                .with_database_relocation(&relocated_path, || {
+                    moving_tx
+                        .send(())
+                        .expect("relocation should signal callback");
+                    std::fs::rename(&original_path, &relocated_path)
+                })
+                .expect("relocated source should validate")
+                .expect("database should move");
+        });
+        assert_eq!(
+            moving_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout),
+            "relocation must not move a source reserved by the reader"
+        );
+        release_reader_tx
+            .send(())
+            .expect("reader should be released");
+        moving_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("relocation should proceed after read completes");
+        relocation.join().expect("relocation thread should finish");
+        mirror
+            .shutdown(Duration::from_secs(2))
+            .expect("database mirror should stop");
+    }
+
+    #[test]
+    fn relocation_rejects_mirror_destination_and_all_sidecars_before_callback() {
+        let root = TestDirectory::new("database-relocation-collision");
+        let original_path = root.path.join("original.db");
+        let relocated_path = root.path.join("clipecho.db");
+        let _db = Database::open_path(&original_path).expect("database should open");
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let output = root.path.join(format!("clipecho.db{suffix}"));
+            assert!(
+                !output.exists(),
+                "collision must be caught before output exists"
+            );
+            let mirror = HistoryMirror::start_database(
+                config(output, Duration::ZERO),
+                original_path.clone(),
+            )
+            .expect("database mirror should start");
+            let result = mirror.with_database_relocation(&relocated_path, || -> Result<(), ()> {
+                panic!("conflicting relocation must not run");
+            });
+            assert_eq!(
+                result
+                    .expect_err("conflicting source should be rejected")
+                    .kind(),
+                HistoryMirrorErrorKind::SnapshotRead,
+            );
+            mirror
+                .shutdown(Duration::from_secs(2))
+                .expect("database mirror should stop");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn relocation_reserves_case_insensitive_mirror_aliases() {
+        let root = TestDirectory::new("database-relocation-case-collision");
+        let original_path = root.path.join("original.db");
+        let _db = Database::open_path(&original_path).expect("database should open");
+        for suffix in ["", "-WAL", "-SHM", "-JOURNAL"] {
+            let output = root.path.join(format!("CLIPECHO.DB{suffix}"));
+            let mirror = HistoryMirror::start_database(
+                config(output, Duration::ZERO),
+                original_path.clone(),
+            )
+            .expect("database mirror should start");
+            let result = mirror.with_database_relocation(
+                &root.path.join("clipecho.db"),
+                || -> Result<(), ()> {
+                    panic!("case-insensitive conflicting relocation must not run");
+                },
+            );
+            assert!(result.is_err());
+            mirror
+                .shutdown(Duration::from_secs(2))
+                .expect("database mirror should stop");
+        }
     }
 
     #[test]

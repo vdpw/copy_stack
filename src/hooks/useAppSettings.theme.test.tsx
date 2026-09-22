@@ -10,6 +10,7 @@ import { useAppearance } from "./useAppearance";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const initial: AppSettings = {
+  storage_directory: "/private/example/ClipEcho",
   theme: "system",
   max_items: 100,
   max_history_bytes: 268435456,

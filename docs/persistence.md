@@ -2,15 +2,15 @@
 
 ## Location And Private Files
 
-The database is:
+The default database is:
 
 ```text
-$HOME/.copy_stack/copy_stack.db
+$HOME/.clipecho/clipecho.db
 ```
 
 On the supported Unix/macOS path, startup:
 
-- creates or tightens `.copy_stack` to `0700`;
+- creates or tightens `.clipecho` to `0700`;
 - creates or tightens the database and existing `-wal`, `-shm`, and `-journal`
   sidecars to `0600`;
 - refuses symlinks, non-regular files, wrong-owner files, files with multiple
@@ -19,6 +19,33 @@ On the supported Unix/macOS path, startup:
 
 Existing permission bits are only removed. Missing owner permissions are not
 silently granted.
+
+Settings > Clipboard > Storage location lets the user select a different
+directory. The database filename remains `clipecho.db`. The bootstrap setting
+stays at `$HOME/.clipecho/storage.json`, outside the movable database, so startup
+can locate it. Debug `COPY_STACK_QA_DATA_DIR` overrides this bootstrap directory
+as well as the initial database directory. The old `.copy_stack/copy_stack.db`
+location is not automatically imported or deleted.
+
+User-selected existing folders retain their permissions; the app validates
+ownership and rejects unsafe writable directories, while database files remain
+private `0600` files. A missing configured database, unreadable setting, or
+unavailable volume fails startup instead of creating empty replacement history.
+
+Relocation holds the shared database lock and excludes independent mirror
+readers. It rejects an existing destination database or any `-wal`, `-shm`, or
+`-journal` file, checkpoints SQLite, switches to rollback journaling, and creates
+a consistent private snapshot with `VACUUM INTO`. This also supports moves
+across filesystems. The new connection and integrity check must succeed before
+configuration changes. History, pins, search, and settings move together.
+
+A private `storage-move.json` recovery record is saved before changing the
+bootstrap setting. Source-file removal is the commit point: failures before it
+keep the original live connection and restore its configuration. If configuration
+rollback is itself blocked, the recovery record keeps the original location
+authoritative on restart. After commit the live connection and mirror use the
+new database. No destination database is overwritten. Notifications after a
+successful commit cannot turn the move into a reported failure.
 
 ## Current Schema
 
@@ -351,11 +378,11 @@ no database row and therefore no JSONL line.
 ## Manual Inspection
 
 ```bash
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "PRAGMA user_version;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM app_metadata ORDER BY key;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, is_pinned, byte_count, timestamp FROM clipboard_events ORDER BY is_pinned DESC, timestamp DESC, content_hash ASC LIMIT 20;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings ORDER BY key;"
-stat -f '%Sp %N' "$HOME/.copy_stack" "$HOME/.copy_stack/copy_stack.db"
+sqlite3 "$HOME/.clipecho/clipecho.db" "PRAGMA user_version;"
+sqlite3 "$HOME/.clipecho/clipecho.db" "SELECT key, value FROM app_metadata ORDER BY key;"
+sqlite3 "$HOME/.clipecho/clipecho.db" "SELECT substr(content_hash, 1, 12), data_type, is_pinned, byte_count, timestamp FROM clipboard_events ORDER BY is_pinned DESC, timestamp DESC, content_hash ASC LIMIT 20;"
+sqlite3 "$HOME/.clipecho/clipecho.db" "SELECT key, value FROM settings ORDER BY key;"
+stat -f '%Sp %N' "$HOME/.clipecho" "$HOME/.clipecho/clipecho.db"
 ```
 
 Do not attach a real database or JSONL mirror to tests, logs, issues, or release

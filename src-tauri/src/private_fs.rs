@@ -126,6 +126,11 @@ impl fmt::Debug for PrivateTempFile {
 }
 
 impl PrivateTempFile {
+    /// Keeps an exclusively created file after its successful installation.
+    pub fn retain(mut self) {
+        self.cleanup_armed = false;
+    }
+
     pub fn file_mut(&mut self) -> &mut File {
         &mut self.file
     }
@@ -396,7 +401,9 @@ pub fn prepare_sqlite_database(path: &Path) -> Result<PathBuf, PrivateFsError> {
         let parent = path.parent().ok_or_else(|| {
             PrivateFsError::new("prepare", "database path", PrivateFsErrorKind::InvalidPath)
         })?;
-        ensure_private_directory(parent)?;
+        // A user-selected folder may also contain unrelated documents. Validate
+        // its ownership and write permissions without changing its mode.
+        ensure_secure_directory_tree(parent)?;
 
         if !path_exists_no_follow(&path)? {
             let mut file = create_private_file_at(&path, "database file")?;
@@ -417,6 +424,162 @@ pub fn prepare_sqlite_database(path: &Path) -> Result<PathBuf, PrivateFsError> {
             "database path",
             PrivateFsErrorKind::UnsupportedPlatform,
         ))
+    }
+}
+
+/// Reserves the final name without opening, truncating, or changing an existing
+/// entry. The guard removes only its own inode unless retained by the caller.
+pub fn create_private_new_file(path: &Path) -> Result<PrivateTempFile, PrivateFsError> {
+    #[cfg(unix)]
+    {
+        let path = normalize_absolute_path(path)?;
+        let parent = path.parent().ok_or_else(|| {
+            PrivateFsError::new("create", "file", PrivateFsErrorKind::InvalidPath)
+        })?;
+        ensure_secure_directory_tree(parent)?;
+        create_private_file_at(&path, "file")
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(PrivateFsError::new(
+            "create",
+            "file",
+            PrivateFsErrorKind::UnsupportedPlatform,
+        ))
+    }
+}
+
+/// Makes a newly created database directory entry durable before the old
+/// database is removed on another volume.
+pub fn sync_private_parent(path: &Path) -> Result<(), PrivateFsError> {
+    #[cfg(unix)]
+    {
+        let path = normalize_absolute_path(path)?;
+        let parent = path.parent().ok_or_else(|| {
+            PrivateFsError::new("sync", "parent directory", PrivateFsErrorKind::InvalidPath)
+        })?;
+        ensure_secure_directory_tree(parent)?;
+        sync_directory(parent)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(PrivateFsError::new(
+            "sync",
+            "parent directory",
+            PrivateFsErrorKind::UnsupportedPlatform,
+        ))
+    }
+}
+
+/// Opens a validated private file without following the final symlink.
+pub fn read_private_file(path: &Path) -> Result<File, PrivateFsError> {
+    harden_private_file_if_exists(path)?;
+    #[cfg(unix)]
+    {
+        let file = open_existing_no_follow(path, false, "file")?;
+        let identity = FileIdentity::from_metadata(
+            &file
+                .metadata()
+                .map_err(|error| PrivateFsError::io("inspect", "file", &error))?,
+        );
+        validate_open_file_path(&file, path, identity, "read", "file")?;
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        Err(PrivateFsError::new(
+            "read",
+            "file",
+            PrivateFsErrorKind::UnsupportedPlatform,
+        ))
+    }
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct PrivateFileIdentity {
+    device: u64,
+    inode: u64,
+}
+
+impl PrivateFileIdentity {
+    pub fn remove_existing(&self, path: &Path) -> Result<(), PrivateFsError> {
+        #[cfg(unix)]
+        {
+            validate_path_identity(
+                path,
+                FileIdentity {
+                    device: self.device,
+                    inode: self.inode,
+                },
+                "remove",
+                "file",
+            )?;
+            std::fs::remove_file(path).map_err(|error| PrivateFsError::io("remove", "file", &error))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Err(PrivateFsError::new(
+                "remove",
+                "file",
+                PrivateFsErrorKind::UnsupportedPlatform,
+            ))
+        }
+    }
+
+    pub fn read(path: &Path) -> Result<Self, PrivateFsError> {
+        let file = read_private_file(path)?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| PrivateFsError::io("inspect", "file", &error))?;
+        #[cfg(unix)]
+        {
+            Ok(Self {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = metadata;
+            Err(PrivateFsError::new(
+                "inspect",
+                "file",
+                PrivateFsErrorKind::UnsupportedPlatform,
+            ))
+        }
+    }
+
+    pub fn matches(&self, path: &Path) -> Result<bool, PrivateFsError> {
+        match std::fs::symlink_metadata(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(PrivateFsError::io("inspect", "file", &error)),
+            Ok(_) => Ok(Self::read(path)? == *self),
+        }
+    }
+
+    pub fn remove(&self, path: &Path) -> Result<(), PrivateFsError> {
+        #[cfg(unix)]
+        {
+            remove_file_if_identity_matches(
+                path,
+                FileIdentity {
+                    device: self.device,
+                    inode: self.inode,
+                },
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Err(PrivateFsError::new(
+                "remove",
+                "file",
+                PrivateFsErrorKind::UnsupportedPlatform,
+            ))
+        }
     }
 }
 
@@ -1223,10 +1386,14 @@ mod tests {
         std::fs::create_dir(&data).expect("data directory should be created");
         std::fs::set_permissions(&data, Permissions::from_mode(0o755))
             .expect("data directory permissions should be loose");
-        let database = data.join("copy_stack.db");
+        let database = data.join("clipecho.db");
 
         prepare_sqlite_database(&database).expect("database should be prepared");
-        assert_eq!(mode(&data), PRIVATE_DIRECTORY_MODE);
+        assert_eq!(
+            mode(&data),
+            0o755,
+            "selected folders retain their permissions"
+        );
         assert_eq!(mode(&database), PRIVATE_FILE_MODE);
 
         let connection = Connection::open(&database).expect("SQLite database should open");

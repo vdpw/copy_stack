@@ -272,6 +272,12 @@ export function SettingsView({
   }, [savedMenuBarItemLimit]);
 
   useEffect(() => {
+    if (controller.error?.operation === "move_storage") {
+      settingsPageRef.current?.scrollTo?.({ top: 0 });
+    }
+  }, [controller.error]);
+
+  useEffect(() => {
     if (!dialogOpen) {
       return;
     }
@@ -619,6 +625,53 @@ export function SettingsView({
                   {messages.storageSettings}
                 </h2>
                 <section className="preference-group settings-storage-group">
+                  <div
+                    aria-busy={controller.movingStorage}
+                    className="preference-row settings-storage-location"
+                  >
+                    <div className="preference-copy">
+                      <div className="preference-label-with-help">
+                        <span
+                          className="preference-title"
+                          id="storage-directory-label"
+                        >
+                          {messages.storageDirectory}
+                        </span>
+                        <SettingsHelp
+                          id="storage-directory-help"
+                          label={messages.settingHelp(
+                            messages.storageDirectory
+                          )}
+                          text={messages.storageDirectoryHelp}
+                        />
+                      </div>
+                      <span
+                        aria-labelledby="storage-directory-label"
+                        className="settings-storage-path"
+                        id="storage-directory"
+                      >
+                        {settings.storage_directory}
+                      </span>
+                    </div>
+                    <button
+                      aria-describedby="storage-directory"
+                      className="btn btn-secondary"
+                      disabled={
+                        controller.updating ||
+                        controller.autostartLoading ||
+                        clearingHistory
+                      }
+                      onClick={() => void controller.changeStorageDirectory()}
+                      type="button"
+                    >
+                      {messages.changeStorageDirectory}
+                    </button>
+                    {controller.movingStorage && (
+                      <span className="settings-storage-status" role="status">
+                        {messages.movingStorage}
+                      </span>
+                    )}
+                  </div>
                   <div className="preference-row preference-row-stacked">
                     <div className="preference-copy">
                       <div className="preference-label-with-help">
