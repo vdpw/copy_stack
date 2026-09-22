@@ -48,8 +48,10 @@ requests, and pauses automatic retries after an error.
 
 Detail is requested only when an expanded row reports `has_detail`. The
 frontend cache coalesces concurrent requests for the same hash, ignores results
-from a reset generation, and keeps at most 12 entries. Text and structured file
-summaries expand without a detail command.
+from a reset generation, and keeps at most 12 entries. Text summaries expand
+without a detail command. File and folder cards request detail on expansion to
+show every available item and its full path without increasing the bounded
+list response.
 
 ## Commands Used By Settings
 
@@ -58,6 +60,7 @@ summaries expand without a detail command.
 - `set_autostart_enabled({enabled})`
 - `set_max_items({maxItems})`
 - `set_max_history_bytes({maxHistoryBytes})`
+- `set_max_event_bytes({maxEventBytes})`
 - `set_show_in_menu_bar({showInMenuBar})`
 - `set_menu_bar_item_limit({menuBarItemLimit})`
 - `set_move_restored_item_to_top({moveRestoredItemToTop})`
@@ -117,6 +120,7 @@ interface HistoryDetail {
   html_preview: string | null;
   text_preview: string | null;
   rich_preview: RichPreviewSegment[];
+  file_items: { type: string; name: string; path: string | null }[];
 }
 ```
 
@@ -135,15 +139,20 @@ bytes.
 Collapsed cards use the persisted bounded summary. UTF-8 text is normalized and
 truncated to 40 display columns, counting CJK/full-width characters as two.
 File/folder summaries use `copy_stack.file-items.v1`; the collapsed state shows
-one item plus a remaining count, and expansion shows the available item list.
+one item plus a remaining count. Expansion loads the complete available item
+list, with each full path below its name in smaller, secondary-color text.
+Long paths wrap without truncation in both themes. Finder file-reference URLs
+are resolved to their current paths; an unavailable path is omitted while its
+item name remains visible. Paths are display-only text, never links or asset
+URLs.
 
 Expanded eligible cards request detail:
 
-- formatted HTML uses the same renderer throughout the 2 MiB capture budget,
+- formatted HTML uses the same renderer throughout the 2 MiB rendering budget,
   is rebuilt into an allowlisted tree capped at 2,048 nodes and 24 levels,
   strips every image/resource URL, and maps allowlisted formatting to a fixed
   set of presentation classes without emitting inline `style` attributes;
-- malformed or legacy HTML outside the capture budget falls back to at most
+- malformed or larger HTML outside the rendering budget falls back to at most
   1 MiB of escaped plain text in a fixed, vertically and horizontally
   scrollable code viewport instead of rendering an empty iframe;
 - the sanitized document is rendered in an empty-sandbox iframe with
@@ -199,6 +208,15 @@ technology. Pinning does not copy the item, expand the card, or rewrite its
 timestamp. Unpinning returns it to the ordinary timeline and immediately
 applies retention, so it can disappear if it exceeds the current limits.
 
+Deleting a pinned item from History or search first opens a localized warning
+that deletion is permanent. Compact mode also explains that equivalent text
+items are deleted together. Cancel receives initial focus; the background is
+inert, Tab stays within the dialog, and Escape cancels without changing the
+search. Closing returns focus to the trigger, or to the History scroller if
+the deleted row is gone. Unpinned items delete directly. Delete commands are
+guarded against repeated clicks, and retrying a failed pinned deletion asks
+for confirmation again.
+
 Restore, pin, and delete buttons stop card-toggle propagation. Each restore button is
 disabled while its command is in flight, and a successful pasteboard write
 shows short copy feedback even if later post-processing reports a non-retryable
@@ -242,7 +260,7 @@ search returns focus to the history scroller.
 
 General, Appearance, and Menu Bar omit persistent per-control descriptions.
 Category descriptions and actionable validation errors remain. Clipboard keeps
-its behavior descriptions; the two storage controls show short explanations
+its behavior descriptions; the three storage controls show short explanations
 behind adjacent question-mark buttons. Click to toggle help, click outside or
 press Escape to dismiss it, and close it when leaving the category. The menu
 item-count input keeps its zero-means-all explanation in a hover title.
@@ -252,7 +270,12 @@ confirmation. The history byte budget accepts 16 through 4096 MiB. Both limits
 are enforced immediately by the backend against unpinned rows. Pinned rows
 count toward totals but survive both limits, even when they alone exceed a
 budget. Storage help explains the pin exception; unpinning applies the limits
-immediately. Other SQLite-backed settings use an
+immediately. Maximum item size accepts whole MiB from 1 through 256, defaults
+to 32 MiB, and is sent to `set_max_event_bytes` in bytes. It applies to new
+captures; lowering it preserves existing history. Numeric drafts survive
+unrelated settings updates and are disabled while saving. Preview limits
+remain bounded independently from the capture limit.
+Other SQLite-backed settings use an
 optimistic value, invoke the command, re-read authoritative settings, and roll
 back/reconcile after failure.
 

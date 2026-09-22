@@ -4,7 +4,7 @@ use copy_event_listener::event::{
 use serde::{Deserialize, Serialize};
 
 const EVENT_BLOB_MAGIC: &[u8; 4] = b"CSB1";
-pub const MAX_EVENT_BLOB_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_EVENT_BLOB_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_EVENT_ITEMS: usize = 64;
 pub const MAX_EVENT_DATA_PER_ITEM: usize = 128;
 pub const MAX_EVENT_TYPE_BYTES: usize = 1024;

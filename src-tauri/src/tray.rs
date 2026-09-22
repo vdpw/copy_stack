@@ -210,7 +210,7 @@ fn restore_event<R: Runtime>(app: &AppHandle<R>, content_hash: &str) -> Result<(
     let event = prepare_event_for_restore(event, source_bundle_id.as_deref(), is_remote_clipboard)
         .map_err(|_| ERROR_CLIPBOARD_ITEM_UNAVAILABLE.to_string())?;
 
-    if !move_restored_item_to_top {
+    {
         let state = app.state::<AppState>();
         queue_restore_suppression(&state, restore_content_hash.clone());
     }

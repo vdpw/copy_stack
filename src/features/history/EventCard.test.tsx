@@ -130,6 +130,82 @@ describe("EventCard", () => {
     expect(renderCard(true)).toContain(">文字</span>");
   });
 
+  it("shows full file and folder paths only in expanded details", () => {
+    const paths = [
+      "/Users/demo/Documents/项目资料/very-long-directory-name/report <final>.pdf",
+      "/Users/demo/Documents/项目资料/Archives",
+    ];
+    const summary: HistorySummary = {
+      ...textSummary,
+      data_type: "files and folders",
+      has_detail: true,
+      display: Array.from(
+        new globalThis.TextEncoder().encode(
+          JSON.stringify({
+            format: "copy_stack.file-items.v1",
+            items: [{ type: "file", name: "report <final>.pdf" }],
+          })
+        )
+      ),
+      display_truncated: true,
+    };
+    const detail: HistoryDetail = {
+      content_hash: summary.content_hash,
+      html_preview: null,
+      text_preview: null,
+      rich_preview: [],
+      file_items: [
+        { type: "file", name: "report <final>.pdf", path: paths[0] },
+        { type: "folder", name: "Archives", path: paths[1] },
+      ],
+    };
+    const collapsed = new window.DOMParser().parseFromString(
+      renderCard(false, detail, vi.fn(), summary),
+      "text/html"
+    );
+    expect(collapsed.querySelector(".event-file-path")).toBeNull();
+    expect(collapsed.body.textContent).not.toContain(paths[0]);
+    expect(collapsed.body.textContent).not.toContain("Archives");
+
+    const expanded = new window.DOMParser().parseFromString(
+      renderCard(true, detail, vi.fn(), summary),
+      "text/html"
+    );
+    expect(
+      Array.from(
+        expanded.querySelectorAll(".event-file-path"),
+        item => item.textContent
+      )
+    ).toEqual(paths);
+    expect(expanded.querySelectorAll(".event-file-item")).toHaveLength(2);
+    expect(expanded.querySelector("final")).toBeNull();
+  });
+
+  it.each(["file", "folder"])(
+    "keeps an unresolved %s visible without fabricating its path",
+    type => {
+      const document = new window.DOMParser().parseFromString(
+        renderCard(
+          true,
+          {
+            content_hash: textSummary.content_hash,
+            html_preview: null,
+            text_preview: null,
+            rich_preview: [],
+            file_items: [{ type, name: "Archive", path: null }],
+          },
+          vi.fn(),
+          { ...textSummary, data_type: type, has_detail: true }
+        ),
+        "text/html"
+      );
+      expect(document.querySelector(".event-file-item")?.textContent).toBe(
+        "Archive"
+      );
+      expect(document.querySelector(".event-file-path")).toBeNull();
+    }
+  );
+
   it("does not render stored source provenance", () => {
     const markup = renderCard(false, undefined, vi.fn(), {
       ...textSummary,

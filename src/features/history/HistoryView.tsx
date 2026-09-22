@@ -21,6 +21,7 @@ import {
   shouldScrollToTopAfterRestore,
 } from "./historyRefresh";
 import { animateHistoryScrollToTop } from "./scrollAnimation";
+import { PinnedDeleteDialog } from "./PinnedDeleteDialog";
 
 interface HistoryViewProps {
   compactMode: boolean;
@@ -122,6 +123,18 @@ export function HistoryView({
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const loadMoreSentinelRef = useRef<ElementRef<"div"> | null>(null);
   const searchInputRef = useRef<ElementRef<"input"> | null>(null);
+  const handledFocusSearchRequestRef = useRef(0);
+  const returnDeleteFocusRef = useRef<HTMLElement | null>(null);
+  const deletingHashesRef = useRef(new Set<string>());
+  const [deletingHashes, setDeletingHashes] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [pendingPinnedDeleteHash, setPendingPinnedDeleteHash] = useState<
+    string | null
+  >(null);
+  const deleteDialogOpen = pendingPinnedDeleteHash !== null;
+  const historyItemsRef = useRef(historyItems);
+  historyItemsRef.current = historyItems;
   const copiedFeedbackTimerRef = useRef<number | null>(null);
   const pinningHashesRef = useRef(new Set<string>());
   const [pinningHashes, setPinningHashes] = useState<Set<string>>(
@@ -155,25 +168,51 @@ export function HistoryView({
   }, []);
 
   useEffect(() => {
-    if (focusSearchRequest > 0) {
-      window.requestAnimationFrame(() => {
+    if (
+      focusSearchRequest > 0 &&
+      focusSearchRequest !== handledFocusSearchRequestRef.current &&
+      !deleteDialogOpen
+    ) {
+      const frame = window.requestAnimationFrame(() => {
+        handledFocusSearchRequestRef.current = focusSearchRequest;
         searchInputRef.current?.focus({ preventScroll: true });
         searchInputRef.current?.select();
       });
+      return () => window.cancelAnimationFrame(frame);
     }
-  }, [focusSearchRequest]);
+  }, [deleteDialogOpen, focusSearchRequest]);
 
   useEffect(() => {
     const focusSearch = (event: globalThis.KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
+        if (deleteDialogOpen) return;
         searchInputRef.current?.focus({ preventScroll: true });
         searchInputRef.current?.select();
       }
     };
     window.addEventListener("keydown", focusSearch);
     return () => window.removeEventListener("keydown", focusSearch);
-  }, []);
+  }, [deleteDialogOpen]);
+
+  useEffect(() => {
+    if (!deleteDialogOpen) return;
+    const background = scrollContainerRef.current;
+    background?.setAttribute("inert", "");
+    return () => background?.removeAttribute("inert");
+  }, [deleteDialogOpen]);
+
+  useEffect(() => {
+    if (deleteDialogOpen || deletingHashes.size > 0) return;
+    const trigger = returnDeleteFocusRef.current;
+    if (!trigger) return;
+    returnDeleteFocusRef.current = null;
+    const target =
+      trigger.isConnected && !trigger.matches(":disabled")
+        ? trigger
+        : scrollContainerRef.current;
+    target?.focus({ preventScroll: true });
+  }, [deleteDialogOpen, deletingHashes]);
 
   const refreshPreservingView = useCallback(async () => {
     const anchor = captureScrollAnchor(scrollContainerRef.current);
@@ -259,8 +298,19 @@ export function HistoryView({
     ]
   );
 
+  const confirmPinnedDelete = useCallback(
+    (contentHash: string, trigger: HTMLElement | null) => {
+      returnDeleteFocusRef.current = trigger;
+      setPendingPinnedDeleteHash(contentHash);
+    },
+    []
+  );
+
   const deleteEvent = useCallback(
-    async (contentHash: string) => {
+    async (contentHash: string, wasPinned = false) => {
+      if (deletingHashesRef.current.has(contentHash)) return;
+      deletingHashesRef.current.add(contentHash);
+      setDeletingHashes(new Set(deletingHashesRef.current));
       try {
         await invokeCommand<void>("delete_copy_event", "delete_history", {
           contentHash,
@@ -276,11 +326,32 @@ export function HistoryView({
         await onHistoryChanged();
       } catch (caught) {
         reportActionFailure(caught, "delete_history", () => {
-          void deleteEvent(contentHash);
+          const isPinned = historyItemsRef.current.some(
+            item => item.content_hash === contentHash && item.is_pinned
+          );
+          if (wasPinned || isPinned) {
+            confirmPinnedDelete(
+              contentHash,
+              document.activeElement instanceof HTMLElement
+                ? document.activeElement
+                : null
+            );
+          } else {
+            void deleteEvent(contentHash);
+          }
         });
+      } finally {
+        deletingHashesRef.current.delete(contentHash);
+        setDeletingHashes(new Set(deletingHashesRef.current));
       }
     },
-    [onHistoryChanged, removeDetail, refreshPreservingView, reportActionFailure]
+    [
+      confirmPinnedDelete,
+      onHistoryChanged,
+      removeDetail,
+      refreshPreservingView,
+      reportActionFailure,
+    ]
   );
 
   const restoreEvent = useCallback(
@@ -592,6 +663,7 @@ export function HistoryView({
                   )}
                   <EventCard
                     copied={copiedEventHash === summary.content_hash}
+                    deleting={deletingHashes.has(summary.content_hash)}
                     detail={
                       canLoadHistoryDetail(compactMode, summary.has_detail)
                         ? loadedDetails.get(summary.content_hash)
@@ -608,7 +680,18 @@ export function HistoryView({
                     expanded={expandedEventHashes.has(summary.content_hash)}
                     language={language}
                     messages={messages}
-                    onDelete={() => void deleteEvent(summary.content_hash)}
+                    onDelete={trigger => {
+                      if (
+                        deletingHashesRef.current.has(summary.content_hash) ||
+                        pinningHashesRef.current.has(summary.content_hash)
+                      )
+                        return;
+                      if (summary.is_pinned) {
+                        confirmPinnedDelete(summary.content_hash, trigger);
+                      } else {
+                        void deleteEvent(summary.content_hash);
+                      }
+                    }}
                     onPin={() =>
                       void setPinned(summary.content_hash, !summary.is_pinned)
                     }
@@ -662,6 +745,17 @@ export function HistoryView({
           {copiedEventHash ? messages.clipboardItemCopied : ""}
         </span>
       </main>
+      {pendingPinnedDeleteHash !== null && (
+        <PinnedDeleteDialog
+          compactMode={compactMode}
+          messages={messages}
+          onCancel={() => setPendingPinnedDeleteHash(null)}
+          onConfirm={() => {
+            setPendingPinnedDeleteHash(null);
+            void deleteEvent(pendingPinnedDeleteHash, true);
+          }}
+        />
+      )}
     </div>
   );
 }

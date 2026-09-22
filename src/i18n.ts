@@ -35,6 +35,9 @@ export interface Messages {
   historyBudget: string;
   historyBudgetDescription: string;
   historyBudgetError: string;
+  eventBudget: string;
+  eventBudgetHelp: string;
+  eventBudgetError: string;
   apply: string;
   storageLimitError: string;
   language: string;
@@ -96,6 +99,10 @@ export interface Messages {
   restoreToClipboard: string;
   restoringToClipboard: string;
   deleteItem: string;
+  deletingItem: string;
+  deletePinnedConfirmationTitle: string;
+  deletePinnedConfirmationDescription: string;
+  deletePinnedCompactDescription: string;
   recentHistory: string;
   generalSettings: string;
   generalSettingsDescription: string;
@@ -222,6 +229,10 @@ const translations: Record<SupportedLanguage, Messages> = {
     historyBudgetDescription:
       "Maximum local history size in MiB (16–4096). Oldest unpinned items are removed first.",
     historyBudgetError: "Enter a whole number from 16 to 4096 MiB.",
+    eventBudget: "Maximum item size",
+    eventBudgetHelp:
+      "Limits each new clip's stored data. Oversized clips keep plain text when it fits; otherwise they are skipped. Existing history is kept. Larger clips use more memory; previews stay limited.",
+    eventBudgetError: "Enter a whole number from 1 to 256 MiB.",
     apply: "Apply",
     storageLimitError: "Enter a whole number between 1 and 1000.",
     language: "Language",
@@ -311,6 +322,12 @@ const translations: Record<SupportedLanguage, Messages> = {
     restoreToClipboard: "Restore to clipboard",
     restoringToClipboard: "Restoring to clipboard...",
     deleteItem: "Delete item",
+    deletingItem: "Deleting item…",
+    deletePinnedConfirmationTitle: "Delete this pinned item?",
+    deletePinnedConfirmationDescription:
+      "This item is pinned. Deleting it will permanently remove it from clipboard history.",
+    deletePinnedCompactDescription:
+      "In compact mode, all items with the same text will also be deleted.",
     pinItem: "Pin item",
     recentHistory: "Recent",
     generalSettings: "General",
@@ -380,6 +397,10 @@ const translations: Record<SupportedLanguage, Messages> = {
     historyBudgetDescription:
       "本地历史记录的最大大小（MiB，16–4096）。超出后会先删除最旧的未固定项目。",
     historyBudgetError: "请输入 16 到 4096 之间的整数（MiB）。",
+    eventBudget: "单条大小上限",
+    eventBudgetHelp:
+      "限制新记录的存储大小。超出时，若纯文本符合上限则仅保留纯文本，否则跳过。已有记录保留。大条目会增加内存占用，预览大小另有限制。",
+    eventBudgetError: "请输入 1 到 256 之间的整数（MiB）。",
     apply: "应用",
     storageLimitError: "请输入 1 到 1000 之间的整数。",
     language: "语言",
@@ -462,6 +483,12 @@ const translations: Record<SupportedLanguage, Messages> = {
     restoreToClipboard: "恢复到剪贴板",
     restoringToClipboard: "正在恢复到剪贴板...",
     deleteItem: "删除项目",
+    deletingItem: "正在删除项目…",
+    deletePinnedConfirmationTitle: "删除此固定项目？",
+    deletePinnedConfirmationDescription:
+      "此项目已固定，删除后将从剪贴板历史中永久移除。",
+    deletePinnedCompactDescription:
+      "精简模式下，所有具有相同文本的项目也会一并删除。",
     pinItem: "固定项目",
     recentHistory: "最近记录",
     generalSettings: "通用",
@@ -529,6 +556,10 @@ const translations: Record<SupportedLanguage, Messages> = {
     historyBudgetDescription:
       "本機歷史記錄的最大大小（MiB，16–4096）。超出後會先刪除最舊的未固定項目。",
     historyBudgetError: "請輸入 16 到 4096 之間的整數（MiB）。",
+    eventBudget: "單筆大小上限",
+    eventBudgetHelp:
+      "限制新記錄的儲存大小。超出時，若純文字符合上限則僅保留純文字，否則略過。既有記錄保留。大項目會增加記憶體用量，預覽大小另有限制。",
+    eventBudgetError: "請輸入 1 到 256 之間的整數（MiB）。",
     apply: "套用",
     storageLimitError: "請輸入 1 到 1000 之間的整數。",
     language: "語言",
@@ -611,6 +642,12 @@ const translations: Record<SupportedLanguage, Messages> = {
     restoreToClipboard: "還原至剪貼簿",
     restoringToClipboard: "正在還原至剪貼簿...",
     deleteItem: "刪除項目",
+    deletingItem: "正在刪除項目…",
+    deletePinnedConfirmationTitle: "刪除此固定項目？",
+    deletePinnedConfirmationDescription:
+      "此項目已固定，刪除後將從剪貼簿歷史中永久移除。",
+    deletePinnedCompactDescription:
+      "精簡模式下，所有具有相同文字的項目也會一併刪除。",
     pinItem: "固定項目",
     recentHistory: "最近記錄",
     generalSettings: "一般",

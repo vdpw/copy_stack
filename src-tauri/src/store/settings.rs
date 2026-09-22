@@ -1,10 +1,12 @@
 use crate::i18n::LanguagePreference;
+use crate::resource_policy::{is_valid_max_event_bytes, DEFAULT_MAX_EVENT_BYTES};
 use crate::store::models::{ThemePreference, DEFAULT_MAX_HISTORY_BYTES};
 use rusqlite::{Connection, Result};
 
 pub(super) const DEFAULT_MAX_ITEMS: u32 = 100;
 pub(super) const MAX_ITEMS_KEY: &str = "max_items";
 pub(super) const MAX_HISTORY_BYTES_KEY: &str = "max_history_bytes";
+pub(super) const MAX_EVENT_BYTES_KEY: &str = "max_event_bytes";
 pub(super) const SHOW_IN_MENU_BAR_KEY: &str = "show_in_menu_bar";
 pub(super) const MENU_BAR_ITEM_LIMIT_KEY: &str = "menu_bar_item_limit";
 pub(super) const MOVE_RESTORED_ITEM_TO_TOP_KEY: &str = "move_restored_item_to_top";
@@ -12,10 +14,11 @@ pub(super) const COMPACT_MODE_KEY: &str = "compact_mode";
 pub(super) const LANGUAGE_KEY: &str = "language";
 pub(super) const THEME_KEY: &str = "theme";
 
-pub(super) fn default_entries() -> [(&'static str, String); 8] {
+pub(super) fn default_entries() -> [(&'static str, String); 9] {
     [
         (MAX_ITEMS_KEY, DEFAULT_MAX_ITEMS.to_string()),
         (MAX_HISTORY_BYTES_KEY, DEFAULT_MAX_HISTORY_BYTES.to_string()),
+        (MAX_EVENT_BYTES_KEY, DEFAULT_MAX_EVENT_BYTES.to_string()),
         (SHOW_IN_MENU_BAR_KEY, "true".to_string()),
         (MENU_BAR_ITEM_LIMIT_KEY, "0".to_string()),
         (MOVE_RESTORED_ITEM_TO_TOP_KEY, "false".to_string()),
@@ -39,6 +42,27 @@ pub(super) fn get_max_history_bytes(connection: &Connection) -> Result<u64> {
 
 pub(super) fn set_max_history_bytes(connection: &Connection, value: u64) -> Result<()> {
     set(connection, MAX_HISTORY_BYTES_KEY, &value.to_string())
+}
+
+pub(super) fn get_max_event_bytes(connection: &Connection) -> Result<u64> {
+    let value = get_u64(connection, MAX_EVENT_BYTES_KEY, DEFAULT_MAX_EVENT_BYTES)?;
+    validate_max_event_bytes(value)?;
+    Ok(value)
+}
+
+pub(super) fn set_max_event_bytes(connection: &Connection, value: u64) -> Result<()> {
+    validate_max_event_bytes(value)?;
+    set(connection, MAX_EVENT_BYTES_KEY, &value.to_string())
+}
+
+fn validate_max_event_bytes(value: u64) -> Result<()> {
+    if is_valid_max_event_bytes(value) {
+        Ok(())
+    } else {
+        Err(rusqlite::Error::InvalidParameterName(
+            "max_event_bytes must be a whole number of MiB from 1 through 256".to_string(),
+        ))
+    }
 }
 
 pub(super) fn get_show_in_menu_bar(connection: &Connection) -> Result<bool> {
@@ -181,5 +205,26 @@ mod tests {
         assert!(get_max_items(&connection).is_err());
         set(&connection, MENU_BAR_ITEM_LIMIT_KEY, "invalid").unwrap();
         assert!(get_menu_bar_item_limit(&connection).is_err());
+    }
+
+    #[test]
+    fn single_event_limit_validates_reads_and_writes_without_losing_saved_value() {
+        let connection = connection();
+        let mib = crate::resource_policy::MIB_BYTES;
+        assert_eq!(
+            get_max_event_bytes(&connection).unwrap(),
+            DEFAULT_MAX_EVENT_BYTES
+        );
+        set_max_event_bytes(&connection, mib).unwrap();
+        assert_eq!(get_max_event_bytes(&connection).unwrap(), mib);
+
+        for value in [0, mib - 1, mib + 1, 257 * mib, u64::MAX] {
+            assert!(set_max_event_bytes(&connection, value).is_err());
+            assert_eq!(get_max_event_bytes(&connection).unwrap(), mib);
+        }
+        for value in ["invalid", "0", "1048577", "269484032"] {
+            set(&connection, MAX_EVENT_BYTES_KEY, value).unwrap();
+            assert!(get_max_event_bytes(&connection).is_err());
+        }
     }
 }

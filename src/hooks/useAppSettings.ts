@@ -157,6 +157,22 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
     [runSettingsMutation]
   );
 
+  const updateMaxEventBytes = useCallback(
+    async (maxEventBytes: number) => {
+      await runSettingsMutation(
+        {
+          command: "set_max_event_bytes",
+          args: { maxEventBytes },
+          patch: { max_event_bytes: maxEventBytes },
+        },
+        () => {
+          void updateMaxEventBytes(maxEventBytes);
+        }
+      );
+    },
+    [runSettingsMutation]
+  );
+
   const updateMenuBarVisibility = useCallback(
     async (showInMenuBar: boolean) => {
       await runSettingsMutation(
@@ -389,6 +405,7 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
     loadSettings,
     updateMaxItems,
     updateMaxHistoryBytes,
+    updateMaxEventBytes,
     updateMenuBarVisibility,
     updateMenuBarItemLimit,
     updateRestoreOrdering,

@@ -93,6 +93,15 @@ pub struct HistoryDetail {
     pub html_preview: Option<String>,
     pub text_preview: Option<String>,
     pub rich_preview: Vec<crate::store::StoredPreviewSegment>,
+    pub file_items: Vec<FileDetailItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileDetailItem {
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub name: String,
+    pub path: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
