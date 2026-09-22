@@ -1,4 +1,4 @@
-//! Unix filesystem primitives for Copy Stack's private data.
+//! Unix filesystem primitives for ClipEcho's private data.
 //!
 //! The public helpers in this module deliberately do not include caller paths
 //! in their errors. A clipboard export path can contain user-controlled text,
@@ -468,7 +468,7 @@ pub fn create_private_temp_file(
             let mut temp_name = OsString::from(".");
             temp_name.push(file_name);
             temp_name.push(format!(
-                ".copy-stack-jsonl.{}.{}.{}.tmp",
+                ".clipecho-jsonl.{}.{}.{}.tmp",
                 std::process::id(),
                 generation,
                 attempt
@@ -1051,7 +1051,7 @@ mod tests {
         fn new(label: &str) -> Self {
             let sequence = NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "copy-stack-private-fs-test-{}-{}-{}",
+                "clipecho-private-fs-test-{}-{}-{}",
                 std::process::id(),
                 sequence,
                 label

@@ -8,6 +8,9 @@ The database is:
 $HOME/.copy_stack/copy_stack.db
 ```
 
+This legacy location is intentionally unchanged by the ClipEcho rename, which
+keeps existing history and settings available without a data migration.
+
 On the supported Unix/macOS path, startup:
 
 - creates or tightens `.copy_stack` to `0700`;

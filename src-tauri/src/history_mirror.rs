@@ -410,7 +410,7 @@ impl HistoryMirror {
         });
         let worker_shared = Arc::clone(&shared);
         let worker = thread::Builder::new()
-            .name("copy-stack-history-mirror".to_string())
+            .name("clipecho-history-mirror".to_string())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     worker_loop(&worker_shared);
@@ -879,7 +879,7 @@ mod tests {
         fn new(label: &str) -> Self {
             let sequence = NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "copy-stack-history-mirror-test-{}-{}-{}",
+                "clipecho-history-mirror-test-{}-{}-{}",
                 std::process::id(),
                 sequence,
                 label
@@ -978,7 +978,7 @@ mod tests {
                 entry
                     .file_name()
                     .to_string_lossy()
-                    .contains(".copy-stack-jsonl.")
+                    .contains(".clipecho-jsonl.")
             })
             .collect();
         assert!(leftovers.is_empty(), "temporary files remained");

@@ -154,7 +154,7 @@ const englishEventCount = (count: number) =>
   `${count} clipboard event${count === 1 ? "" : "s"}`;
 
 const englishOperationErrors: Record<Operation, string> = {
-  startup: "Copy Stack could not finish starting.",
+  startup: "ClipEcho could not finish starting.",
   capture_clipboard: "This clipboard item could not be saved.",
   load_history: "Clipboard history could not be loaded.",
   load_history_detail: "This clipboard preview could not be loaded.",
@@ -170,7 +170,7 @@ const englishOperationErrors: Record<Operation, string> = {
 };
 
 const simplifiedChineseOperationErrors: Record<Operation, string> = {
-  startup: "Copy Stack 无法完成启动。",
+  startup: "ClipEcho 无法完成启动。",
   capture_clipboard: "无法保存此剪贴板内容。",
   load_history: "无法加载剪贴板历史。",
   load_history_detail: "无法加载此剪贴板预览。",
@@ -185,7 +185,7 @@ const simplifiedChineseOperationErrors: Record<Operation, string> = {
 };
 
 const traditionalChineseOperationErrors: Record<Operation, string> = {
-  startup: "Copy Stack 無法完成啟動。",
+  startup: "ClipEcho 無法完成啟動。",
   capture_clipboard: "無法儲存此剪貼簿內容。",
   load_history: "無法載入剪貼簿歷史。",
   load_history_detail: "無法載入此剪貼簿預覽。",
@@ -205,7 +205,7 @@ const translations: Record<SupportedLanguage, Messages> = {
     backToHistory: "Back to clipboard history",
     backToHistoryShort: "Back to History",
     loadingSettings: "Loading settings...",
-    starting: "Starting Copy Stack...",
+    starting: "Starting ClipEcho...",
     storedItems: "Stored items",
     settingHelp: setting => `${setting} help`,
     storedItemsHelp:
@@ -229,7 +229,7 @@ const translations: Record<SupportedLanguage, Messages> = {
     languageDescriptionSystem: languageName =>
       `Use this computer's closest supported language (${languageName}).`,
     languageDescriptionManual:
-      "Use this language in Copy Stack instead of the system language.",
+      "Use this language in ClipEcho instead of the system language.",
     compactMode: "Compact mode",
     compactModeEnabled:
       "Only recognizable text is kept; image and file clips are ignored.",
@@ -316,7 +316,7 @@ const translations: Record<SupportedLanguage, Messages> = {
     generalSettings: "General",
     generalSettingsDescription: "Language and startup preferences.",
     appearanceSettings: "Appearance",
-    appearanceSettingsDescription: "Choose how Copy Stack looks.",
+    appearanceSettingsDescription: "Choose how ClipEcho looks.",
     theme: "Color theme",
     themeDescription: "Choose a light or dark appearance, or follow your Mac.",
     themeSystem: "System",
@@ -365,7 +365,7 @@ const translations: Record<SupportedLanguage, Messages> = {
     backToHistory: "返回剪贴板历史",
     backToHistoryShort: "返回主界面",
     loadingSettings: "正在加载设置...",
-    starting: "正在启动 Copy Stack...",
+    starting: "正在启动 ClipEcho...",
     storedItems: "存储数量",
     settingHelp: setting => `${setting}说明`,
     storedItemsHelp: "超出数量上限时，清理最旧的未固定记录。固定记录始终保留。",
@@ -386,7 +386,7 @@ const translations: Record<SupportedLanguage, Messages> = {
     systemDefault: "跟随系统",
     languageDescriptionSystem: languageName =>
       `根据这台电脑的语言设置，使用最接近的受支持语言（${languageName}）。`,
-    languageDescriptionManual: "在 Copy Stack 中使用此语言，不跟随系统语言。",
+    languageDescriptionManual: "在 ClipEcho 中使用此语言，不跟随系统语言。",
     compactMode: "精简模式",
     compactModeEnabled: "只保留可识别的文字；图片和文件不会被保存。",
     compactModeDisabled: "保留所有支持的剪贴板内容和格式。",
@@ -467,7 +467,7 @@ const translations: Record<SupportedLanguage, Messages> = {
     generalSettings: "通用",
     generalSettingsDescription: "管理语言与登录启动偏好。",
     appearanceSettings: "外观",
-    appearanceSettingsDescription: "选择 Copy Stack 的窗口外观。",
+    appearanceSettingsDescription: "选择 ClipEcho 的窗口外观。",
     theme: "颜色主题",
     themeDescription: "选择浅色、深色，或跟随 Mac 的系统外观。",
     themeSystem: "跟随系统",
@@ -514,7 +514,7 @@ const translations: Record<SupportedLanguage, Messages> = {
     backToHistory: "返回剪貼簿歷史",
     backToHistoryShort: "返回主畫面",
     loadingSettings: "正在載入設定...",
-    starting: "正在啟動 Copy Stack...",
+    starting: "正在啟動 ClipEcho...",
     storedItems: "儲存數量",
     settingHelp: setting => `${setting}說明`,
     storedItemsHelp: "超出數量上限時，清理最舊的未固定記錄。固定記錄始終保留。",
@@ -535,7 +535,7 @@ const translations: Record<SupportedLanguage, Messages> = {
     systemDefault: "跟隨系統",
     languageDescriptionSystem: languageName =>
       `依照這台電腦的語言設定，使用最接近的支援語言（${languageName}）。`,
-    languageDescriptionManual: "在 Copy Stack 中使用此語言，不跟隨系統語言。",
+    languageDescriptionManual: "在 ClipEcho 中使用此語言，不跟隨系統語言。",
     compactMode: "精簡模式",
     compactModeEnabled: "只保留可辨識的文字；圖片和檔案不會被儲存。",
     compactModeDisabled: "保留所有支援的剪貼簿內容和格式。",
@@ -616,7 +616,7 @@ const translations: Record<SupportedLanguage, Messages> = {
     generalSettings: "一般",
     generalSettingsDescription: "管理語言與登入啟動偏好。",
     appearanceSettings: "外觀",
-    appearanceSettingsDescription: "選擇 Copy Stack 的視窗外觀。",
+    appearanceSettingsDescription: "選擇 ClipEcho 的視窗外觀。",
     theme: "顏色主題",
     themeDescription: "選擇淺色、深色，或跟隨 Mac 的系統外觀。",
     themeSystem: "跟隨系統",

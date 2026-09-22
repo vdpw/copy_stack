@@ -8,6 +8,7 @@ use copy_event_listener::event::{Data, Event, Item};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
+// Persisted format tag: preserve compatibility with existing file history.
 pub(super) const FILE_DISPLAY_FORMAT: &str = "copy_stack.file-items.v1";
 const INLINE_ATTACHMENT_PLACEHOLDER: char = '\u{fffc}';
 

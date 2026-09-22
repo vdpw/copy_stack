@@ -2,7 +2,7 @@
 
 ## Context
 
-`Copy Stack` stores clipboard history in SQLite and renders the list in the Tauri UI. The history model must satisfy these product rules:
+`ClipEcho` stores clipboard history in SQLite and renders the list in the Tauri UI. The history model must satisfy these product rules:
 
 1. A newly observed copy event must appear at the top of ordinary history,
    following the pinned section.

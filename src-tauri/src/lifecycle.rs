@@ -172,6 +172,18 @@ pub(crate) fn set_autostart_enabled(
     Ok(actual)
 }
 
+#[cfg(any(test, all(target_os = "macos", not(debug_assertions))))]
+pub(crate) fn refresh_enabled_autostart(
+    backend: &impl AutostartBackend,
+) -> Result<(), LifecycleError> {
+    if read_autostart_enabled(backend)? {
+        // Reusing the same login-item key updates its executable without adding
+        // another item or enabling autostart for a user who left it disabled.
+        set_autostart_enabled(backend, true)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +284,7 @@ mod tests {
 
     struct FakeAutostart {
         enabled: Cell<bool>,
+        enable_calls: Cell<usize>,
         fail_read: bool,
         fail_write: bool,
         ignore_write: bool,
@@ -281,6 +294,7 @@ mod tests {
         fn new(enabled: bool) -> Self {
             Self {
                 enabled: Cell::new(enabled),
+                enable_calls: Cell::new(0),
                 fail_read: false,
                 fail_write: false,
                 ignore_write: false,
@@ -294,6 +308,7 @@ mod tests {
         }
 
         fn enable(&self) -> Result<(), ()> {
+            self.enable_calls.set(self.enable_calls.get() + 1);
             if self.fail_write {
                 return Err(());
             }
@@ -321,6 +336,48 @@ mod tests {
         assert_eq!(set_autostart_enabled(&backend, true), Ok(true));
         assert_eq!(read_autostart_enabled(&backend), Ok(true));
         assert_eq!(set_autostart_enabled(&backend, false), Ok(false));
+    }
+
+    #[test]
+    fn autostart_refresh_rewrites_an_enabled_login_item() {
+        let backend = FakeAutostart::new(true);
+
+        assert_eq!(refresh_enabled_autostart(&backend), Ok(()));
+        assert_eq!(backend.enable_calls.get(), 1);
+        assert!(backend.enabled.get());
+    }
+
+    #[test]
+    fn autostart_refresh_does_not_enable_a_disabled_login_item() {
+        let backend = FakeAutostart::new(false);
+
+        assert_eq!(refresh_enabled_autostart(&backend), Ok(()));
+        assert_eq!(backend.enable_calls.get(), 0);
+        assert!(!backend.enabled.get());
+    }
+
+    #[test]
+    fn autostart_refresh_does_not_write_when_enabled_state_is_unknown() {
+        let mut backend = FakeAutostart::new(true);
+        backend.fail_read = true;
+
+        assert_eq!(
+            refresh_enabled_autostart(&backend),
+            Err(LifecycleError::AutostartReadFailed)
+        );
+        assert_eq!(backend.enable_calls.get(), 0);
+    }
+
+    #[test]
+    fn autostart_refresh_propagates_write_failure() {
+        let mut backend = FakeAutostart::new(true);
+        backend.fail_write = true;
+
+        assert_eq!(
+            refresh_enabled_autostart(&backend),
+            Err(LifecycleError::AutostartWriteFailed)
+        );
+        assert!(backend.enabled.get());
     }
 
     #[test]

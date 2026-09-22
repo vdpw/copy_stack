@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 
-echo 🚀 Starting Copy Stack Desktop Application...
+echo 🚀 Starting ClipEcho Desktop Application...
 
 REM Check if pnpm is installed
 where pnpm >nul 2>nul
@@ -28,7 +28,7 @@ if not exist "node_modules" (
 )
 
 REM Start the desktop application
-echo 🖥️  Launching Copy Stack...
+echo 🖥️  Launching ClipEcho...
 pnpm desktop:dev
 
 pause 

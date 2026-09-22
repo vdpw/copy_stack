@@ -34,12 +34,13 @@ directory in macOS's per-user temporary area and point the debug build at a
 child directory:
 
 ```bash
-COPY_STACK_QA_RUN_DIR="$(mktemp -d)"
-COPY_STACK_QA_DATA_DIR="$COPY_STACK_QA_RUN_DIR/data" pnpm desktop:dev
+CLIPECHO_QA_RUN_DIR="$(mktemp -d)"
+COPY_STACK_QA_DATA_DIR="$CLIPECHO_QA_RUN_DIR/data" pnpm desktop:dev
 ```
 
-This override is compiled only with debug assertions. Relative paths are
-rejected, the resulting `copy_stack.db` still passes the private-file checks,
+The `COPY_STACK_QA_DATA_DIR` environment variable keeps its legacy name for
+existing QA scripts. This override is compiled only with debug assertions.
+Relative paths are rejected, the resulting `copy_stack.db` still passes the private-file checks,
 and release builds continue to use `$HOME/.copy_stack`. Do not substitute a
 fixed child directly under `/tmp` or `/private/tmp`: their public immediate
 parent is intentionally rejected. Reuse the generated directory for one QA
@@ -48,9 +49,9 @@ session, then remove it after the app exits.
 Optional JSONL flags:
 
 ```bash
-COPY_STACK_QA_DATA_DIR="$COPY_STACK_QA_RUN_DIR/data" pnpm desktop:dev -- \
+COPY_STACK_QA_DATA_DIR="$CLIPECHO_QA_RUN_DIR/data" pnpm desktop:dev -- \
   -- \
-  --copy-stack-history-jsonl "$COPY_STACK_QA_RUN_DIR/copy_stack_history.jsonl" \
+  --copy-stack-history-jsonl "$CLIPECHO_QA_RUN_DIR/clipecho-history.jsonl" \
   --copy-stack-history-jsonl-max-data-bytes 4096
 ```
 

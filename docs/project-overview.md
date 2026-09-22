@@ -2,7 +2,7 @@
 
 ## Product
 
-Copy Stack is a local-first macOS clipboard manager built with Tauri, React,
+ClipEcho is a local-first macOS clipboard manager built with Tauri, React,
 TypeScript, Rust, and SQLite. It captures eligible clipboard changes, stores a
 bounded local history, restores previous items, and exposes a small recent-item
 view through the menu bar.
@@ -63,7 +63,7 @@ persisted `max_history_bytes` setting, which defaults to 256 MiB. Cleanup remove
 the oldest rows until both limits are satisfied. Settings also contains the
 webview's Clear All action.
 
-On macOS, Settings opens from the Copy Stack application menu or with
+On macOS, Settings opens from the ClipEcho application menu or with
 `Command+,`; the menu bar tray also retains its Settings entry. The main
 content does not expose a History/Settings switcher. A top-left back button in
 Settings returns to History.
@@ -91,8 +91,9 @@ is limited to the highlighted row and 64 KiB.
 
 ## Data Privacy And Failure Model
 
-History lives at `$HOME/.copy_stack/copy_stack.db`. The directory is created or
-tightened to `0700`; the database, SQLite sidecars, JSONL output, and JSONL
+History retains its legacy location at `$HOME/.copy_stack/copy_stack.db` so the
+ClipEcho rename preserves existing history and settings. The directory is
+created or tightened to `0700`; the database, SQLite sidecars, JSONL output, and JSONL
 temporary files are created or tightened to `0600`. Unsafe symlink,
 non-regular, wrong-owner, multiply linked, or insecure targets are rejected
 instead of falling back to a public path.
@@ -112,7 +113,21 @@ launch at login, paging, and mirror fault behavior.
 
 ## Naming
 
-- Product name: Copy Stack.
-- Package name: `copy_stack`.
-- Tauri identifier: `com.copy-stack.desktop`.
+- Product name: ClipEcho.
+- Frontend package name: `clipecho`.
+- Rust package/binary name: `clip_echo`; Rust library name: `clip_echo_lib`.
+- Tauri identifier: `com.copy-stack.desktop` (retained for installed-app identity).
 - Clipboard event type: `copy_event_listener::event::Event`.
+
+The product rename preserves compatibility identifiers: the repository remains
+`vdpw/copy_stack`, existing checkouts can keep their `copy_stack` directory, data
+remains at `$HOME/.copy_stack/copy_stack.db`, and file-item payloads retain
+`copy_stack.file-items.v1`. Existing `--copy-stack-*` startup flags and the
+debug-only `COPY_STACK_QA_DATA_DIR` override also keep their names. These are
+storage, integration, and development contracts rather than product labels.
+
+The macOS login-item key also remains `Copy Stack` so existing enable/disable
+state refers to the same LaunchAgent. A release launch refreshes an already
+enabled item to the current executable path after the app rename; it never
+enables a disabled item. Debug builds skip this refresh to avoid redirecting
+the installed login item to a development binary.

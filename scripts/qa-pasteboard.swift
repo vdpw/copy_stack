@@ -65,7 +65,7 @@ private func restorePasteboard(from url: URL) throws {
 private func writeSyntheticScenario(_ scenario: String) throws {
     let item = NSPasteboardItem()
     item.setString(
-        "copy-stack synthetic qa \(scenario)",
+        "clipecho synthetic qa \(scenario)",
         forType: .string
     )
 

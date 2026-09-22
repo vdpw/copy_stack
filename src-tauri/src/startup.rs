@@ -3,6 +3,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 const DEFAULT_JSONL_MAX_DATA_BYTES: usize = 4096;
+// Keep existing launcher and script arguments valid across the ClipEcho rebrand.
 const JSONL_PATH_FLAG: &str = "--copy-stack-history-jsonl";
 const JSONL_MAX_DATA_BYTES_FLAG: &str = "--copy-stack-history-jsonl-max-data-bytes";
 pub(crate) const AUTOSTART_LAUNCH_FLAG: &str = "--copy-stack-autostart";
@@ -84,13 +85,13 @@ mod tests {
         let options = StartupOptions::from_args(os_args(&[
             "--ignored-tauri-flag",
             "--copy-stack-history-jsonl",
-            "/tmp/copy-stack.jsonl",
+            "/tmp/clipecho.jsonl",
             "--copy-stack-history-jsonl-max-data-bytes=32",
         ]))
         .expect("options should parse");
         let config = options.history_jsonl.expect("JSONL should be enabled");
 
-        assert_eq!(config.path, PathBuf::from("/tmp/copy-stack.jsonl"));
+        assert_eq!(config.path, PathBuf::from("/tmp/clipecho.jsonl"));
         assert_eq!(config.max_data_bytes, 32);
     }
 

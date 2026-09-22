@@ -50,7 +50,7 @@ struct TrayPreviewMenuDelegateIvars {
 
 define_class!(
     #[unsafe(super(NSObject))]
-    #[name = "CopyStackTrayPreviewMenuDelegate"]
+    #[name = "ClipEchoTrayPreviewMenuDelegate"]
     #[thread_kind = MainThreadOnly]
     #[ivars = TrayPreviewMenuDelegateIvars]
     struct TrayPreviewMenuDelegate;

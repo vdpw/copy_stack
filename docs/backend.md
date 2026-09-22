@@ -32,8 +32,10 @@ Important modules:
   versioned schema declarations, and command-facing payloads.
 - `tray.rs`: summary-only menu construction, preview text formatting, and tray
   actions, including Search opening History and focusing its search field;
-  macOS uses the dedicated monochrome `icons/tray-template.png` mask
-  rather than treating the opaque full-color application icon as a template.
+  macOS uses the dedicated monochrome `icons/tray-template.png` mask: a
+  36 × 36 transparent ClipEcho profile-and-echo symbol, displayed at 18 logical
+  points by the native tray implementation. Template mode lets macOS supply
+  the appropriate tint for light, dark, and selected menu states.
   A hidden tray skips menu construction and preview installation. When it is
   re-enabled, the menu is prepared, the native status item is recreated, and
   only then is the macOS preview delegate installed.
@@ -53,6 +55,9 @@ Important modules:
 - `--copy-stack-history-jsonl <path>` (or `=<path>`);
 - `--copy-stack-history-jsonl-max-data-bytes <bytes>` (default `4096`);
 - the internal `--copy-stack-autostart` flag.
+
+These legacy flag names remain supported after the ClipEcho rename so existing
+launch configurations continue to work.
 
 `lib.rs` registers the single-instance plugin first. A duplicate process calls
 only the existing-process callback, which shows, unminimizes, and focuses the

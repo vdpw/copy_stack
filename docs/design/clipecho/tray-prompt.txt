@@ -1,0 +1,6 @@
+Use case: precise-object-edit.
+Edit target: the provided ClipEcho icon. Convert it into its macOS menu-bar template symbol.
+Remove the entire midnight blue rounded-square background. Keep ONLY the existing right-facing nymph head-and-short-neck silhouette and the single echo arc behind it. Preserve the exact identity, pose, bun, forehead, nose, lips, chin, neck contour and relative arrangement of these two shapes. Do not invent a new face.
+Convert BOTH retained shapes to uniform solid opaque BLACK (#000000). No gradients, shading or texture. The removed background and ALL empty areas must be genuinely transparent alpha, not white, gray, a checkerboard or black. Do not retain any tile, frame or shadow. This output is an alpha-mask asset, not a full app icon.
+Optically center the combined head and arc on a square canvas. Enlarge the combined motif to occupy about 88% of the image height with clean 6% transparent margin above and below. Keep the face and echo arc separated by a clear gap. Slightly simplify subpixel facial indentations and keep the arc broad enough to remain distinct at an eventual 18-point native menu-bar size. Smooth precise antialiased silhouette; no stray pixels.
+Output only the monochrome isolated transparent symbol. No words, labels, mockup or presentation.

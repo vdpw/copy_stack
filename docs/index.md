@@ -1,4 +1,4 @@
-# Copy Stack Documentation Index
+# ClipEcho Documentation Index
 
 This directory holds the detailed project documentation. The root `AGENTS.md`
 is intentionally a compact menu; use this index to choose the right deeper

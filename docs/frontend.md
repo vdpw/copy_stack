@@ -134,8 +134,9 @@ bytes.
 
 Collapsed cards use the persisted bounded summary. UTF-8 text is normalized and
 truncated to 40 display columns, counting CJK/full-width characters as two.
-File/folder summaries use `copy_stack.file-items.v1`; the collapsed state shows
-one item plus a remaining count, and expansion shows the available item list.
+File/folder summaries retain the compatibility marker `copy_stack.file-items.v1`;
+the collapsed state shows one item plus a remaining count, and expansion shows
+the available item list.
 
 Expanded eligible cards request detail:
 

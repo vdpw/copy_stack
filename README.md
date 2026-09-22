@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="Copy Stack app icon">
+  <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="ClipEcho app icon">
 </p>
 
-<h1 align="center">Copy Stack</h1>
+<h1 align="center">ClipEcho</h1>
 
 <p align="center">
   A private, native-feeling clipboard history for macOS, built with Tauri, React, and Rust.
 </p>
 
-Copy Stack runs quietly in the menu bar, records eligible clipboard content in
+ClipEcho runs quietly in the menu bar, records eligible clipboard content in
 a local SQLite database, and lets you restore recent items without sending
 clipboard data to a remote service.
 
@@ -16,9 +16,10 @@ clipboard data to a remote service.
 
 | Clipboard history                                                                                 | Settings                                                    |
 | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| ![Copy Stack clipboard history containing synthetic examples](docs/images/copy-stack-history.png) | ![Copy Stack settings](docs/images/copy-stack-settings.png) |
+| ![ClipEcho clipboard history containing synthetic examples](docs/images/clipecho-history.png) | ![ClipEcho settings](docs/images/clipecho-settings.png) |
 
-> Every clipboard item shown in these screenshots is synthetic QA data.
+> These screenshots predate the ClipEcho rename. Every clipboard item shown is
+> synthetic QA data.
 
 ## Highlights
 
@@ -56,6 +57,8 @@ corepack enable
 pnpm install
 pnpm desktop:dev
 ```
+
+The GitHub repository and checkout directory retain their existing names.
 
 The development app uses the real macOS pasteboard. For isolated manual QA,
 follow the temporary-data workflow in
@@ -99,6 +102,11 @@ The default database is:
 ```text
 $HOME/.copy_stack/copy_stack.db
 ```
+
+This legacy path is retained so existing history and settings remain available
+after the ClipEcho rename. The bundle identifier, clipboard payload marker,
+and existing `--copy-stack-*` startup flags also remain compatible; see
+[`docs/project-overview.md`](docs/project-overview.md#naming).
 
 The data directory is restricted to the current user, but clipboard history is
 not encrypted at rest. Anyone who can access your macOS account may be able to
@@ -149,7 +157,7 @@ copy_stack/
 
 ## Platform Status
 
-Copy Stack currently targets macOS. Windows assets are generated for Tauri
+ClipEcho currently targets macOS. Windows assets are generated for Tauri
 packaging compatibility, but Windows clipboard behavior is not implemented or
 supported.
 
@@ -161,4 +169,4 @@ logs, and databases must contain synthetic data only.
 
 ## License
 
-Copy Stack is available under the [MIT License](LICENSE).
+ClipEcho is available under the [MIT License](LICENSE).
