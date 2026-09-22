@@ -21,6 +21,8 @@ Important modules:
 - `resource_policy.rs`: capture, preview, IPC, and history byte budgets.
 - `command_error.rs`: structured errors and bounded redacted diagnostics.
 - `private_fs.rs`: Unix ownership/type/link checks and `0700`/`0600` storage.
+- `storage_location.rs`: bootstrap storage-directory configuration and relocation recovery.
+- `storage_picker.rs`: main-thread native macOS directory chooser.
 - `history_mirror.rs`: coalescing asynchronous atomic JSONL snapshots.
 - `store/classification.rs`: pure representation priority, content identity,
   file-display parsing, and compact projection.
@@ -187,6 +189,7 @@ diagnostic ring without showing a global banner.
 - `max_items` and `max_history_bytes`;
 - `history_count`, `history_bytes`, and `history_limit_bytes`;
 - persisted `max_event_bytes` (default 32 MiB);
+- `storage_directory`, the currently active absolute database directory;
 - menu visibility, menu item limit, restore ordering, compact mode;
 - persisted and resolved language;
 - the persisted `theme` preference (`system`, `light`, or `dark`).
@@ -220,6 +223,16 @@ main-window capability synchronized.
 
 `get_autostart_status` and `set_autostart_enabled` operate on the OS login item
 and return verified state.
+
+`choose_storage_directory` opens a native directory-only picker and returns a
+path or `null` for cancellation. `set_storage_directory(directory)` runs the
+move on a blocking worker, holds the database mutex, and excludes the optional
+mirror worker's independent database reads until relocation finishes. On
+success both live connections and future startup use the new location; errors
+leave the old location authoritative. It returns complete `AppSettings` after
+commit. The `move_storage` operation has stable `storage_destination_exists`,
+`storage_permission_denied`, `storage_invalid_directory`, and
+`storage_move_failed` error codes. No raw filesystem errors enter diagnostics.
 
 `get_safe_diagnostics` returns at most 32 records. Each record contains only
 timestamp, app version, platform, architecture, enumerated error code,

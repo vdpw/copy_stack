@@ -20,6 +20,10 @@ const errorCodes = new Set<ErrorCode>([
   "autostart_verification_failed",
   "history_mirror_failed",
   "capture_rejected",
+  "storage_destination_exists",
+  "storage_permission_denied",
+  "storage_invalid_directory",
+  "storage_move_failed",
 ]);
 
 const operations = new Set<Operation>([
@@ -34,6 +38,7 @@ const operations = new Set<Operation>([
   "load_settings",
   "update_settings",
   "update_autostart",
+  "move_storage",
   "write_history_mirror",
 ]);
 

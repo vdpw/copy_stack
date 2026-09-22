@@ -26,6 +26,8 @@ mod pasteboard_protocol;
 mod private_fs;
 mod resource_policy;
 mod startup;
+mod storage_location;
+mod storage_picker;
 mod store;
 mod tray;
 #[cfg(target_os = "macos")]
@@ -734,6 +736,84 @@ fn get_app_settings(state: State<'_, AppState>) -> CommandResult<AppSettings> {
 }
 
 #[tauri::command]
+async fn choose_storage_directory(app: AppHandle) -> CommandResult<Option<String>> {
+    let current_directory = {
+        let state = app.state::<AppState>();
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| database_unavailable(&state, Operation::MoveStorage))?;
+        db.storage_directory()
+    };
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    app.run_on_main_thread(move || {
+        let _ = sender.try_send(storage_picker::choose_directory(&current_directory));
+    })
+    .map_err(|_| CommandError::state(Operation::MoveStorage))?;
+    receiver
+        .recv()
+        .await
+        .ok_or_else(|| CommandError::state(Operation::MoveStorage))?
+}
+
+#[tauri::command]
+async fn set_storage_directory(app: AppHandle, directory: String) -> CommandResult<AppSettings> {
+    // Moving a large database must not block the native UI event loop.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let mut db = state
+            .db
+            .lock()
+            .map_err(|_| database_unavailable(&state, Operation::MoveStorage))?;
+        // Read the response before the commit, so no later read failure can
+        // incorrectly report a successfully completed move as a failed move.
+        let mut settings = db
+            .get_settings()
+            .map_err(|_| database_error(&state, Operation::MoveStorage))?;
+        let directory = std::path::Path::new(&directory);
+        let move_result = if let Some(mirror) = &state.history_mirror {
+            mirror
+                .with_database_relocation(&directory.join("clipecho.db"), || {
+                    db.move_storage_directory(directory)
+                })
+                .map_err(|_| {
+                    record_command_error(
+                        &state,
+                        CommandError::new(
+                            ErrorCode::StorageMoveFailed,
+                            Operation::MoveStorage,
+                            false,
+                        ),
+                    )
+                })?
+        } else {
+            db.move_storage_directory(directory)
+        };
+        move_result.map_err(|error| {
+            use crate::storage_location::StorageMoveError;
+            let code = match error {
+                StorageMoveError::AlreadyExists => ErrorCode::StorageDestinationExists,
+                StorageMoveError::PermissionDenied => ErrorCode::StoragePermissionDenied,
+                StorageMoveError::InvalidPath => ErrorCode::StorageInvalidDirectory,
+                StorageMoveError::MoveFailed => ErrorCode::StorageMoveFailed,
+            };
+            record_command_error(
+                &state,
+                CommandError::new(code, Operation::MoveStorage, false),
+            )
+        })?;
+        settings.storage_directory = db.storage_directory();
+        drop(db);
+        // Post-commit notifications cannot turn a completed move into an error.
+        let _ = schedule_history_mirror(&state);
+        let _ = app.emit("clipboard-history-updated", ());
+        Ok(settings)
+    })
+    .await
+    .map_err(|_| CommandError::state(Operation::MoveStorage))?
+}
+
+#[tauri::command]
 fn get_startup_error(state: State<'_, StartupStatus>) -> CommandResult<Option<CommandError>> {
     state
         .latest_error
@@ -1371,6 +1451,8 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
             clear_all_events,
             copy_to_clipboard,
             get_app_settings,
+            choose_storage_directory,
+            set_storage_directory,
             get_safe_diagnostics,
             get_autostart_status,
             set_autostart_enabled,

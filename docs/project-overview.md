@@ -93,7 +93,7 @@ is limited to the highlighted row and 64 KiB.
 
 ## Data Privacy And Failure Model
 
-History lives at `$HOME/.copy_stack/copy_stack.db`. The directory is created or
+History lives at `$HOME/.clipecho/clipecho.db`. The directory is created or
 tightened to `0700`; the database, SQLite sidecars, JSONL output, and JSONL
 temporary files are created or tightened to `0600`. Unsafe symlink,
 non-regular, wrong-owner, multiply linked, or insecure targets are rejected

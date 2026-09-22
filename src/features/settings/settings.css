@@ -353,6 +353,29 @@
   overflow: visible;
 }
 
+.settings-storage-location {
+  flex-wrap: wrap;
+}
+
+.settings-storage-location .preference-copy {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.settings-storage-path {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.settings-storage-status {
+  flex-basis: 100%;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .preference-label-with-help {
   display: flex;
   align-items: center;

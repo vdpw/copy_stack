@@ -20,6 +20,9 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
+  const [movingStorage, setMovingStorage] = useState(false);
+  const storageBusyRef = useRef(false);
+  const settingsRequestRef = useRef(0);
   const [error, setError] = useState<TauriCommandError | null>(null);
   const retryRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
@@ -44,22 +47,28 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
   );
 
   const loadSettings = useCallback(async (): Promise<AppSettings | null> => {
+    if (storageBusyRef.current) {
+      return null;
+    }
+    const request = ++settingsRequestRef.current;
     setLoading(true);
     try {
       const loaded = await invokeCommand<AppSettings>(
         "get_app_settings",
         "load_settings"
       );
-      if (mountedRef.current) {
+      if (mountedRef.current && request === settingsRequestRef.current) {
         setSettings(loaded);
         setError(null);
         retryRef.current = null;
       }
       return loaded;
     } catch (caught) {
-      reportError(caught, "load_settings", () => {
-        void loadSettings();
-      });
+      if (request === settingsRequestRef.current) {
+        reportError(caught, "load_settings", () => {
+          void loadSettings();
+        });
+      }
       return null;
     } finally {
       if (mountedRef.current) {
@@ -86,7 +95,7 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
 
   const runSettingsMutation = useCallback(
     async (spec: MutationSpec, retry: () => void) => {
-      if (!settings || updating) {
+      if (!settings || updating || storageBusyRef.current) {
         return;
       }
 
@@ -251,7 +260,7 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
 
   const updateLanguage = useCallback(
     async (language: LanguagePreference) => {
-      if (!settings || updating) {
+      if (!settings || updating || storageBusyRef.current) {
         return;
       }
 
@@ -282,6 +291,48 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
     [reloadAfterFailure, reportError, settings, updating]
   );
 
+  const changeStorageDirectory = useCallback(async () => {
+    if (!settings || updating || autostartLoading || storageBusyRef.current) {
+      return;
+    }
+
+    storageBusyRef.current = true;
+    settingsRequestRef.current += 1;
+    setUpdating(true);
+    setError(null);
+    retryRef.current = null;
+    try {
+      const directory = await invokeCommand<string | null>(
+        "choose_storage_directory",
+        "move_storage"
+      );
+      if (directory === null || directory === settings.storage_directory) {
+        return;
+      }
+      if (mountedRef.current) {
+        setMovingStorage(true);
+      }
+      const moved = await invokeCommand<AppSettings>(
+        "set_storage_directory",
+        "move_storage",
+        { directory }
+      );
+      if (mountedRef.current) {
+        setSettings(moved);
+      }
+    } catch (caught) {
+      reportError(caught, "move_storage", () => {
+        void changeStorageDirectory();
+      });
+    } finally {
+      storageBusyRef.current = false;
+      if (mountedRef.current) {
+        setMovingStorage(false);
+        setUpdating(false);
+      }
+    }
+  }, [autostartLoading, reportError, settings, updating]);
+
   const loadAutostartStatus = useCallback(async () => {
     setAutostartLoading(true);
     setAutostartError(null);
@@ -309,6 +360,9 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
 
   const updateAutostart = useCallback(
     async (enabled: boolean) => {
+      if (storageBusyRef.current) {
+        return;
+      }
       const previous = autostartEnabled;
       setAutostartEnabled(enabled);
       setAutostartError(null);
@@ -398,6 +452,7 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
     settings,
     loading,
     updating,
+    movingStorage,
     error,
     autostartEnabled,
     autostartLoading,
@@ -412,6 +467,7 @@ export function useAppSettings(loadAutostart: boolean, enabled = true) {
     updateCompactMode,
     updateLanguage,
     updateTheme,
+    changeStorageDirectory,
     updateAutostart,
     reportError,
     retryError,

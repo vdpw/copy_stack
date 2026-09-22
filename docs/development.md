@@ -39,8 +39,10 @@ COPY_STACK_QA_DATA_DIR="$CLIPECHO_QA_RUN_DIR/data" pnpm desktop:dev
 ```
 
 This override is compiled only with debug assertions. Relative paths are
-rejected, the resulting `copy_stack.db` still passes the private-file checks,
-and release builds continue to use `$HOME/.copy_stack`. Do not substitute a
+rejected, the resulting `clipecho.db` still passes the private-file checks,
+and release builds use `$HOME/.clipecho` for bootstrap configuration and the
+default database. Storage changes within a QA run persist under this isolated
+bootstrap root. Do not substitute a
 fixed child directly under `/tmp` or `/private/tmp`: their public immediate
 parent is intentionally rejected. Reuse the generated directory for one QA
 session, then remove it after the app exits.
@@ -170,7 +172,7 @@ The following is a checklist, not a record of completed testing:
 15. Enable and disable launch at login and reopen Settings to verify OS state.
 16. Launch with the autostart flag and confirm the main window stays hidden
     while capture and the menu bar remain active.
-17. Verify `.copy_stack` is `0700` and database/sidecars/mirror are `0600`.
+17. Verify `.clipecho` is `0700` and database/sidecars/mirror are `0600`.
 18. Inject unsafe/unwritable private paths and slow/failing JSONL writes; verify
     safe errors, committed database mutations, complete last snapshot, and
     bounded exit.
@@ -209,6 +211,15 @@ The following is a checklist, not a record of completed testing:
     path appears under its name in smaller, secondary-color text, long paths
     wrap, and collapsed cards show names only. Repeat for Finder reference
     URLs and missing paths; unavailable paths must not be invented.
+27. In Clipboard settings, change Storage location to an empty owned folder.
+    Verify history, pins, settings, search, restore, subsequent captures, and
+    the optional JSONL mirror still work; the old database must be removed.
+    Restart with the same QA root and verify the selected path persists.
+    Cancel the picker, select the current directory, then try a directory with
+    `clipecho.db` or a SQLite sidecar, and an unwritable directory. Failures must
+    retain the old displayed/configured path and usable history, show a localized
+    reason, and never overwrite existing destination files. Exercise config-write
+    and source-delete failures in the Rust fault tests.
 
 Record the full Apple Silicon and Intel evidence matrix in
 `docs/security-release-checklist.md` before release. Native dual-architecture CI
@@ -217,11 +228,11 @@ does not mark that manual matrix complete.
 ## Local Database Inspection
 
 ```bash
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "PRAGMA user_version;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM app_metadata ORDER BY key;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT key, value FROM settings ORDER BY key;"
-sqlite3 "$HOME/.copy_stack/copy_stack.db" "SELECT substr(content_hash, 1, 12), data_type, is_pinned, byte_count, timestamp FROM clipboard_events ORDER BY is_pinned DESC, timestamp DESC, content_hash ASC LIMIT 10;"
-stat -f '%Sp %N' "$HOME/.copy_stack" "$HOME/.copy_stack/copy_stack.db"
+sqlite3 "$HOME/.clipecho/clipecho.db" "PRAGMA user_version;"
+sqlite3 "$HOME/.clipecho/clipecho.db" "SELECT key, value FROM app_metadata ORDER BY key;"
+sqlite3 "$HOME/.clipecho/clipecho.db" "SELECT key, value FROM settings ORDER BY key;"
+sqlite3 "$HOME/.clipecho/clipecho.db" "SELECT substr(content_hash, 1, 12), data_type, is_pinned, byte_count, timestamp FROM clipboard_events ORDER BY is_pinned DESC, timestamp DESC, content_hash ASC LIMIT 10;"
+stat -f '%Sp %N' "$HOME/.clipecho" "$HOME/.clipecho/clipecho.db"
 ```
 
 Use sanitized copies for migration testing. Never commit or attach real

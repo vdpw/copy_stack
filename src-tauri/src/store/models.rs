@@ -35,6 +35,7 @@ impl ThemePreference {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppSettings {
+    pub storage_directory: String,
     pub max_items: u32,
     pub max_history_bytes: u64,
     pub show_in_menu_bar: bool,

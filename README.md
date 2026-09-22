@@ -104,10 +104,14 @@ summaries at a time, while rich HTML and media detail is loaded on demand.
 The default database is:
 
 ```text
-$HOME/.copy_stack/copy_stack.db
+$HOME/.clipecho/clipecho.db
 ```
 
-The data directory is restricted to the current user, but clipboard history is
+Change the directory in **Settings > Clipboard > Storage location**. ClipEcho
+moves the database and keeps using the previous location if the move fails.
+The directory setting stays in `$HOME/.clipecho/storage.json`.
+
+The default data directory and database files are restricted to the current user, but clipboard history is
 not encrypted at rest. Anyone who can access your macOS account may be able to
 read it. Concealed/password-manager, transient, and auto-generated pasteboard
 items are skipped before they reach the database, tray, diagnostics, or JSONL

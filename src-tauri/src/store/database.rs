@@ -8,6 +8,7 @@ use crate::resource_policy::{
     MAX_DETAIL_IPC_BYTES, MAX_HTML_BYTES, MAX_PREVIEW_IMAGE_BYTES, MAX_PREVIEW_SEGMENTS,
 };
 use crate::resource_policy::{MAX_DISPLAY_BYTES, MAX_TRAY_PREVIEW_BYTES};
+use crate::storage_location::{self, StorageLocation, StorageMoveError, DB_FILE_NAME};
 use crate::store::classification::{
     self, ClassifiedEvent, FileDisplay, FileDisplayItem, FILE_DISPLAY_FORMAT,
 };
@@ -42,8 +43,6 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
-const APP_DATA_DIR: &str = ".copy_stack";
-const DB_FILE_NAME: &str = "copy_stack.db";
 const MAX_SOURCE_BUNDLE_ID_BYTES: usize = 255;
 const MAX_SEARCH_QUERY_CHARS: usize = 256;
 #[cfg(test)]
@@ -201,6 +200,15 @@ struct HistoryJsonlBytes {
 pub struct Database {
     conn: Connection,
     path: Option<PathBuf>,
+    location: Option<StorageLocation>,
+    file_identity: Option<crate::private_fs::PrivateFileIdentity>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum StorageMoveFailpoint {
+    Configuration,
+    SourceCleanup,
 }
 
 #[cfg(test)]
@@ -257,8 +265,9 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 impl Database {
     pub fn new(_app_handle: &AppHandle) -> Result<Self> {
-        let db_path = Self::database_path()?;
-        Self::open_private_database(&db_path)
+        let location =
+            StorageLocation::for_app().map_err(|_| Self::private_database_error("locate"))?;
+        Self::open_location(location)
     }
 
     #[cfg(test)]
@@ -266,21 +275,16 @@ impl Database {
         Self::open_private_database(path)
     }
 
-    fn database_path() -> Result<PathBuf> {
-        #[cfg(debug_assertions)]
-        if let Some(qa_data_dir) = std::env::var_os("COPY_STACK_QA_DATA_DIR") {
-            return Self::qa_database_path(Path::new(&qa_data_dir));
-        }
-
-        let home_dir = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
-            rusqlite::Error::InvalidParameterName(
-                "database home directory is unavailable".to_string(),
-            )
-        })?;
-        Ok(home_dir.join(APP_DATA_DIR).join(DB_FILE_NAME))
+    fn open_location(location: StorageLocation) -> Result<Self> {
+        let path = location
+            .database_path()
+            .map_err(|_| Self::private_database_error("read location"))?;
+        let mut db = Self::open_private_database(&path)?;
+        db.location = Some(location);
+        Ok(db)
     }
 
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(test)]
     fn qa_database_path(data_dir: &Path) -> Result<PathBuf> {
         if !data_dir.is_absolute() {
             return Err(rusqlite::Error::InvalidParameterName(
@@ -293,9 +297,13 @@ impl Database {
     fn open_private_database(path: &Path) -> Result<Self> {
         let path = crate::private_fs::prepare_sqlite_database(path)
             .map_err(|_| Self::private_database_error("prepare"))?;
+        let file_identity = crate::private_fs::PrivateFileIdentity::read(&path)
+            .map_err(|_| Self::private_database_error("identify"))?;
         let db = Self {
             conn: Connection::open(&path)?,
             path: Some(path.clone()),
+            location: None,
+            file_identity: Some(file_identity),
         };
 
         let schema_result = db.initialize_schema();
@@ -303,7 +311,128 @@ impl Database {
             .map_err(|_| Self::private_database_error("harden"));
         schema_result?;
         hardening_result?;
+        if !file_identity
+            .matches(&path)
+            .map_err(|_| Self::private_database_error("verify identity"))?
+        {
+            return Err(Self::private_database_error("verify identity"));
+        }
         Ok(db)
+    }
+
+    pub fn storage_directory(&self) -> String {
+        self.path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Called while capture and the independent history-mirror reader are
+    /// paused. The source stays live until all preparation and configuration
+    /// writes succeed. Deleting the source is the sole commit point.
+    pub fn move_storage_directory(
+        &mut self,
+        directory: &Path,
+    ) -> std::result::Result<(), StorageMoveError> {
+        self.move_storage_directory_with_failpoint(directory, None)
+    }
+
+    fn move_storage_directory_with_failpoint(
+        &mut self,
+        directory: &Path,
+        failpoint: Option<StorageMoveFailpoint>,
+    ) -> std::result::Result<(), StorageMoveError> {
+        let directory = storage_location::validate_directory(directory)?;
+        let source = self.path.clone().ok_or(StorageMoveError::InvalidPath)?;
+        let source_identity = self.file_identity.ok_or(StorageMoveError::InvalidPath)?;
+        if !source_identity.matches(&source)? {
+            return Err(StorageMoveError::InvalidPath);
+        }
+        let destination = directory.join(DB_FILE_NAME);
+        if source == destination {
+            return Ok(());
+        }
+        let location = self.location.clone().ok_or(StorageMoveError::InvalidPath)?;
+        storage_location::reject_existing_sqlite_files(&destination)?;
+        // Reserve the final name exclusively. VACUUM INTO accepts an empty
+        // existing file and produces a consistent snapshot across filesystems.
+        let destination_file = crate::private_fs::create_private_new_file(&destination)?;
+        let (busy, _, _): (i64, i64, i64) = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(|_| StorageMoveError::MoveFailed)?;
+        if busy != 0 {
+            return Err(StorageMoveError::MoveFailed);
+        }
+        let journal: String = self
+            .conn
+            .query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))
+            .map_err(|_| StorageMoveError::MoveFailed)?;
+        if !journal.eq_ignore_ascii_case("delete") {
+            return Err(StorageMoveError::MoveFailed);
+        }
+        crate::private_fs::harden_sqlite_files(&source)?;
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let mut sidecar = source.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            match std::fs::symlink_metadata(PathBuf::from(sidecar)) {
+                Ok(_) => return Err(StorageMoveError::MoveFailed),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        self.conn
+            .execute(
+                "VACUUM INTO ?1",
+                params![destination.to_str().ok_or(StorageMoveError::InvalidPath)?],
+            )
+            .map_err(|_| StorageMoveError::MoveFailed)?;
+        destination_file.sync_all()?;
+        let mut replacement =
+            Self::open_private_database(&destination).map_err(|_| StorageMoveError::MoveFailed)?;
+        let integrity: String = replacement
+            .conn
+            .query_row("PRAGMA quick_check", [], |row| row.get(0))
+            .map_err(|_| StorageMoveError::MoveFailed)?;
+        if integrity != "ok" {
+            return Err(StorageMoveError::MoveFailed);
+        }
+        crate::private_fs::sync_private_parent(&destination)?;
+        replacement.location = Some(location.clone());
+        let mut config = location.begin_move(&source, &destination, source_identity)?;
+        if failpoint == Some(StorageMoveFailpoint::Configuration) {
+            return Err(StorageMoveError::MoveFailed);
+        }
+        config.save_new_location()?;
+        if failpoint == Some(StorageMoveFailpoint::SourceCleanup) {
+            return Err(StorageMoveError::MoveFailed);
+        }
+        match source_identity.matches(&source) {
+            Ok(true) => {}
+            result => {
+                // Preserve the only verified copy and recovery identities if
+                // another process removed, replaced, or hid the source.
+                destination_file.retain();
+                return Err(result
+                    .err()
+                    .map(StorageMoveError::from)
+                    .unwrap_or(StorageMoveError::InvalidPath));
+            }
+        }
+        if let Err(error) = source_identity.remove_existing(&source) {
+            if source_identity.matches(&source) != Ok(true) {
+                destination_file.retain();
+            }
+            return Err(error.into());
+        }
+        // From this point onward every action is infallible or best effort.
+        destination_file.retain();
+        *self = replacement;
+        config.finish();
+        Ok(())
     }
 
     fn private_database_error(operation: &'static str) -> rusqlite::Error {
@@ -1128,6 +1257,7 @@ impl Database {
         let max_history_bytes = self.get_max_history_bytes()?;
         let history = self.get_history_stats()?;
         Ok(AppSettings {
+            storage_directory: self.storage_directory(),
             max_items: self.get_max_items()?,
             max_history_bytes,
             show_in_menu_bar: self.get_show_in_menu_bar()?,
@@ -2976,6 +3106,8 @@ mod tests {
         let db = Database {
             conn: Connection::open_in_memory().expect("in-memory database should open"),
             path: None,
+            location: None,
+            file_identity: None,
         };
         db.initialize_schema()
             .expect("in-memory schema should initialize");
@@ -3492,6 +3624,8 @@ mod tests {
             let db = Database {
                 conn: Connection::open(&path).expect("database should reopen"),
                 path: Some(path.clone()),
+                location: None,
+                file_identity: None,
             };
             assert!(
                 db.initialize_schema_with_failpoint(Some(failpoint))
@@ -3852,6 +3986,198 @@ mod tests {
         assert!(!error.contains(&symlink_path.to_string_lossy().into_owned()));
         assert!(!error.contains(&target.to_string_lossy().into_owned()));
         remove_database_files(&symlink_path);
+    }
+
+    #[cfg(unix)]
+    fn relocation_database(label: &str) -> (Database, StorageLocation, PathBuf) {
+        let fixture = temp_database_path(label);
+        let root = fixture.parent().unwrap().parent().unwrap().to_path_buf();
+        let location = StorageLocation::at_root(&root.join("bootstrap")).unwrap();
+        let db = Database::open_location(location.clone()).unwrap();
+        (db, location, root)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_relocation_preserves_history_pins_settings_search_and_restart() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut db, location, root) = relocation_database("move_success");
+        let original = db.path.clone().unwrap();
+        let target = root.join("chosen folder");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let fixture = event(vec![data(
+            "public.utf8-plain-text",
+            b"relocation searchable fixture",
+        )]);
+        db.insert_event(&fixture).unwrap();
+        let hash = db.event_content_hash(&fixture).unwrap().unwrap();
+        db.set_event_pinned(&hash, true).unwrap();
+        db.set_max_items(321).unwrap();
+        db.conn
+            .execute_batch("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;")
+            .unwrap();
+        db.set_move_restored_item_to_top(true).unwrap();
+        db.move_storage_directory(&target).unwrap();
+        assert!(!original.exists());
+        assert!(target.join("clipecho.db").exists());
+        assert_eq!(db.storage_directory(), target.to_str().unwrap());
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            std::fs::metadata(target.join(DB_FILE_NAME))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(db.get_max_items().unwrap(), 321);
+        assert!(db.get_move_restored_item_to_top().unwrap());
+        let rows = db.get_history_page(None, Some(50)).unwrap();
+        assert_eq!(rows.items.len(), 1);
+        assert!(rows.items[0].is_pinned);
+        assert_eq!(db.conn.query_row("SELECT COUNT(*) FROM clipboard_event_search WHERE clipboard_event_search MATCH 'searchable'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        db.move_storage_directory(&target).unwrap();
+        drop(db);
+        let reopened = Database::open_location(location).unwrap();
+        assert_eq!(reopened.storage_directory(), target.to_str().unwrap());
+        assert!(reopened.get_history_page(None, Some(50)).unwrap().items[0].is_pinned);
+        assert_eq!(reopened.get_max_items().unwrap(), 321);
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_relocation_rolls_back_configuration_and_source_cleanup_failures() {
+        for failpoint in [
+            StorageMoveFailpoint::Configuration,
+            StorageMoveFailpoint::SourceCleanup,
+        ] {
+            let (mut db, location, root) = relocation_database("move_rollback");
+            let original = db.path.clone().unwrap();
+            let target = root.join("destination");
+            db.set_max_items(345).unwrap();
+            assert_eq!(
+                db.move_storage_directory_with_failpoint(&target, Some(failpoint)),
+                Err(StorageMoveError::MoveFailed)
+            );
+            assert!(original.exists());
+            assert!(!target.join(DB_FILE_NAME).exists());
+            assert_eq!(db.path.as_ref(), Some(&original));
+            db.set_max_items(346).unwrap();
+            drop(db);
+            let reopened = Database::open_location(location).unwrap();
+            assert_eq!(reopened.path.as_ref(), Some(&original));
+            assert_eq!(reopened.get_max_items().unwrap(), 346);
+            drop(reopened);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_relocation_rejects_collisions_permissions_symlinks_and_relative_paths() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let (mut db, _location, root) = relocation_database("move_invalid");
+        let original = db.path.clone().unwrap();
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let target = root.join(format!("collision{suffix}"));
+            std::fs::create_dir(&target).unwrap();
+            let existing = target.join(format!("{DB_FILE_NAME}{suffix}"));
+            std::fs::write(&existing, b"existing data").unwrap();
+            assert_eq!(
+                db.move_storage_directory(&target),
+                Err(StorageMoveError::AlreadyExists)
+            );
+            assert_eq!(std::fs::read(existing).unwrap(), b"existing data");
+        }
+        let restricted = root.join("restricted");
+        std::fs::create_dir(&restricted).unwrap();
+        std::fs::set_permissions(&restricted, std::fs::Permissions::from_mode(0o500)).unwrap();
+        assert_eq!(
+            db.move_storage_directory(&restricted),
+            Err(StorageMoveError::PermissionDenied)
+        );
+        let linked = root.join("linked");
+        symlink(original.parent().unwrap(), &linked).unwrap();
+        assert!(db.move_storage_directory(&linked).is_err());
+        assert_eq!(
+            db.move_storage_directory(Path::new("relative")),
+            Err(StorageMoveError::InvalidPath)
+        );
+        assert_eq!(db.path.as_ref(), Some(&original));
+        std::fs::set_permissions(&restricted, std::fs::Permissions::from_mode(0o700)).unwrap();
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_relocation_config_failure_and_missing_custom_storage_never_switch_to_empty_history()
+    {
+        let (mut db, location, root) = relocation_database("move_config");
+        let original = db.path.clone().unwrap();
+        let target = root.join("target");
+        let config_path = original.parent().unwrap().join("storage.json");
+        std::fs::create_dir(&config_path).unwrap();
+        assert!(db.move_storage_directory(&target).is_err());
+        assert_eq!(db.path.as_ref(), Some(&original));
+        assert!(!target.join(DB_FILE_NAME).exists());
+        std::fs::remove_dir(&config_path).unwrap();
+        db.move_storage_directory(&target).unwrap();
+        drop(db);
+        std::fs::remove_file(target.join(DB_FILE_NAME)).unwrap();
+        assert!(Database::open_location(location).is_err());
+        assert!(!target.join(DB_FILE_NAME).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_relocation_rolls_back_when_source_directory_prevents_removal() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut db, location, root) = relocation_database("move_source_permission");
+        let first = root.join("first");
+        db.move_storage_directory(&first).unwrap();
+        db.set_max_items(234).unwrap();
+        std::fs::set_permissions(&first, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let next = root.join("next");
+        assert_eq!(
+            db.move_storage_directory(&next),
+            Err(StorageMoveError::PermissionDenied)
+        );
+        assert_eq!(db.storage_directory(), first.to_str().unwrap());
+        assert!(first.join(DB_FILE_NAME).exists());
+        assert!(!next.join(DB_FILE_NAME).exists());
+        std::fs::set_permissions(&first, std::fs::Permissions::from_mode(0o700)).unwrap();
+        drop(db);
+        let reopened = Database::open_location(location).unwrap();
+        assert_eq!(reopened.storage_directory(), first.to_str().unwrap());
+        assert_eq!(reopened.get_max_items().unwrap(), 234);
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_relocation_never_removes_a_source_replaced_since_open() {
+        let (mut db, _location, root) = relocation_database("source_replaced_before_move");
+        let original = db.path.clone().unwrap();
+        std::fs::rename(&original, original.with_extension("backup")).unwrap();
+        std::fs::write(&original, b"unrelated replacement").unwrap();
+        let target = root.join("destination");
+        assert_eq!(
+            db.move_storage_directory(&target),
+            Err(StorageMoveError::InvalidPath)
+        );
+        assert_eq!(std::fs::read(original).unwrap(), b"unrelated replacement");
+        assert!(!target.join(DB_FILE_NAME).exists());
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -4999,6 +5325,8 @@ mod tests {
         let db = Database {
             conn: Connection::open_in_memory().expect("in-memory database should open"),
             path: None,
+            location: None,
+            file_identity: None,
         };
         db.conn
             .execute_batch(

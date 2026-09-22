@@ -118,6 +118,10 @@ export interface Messages {
   clipboardSettings: string;
   clipboardSettingsDescription: string;
   storageSettings: string;
+  storageDirectory: string;
+  storageDirectoryHelp: string;
+  changeStorageDirectory: string;
+  movingStorage: string;
   behaviorSettings: string;
   pinItem: string;
   unpinItem: string;
@@ -173,6 +177,8 @@ const englishOperationErrors: Record<Operation, string> = {
   update_settings:
     "The setting could not be updated. Its saved value was restored.",
   update_autostart: "The login startup setting could not be updated.",
+  move_storage:
+    "The files could not be moved. Your data and storage location are unchanged.",
   write_history_mirror: "The optional history export could not be updated.",
 };
 
@@ -188,6 +194,7 @@ const simplifiedChineseOperationErrors: Record<Operation, string> = {
   load_settings: "无法加载设置。",
   update_settings: "无法更新设置，已恢复保存的值。",
   update_autostart: "无法更新登录启动设置。",
+  move_storage: "文件移动失败，数据和存储位置仍保留在原目录。",
   write_history_mirror: "无法更新可选的历史记录导出。",
 };
 
@@ -203,7 +210,38 @@ const traditionalChineseOperationErrors: Record<Operation, string> = {
   load_settings: "無法載入設定。",
   update_settings: "無法更新設定，已還原儲存的值。",
   update_autostart: "無法更新登入啟動設定。",
+  move_storage: "檔案移動失敗，資料和儲存位置仍保留在原目錄。",
   write_history_mirror: "無法更新選用的歷史記錄匯出。",
+};
+
+const storageErrors: Record<
+  SupportedLanguage,
+  Partial<Record<ErrorCode, string>>
+> = {
+  en: {
+    storage_destination_exists:
+      "The files could not be moved because the destination contains a file with the same name. Choose another folder. Your data and storage location are unchanged.",
+    storage_permission_denied:
+      "The files could not be moved because access was denied. Choose a folder you can write to. Your data and storage location are unchanged.",
+    storage_invalid_directory:
+      "The files could not be moved to this folder. Choose another folder. Your data and storage location are unchanged.",
+  },
+  "zh-CN": {
+    storage_destination_exists:
+      "文件移动失败：目标目录中存在同名文件，请选择其他目录。数据和存储位置仍保留在原目录。",
+    storage_permission_denied:
+      "文件移动失败：没有访问权限，请选择可写入的目录。数据和存储位置仍保留在原目录。",
+    storage_invalid_directory:
+      "文件移动失败：无法使用此目录，请选择其他目录。数据和存储位置仍保留在原目录。",
+  },
+  "zh-TW": {
+    storage_destination_exists:
+      "檔案移動失敗：目標目錄中存在同名檔案，請選擇其他目錄。資料和儲存位置仍保留在原目錄。",
+    storage_permission_denied:
+      "檔案移動失敗：沒有存取權限，請選擇可寫入的目錄。資料和儲存位置仍保留在原目錄。",
+    storage_invalid_directory:
+      "檔案移動失敗：無法使用此目錄，請選擇其他目錄。資料和儲存位置仍保留在原目錄。",
+  },
 };
 
 const translations: Record<SupportedLanguage, Messages> = {
@@ -346,6 +384,11 @@ const translations: Record<SupportedLanguage, Messages> = {
     clipboardSettingsDescription:
       "Manage capture behavior and retained history.",
     storageSettings: "Storage",
+    storageDirectory: "Storage location",
+    storageDirectoryHelp:
+      "Choosing a new folder moves your history and settings there. If the move fails, your data and storage location stay unchanged.",
+    changeStorageDirectory: "Change…",
+    movingStorage: "Moving files…",
     behaviorSettings: "Capture & behavior",
     unpinItem: "Unpin item",
     pinned: "Pinned",
@@ -366,9 +409,12 @@ const translations: Record<SupportedLanguage, Messages> = {
     diagnosticCopied: "Diagnostic copied.",
     diagnosticCopyFailed: "The diagnostic could not be copied.",
     commandError: (operation, code) =>
-      code === "restore_post_processing_failed"
-        ? "Copied, but the history or menu refresh failed."
-        : englishOperationErrors[operation],
+      operation === "move_storage"
+        ? (storageErrors.en[code ?? "unknown"] ??
+          englishOperationErrors.move_storage)
+        : code === "restore_post_processing_failed"
+          ? "Copied, but the history or menu refresh failed."
+          : englishOperationErrors[operation],
     reduceHistory: "Reduce stored history?",
     reduceHistoryDescription: (current, next, deleteCount) =>
       `Changing the storage limit from ${current} to ${next} will remove up to ${englishEventCount(deleteCount)}, starting with the oldest unpinned items. Pinned items will be kept.`,
@@ -505,6 +551,11 @@ const translations: Record<SupportedLanguage, Messages> = {
     clipboardSettings: "剪贴板",
     clipboardSettingsDescription: "管理采集行为与历史保留规则。",
     storageSettings: "存储",
+    storageDirectory: "存储位置",
+    storageDirectoryHelp:
+      "选择新目录后，会将历史记录和设置移动到该目录。移动失败时，数据和存储位置保持不变。",
+    changeStorageDirectory: "更改…",
+    movingStorage: "正在移动文件…",
     behaviorSettings: "采集与行为",
     unpinItem: "取消固定",
     pinned: "已固定",
@@ -525,9 +576,12 @@ const translations: Record<SupportedLanguage, Messages> = {
     diagnosticCopied: "诊断信息已复制。",
     diagnosticCopyFailed: "无法复制诊断信息。",
     commandError: (operation, code) =>
-      code === "restore_post_processing_failed"
-        ? "已复制，但历史记录或菜单刷新失败。"
-        : simplifiedChineseOperationErrors[operation],
+      operation === "move_storage"
+        ? (storageErrors["zh-CN"][code ?? "unknown"] ??
+          simplifiedChineseOperationErrors.move_storage)
+        : code === "restore_post_processing_failed"
+          ? "已复制，但历史记录或菜单刷新失败。"
+          : simplifiedChineseOperationErrors[operation],
     reduceHistory: "减少存储的历史记录？",
     reduceHistoryDescription: (current, next, deleteCount) =>
       `将存储上限从 ${current} 改为 ${next}，将从最旧的未固定项目开始，最多删除 ${deleteCount} 条记录，固定项目会保留。`,
@@ -664,6 +718,11 @@ const translations: Record<SupportedLanguage, Messages> = {
     clipboardSettings: "剪貼簿",
     clipboardSettingsDescription: "管理擷取行為與歷史保留規則。",
     storageSettings: "儲存",
+    storageDirectory: "儲存位置",
+    storageDirectoryHelp:
+      "選擇新目錄後，會將歷史記錄和設定移動到該目錄。移動失敗時，資料和儲存位置保持不變。",
+    changeStorageDirectory: "更改…",
+    movingStorage: "正在移動檔案…",
     behaviorSettings: "擷取與行為",
     unpinItem: "取消固定",
     pinned: "已固定",
@@ -684,9 +743,12 @@ const translations: Record<SupportedLanguage, Messages> = {
     diagnosticCopied: "診斷資訊已複製。",
     diagnosticCopyFailed: "無法複製診斷資訊。",
     commandError: (operation, code) =>
-      code === "restore_post_processing_failed"
-        ? "已複製，但歷史記錄或選單重新整理失敗。"
-        : traditionalChineseOperationErrors[operation],
+      operation === "move_storage"
+        ? (storageErrors["zh-TW"][code ?? "unknown"] ??
+          traditionalChineseOperationErrors.move_storage)
+        : code === "restore_post_processing_failed"
+          ? "已複製，但歷史記錄或選單重新整理失敗。"
+          : traditionalChineseOperationErrors[operation],
     reduceHistory: "減少儲存的歷史記錄？",
     reduceHistoryDescription: (current, next, deleteCount) =>
       `將儲存上限從 ${current} 改為 ${next}，將從最舊的未固定項目開始，最多刪除 ${deleteCount} 筆記錄，固定項目會保留。`,

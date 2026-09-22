@@ -24,6 +24,10 @@ pub enum ErrorCode {
     AutostartVerificationFailed,
     HistoryMirrorFailed,
     CaptureRejected,
+    StorageDestinationExists,
+    StoragePermissionDenied,
+    StorageInvalidDirectory,
+    StorageMoveFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -41,6 +45,7 @@ pub enum Operation {
     UpdateSettings,
     UpdateAutostart,
     WriteHistoryMirror,
+    MoveStorage,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

@@ -36,6 +36,8 @@ document for the task at hand.
   build issues.
 - `docs/qa/appearance-and-settings.md`: theme persistence, categorized settings,
   macOS appearance checks, and remaining manual coverage.
+- `docs/qa/storage-location.md`: directory relocation, failure rollback, and
+  local native verification evidence.
 
 ## Design Records
 
