@@ -104,7 +104,7 @@ impl TrayRefreshScheduler {
     fn start(app: AppHandle) -> Result<Self, &'static str> {
         let (sender, receiver) = mpsc::channel();
         std::thread::Builder::new()
-            .name("copy-stack-tray-refresh".to_string())
+            .name("clipecho-tray-refresh".to_string())
             .spawn(move || {
                 run_tray_refresh_worker(receiver, || {
                     if tray::sync(&app).is_err() {
@@ -493,7 +493,7 @@ fn copy_to_clipboard(
 }
 
 pub(crate) fn restore_event_to_clipboard(event: Event) -> Result<(), String> {
-    debug_log!("[copy_stack] writing clipboard event to pasteboard");
+    debug_log!("[clipecho] writing clipboard event to pasteboard");
     ClipboardListener::new()
         .set_clipboard_event(event)
         .map_err(|_| "CLIPBOARD_WRITE_FAILED".to_string())
@@ -641,7 +641,7 @@ fn build_app_menu<R: Runtime>(
                     &[
                         &PredefinedMenuItem::about(
                             app_handle,
-                            Some(strings.about_copy_stack),
+                            Some(strings.about_clipecho),
                             Some(about_metadata),
                         )?,
                         &PredefinedMenuItem::separator(app_handle)?,
@@ -649,10 +649,10 @@ fn build_app_menu<R: Runtime>(
                         &PredefinedMenuItem::separator(app_handle)?,
                         &PredefinedMenuItem::services(app_handle, Some(strings.services))?,
                         &PredefinedMenuItem::separator(app_handle)?,
-                        &PredefinedMenuItem::hide(app_handle, Some(strings.hide_copy_stack))?,
+                        &PredefinedMenuItem::hide(app_handle, Some(strings.hide_clipecho))?,
                         &PredefinedMenuItem::hide_others(app_handle, Some(strings.hide_others))?,
                         &PredefinedMenuItem::separator(app_handle)?,
-                        &PredefinedMenuItem::quit(app_handle, Some(strings.quit_copy_stack))?,
+                        &PredefinedMenuItem::quit(app_handle, Some(strings.quit_clipecho))?,
                     ],
                 )?,
                 &Submenu::with_items(
@@ -1009,18 +1009,18 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
     let event_app_handle = app_handle.clone();
 
     std::thread::Builder::new()
-        .name("copy-stack-event-store".to_string())
+        .name("clipecho-event-store".to_string())
         .spawn(move || {
             for event in rx {
-                debug_log!("[copy_stack] clipboard listener event received");
+                debug_log!("[clipecho] clipboard listener event received");
                 if !event.items.iter().any(|item| !item.data_list.is_empty()) {
-                    debug_log!("[copy_stack] skipped clipboard event with no data");
+                    debug_log!("[clipecho] skipped clipboard event with no data");
                     continue;
                 }
 
                 let state = event_app_handle.state::<AppState>();
                 if !assess_event(&event).should_record() {
-                    debug_log!("[copy_stack] skipped clipboard event by protocol policy");
+                    debug_log!("[clipecho] skipped clipboard event by protocol policy");
                     continue;
                 }
 
@@ -1033,7 +1033,7 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                             let _ = state
                                 .diagnostics
                                 .record(&CommandError::database(Operation::CaptureClipboard));
-                            debug_error!("[copy_stack] clipboard settings unavailable");
+                            debug_error!("[clipecho] clipboard settings unavailable");
                             continue;
                         }
                     },
@@ -1041,7 +1041,7 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                         let _ = state
                             .diagnostics
                             .record(&CommandError::state(Operation::CaptureClipboard));
-                        debug_error!("[copy_stack] database state unavailable");
+                        debug_error!("[clipecho] database state unavailable");
                         continue;
                     }
                 };
@@ -1056,7 +1056,7 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                 ) {
                     Ok(Some(event)) => event,
                     Ok(None) => {
-                        debug_log!("[copy_stack] skipped the app's restored clipboard event");
+                        debug_log!("[clipecho] skipped the app's restored clipboard event");
                         continue;
                     }
                     Err(rejection) => {
@@ -1073,7 +1073,7 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                                 size_bucket: rejection.size_bucket.code(),
                             },
                         );
-                        debug_log!("[copy_stack] rejected clipboard event by resource policy");
+                        debug_log!("[clipecho] rejected clipboard event by resource policy");
                         continue;
                     }
                 };
@@ -1081,18 +1081,18 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                 let prepared = match Database::prepare_history_event(&event, compact_mode) {
                     Ok(Some(prepared)) => prepared,
                     Ok(None) => {
-                        debug_log!("[copy_stack] skipped unsupported clipboard event");
+                        debug_log!("[clipecho] skipped unsupported clipboard event");
                         continue;
                     }
                     Err(_) => {
                         let _ = state
                             .diagnostics
                             .record(&CommandError::database(Operation::CaptureClipboard));
-                        debug_error!("[copy_stack] clipboard classification failed");
+                        debug_error!("[clipecho] clipboard classification failed");
                         continue;
                     }
                 };
-                debug_log!("[copy_stack] storing clipboard listener event");
+                debug_log!("[clipecho] storing clipboard listener event");
                 let insert_result = {
                     let db = match state.db.lock() {
                         Ok(db) => db,
@@ -1100,7 +1100,7 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                             let _ = state
                                 .diagnostics
                                 .record(&CommandError::state(Operation::CaptureClipboard));
-                            debug_error!("[copy_stack] database state unavailable");
+                            debug_error!("[clipecho] database state unavailable");
                             continue;
                         }
                     };
@@ -1110,18 +1110,18 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                 match insert_result {
                     Ok(true) => {
                         if schedule_history_mirror(&state).is_err() {
-                            debug_error!("[copy_stack] history mirror scheduling failed");
+                            debug_error!("[clipecho] history mirror scheduling failed");
                         }
                     }
                     Ok(false) => {
-                        debug_log!("[copy_stack] clipboard event filtered before persistence");
+                        debug_log!("[clipecho] clipboard event filtered before persistence");
                         continue;
                     }
                     Err(_) => {
                         let _ = state
                             .diagnostics
                             .record(&CommandError::database(Operation::CaptureClipboard));
-                        debug_error!("[copy_stack] clipboard persistence failed");
+                        debug_error!("[clipecho] clipboard persistence failed");
                         continue;
                     }
                 }
@@ -1132,23 +1132,23 @@ fn start_clipboard_event_pipeline(app_handle: AppHandle) -> Result<(), &'static 
                 );
                 if tray_refresh_scheduled.is_err() {
                     report_capture_tray_refresh_failure(&event_app_handle);
-                    debug_error!("[copy_stack] tray refresh scheduling failed");
+                    debug_error!("[clipecho] tray refresh scheduling failed");
                 }
                 if tray::notify_history_changed(&event_app_handle).is_err() {
                     report_capture_tray_refresh_failure(&event_app_handle);
-                    debug_error!("[copy_stack] history notification failed");
+                    debug_error!("[clipecho] history notification failed");
                 }
             }
         })
         .map_err(|_| "CLIPBOARD_EVENT_THREAD_START_FAILED")?;
 
     std::thread::Builder::new()
-        .name("copy-stack-listener".to_string())
+        .name("clipecho-listener".to_string())
         .spawn(move || {
-            debug_log!("[copy_stack] clipboard listener thread started");
+            debug_log!("[clipecho] clipboard listener thread started");
             let listener = ClipboardListener::new().with_interval(500);
             listener.run(move |event: Event| {
-                debug_log!("[copy_stack] clipboard listener captured event");
+                debug_log!("[clipecho] clipboard listener captured event");
                 let _ = tx.send(event);
             });
         })
@@ -1163,7 +1163,7 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Err(_error) = lifecycle::activate_main_window(app) {
                 debug_error!(
-                    "[copy_stack] second-instance activation failed: {}",
+                    "[clipecho] second-instance activation failed: {}",
                     _error.code()
                 );
             }
@@ -1187,7 +1187,7 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
             }
         })
         .setup(move |app| {
-            debug_log!("[copy_stack] Tauri setup started");
+            debug_log!("[clipecho] Tauri setup started");
             let app_handle = app.handle();
             app.manage(StartupStatus::default());
             if startup_options.had_invalid_arguments {
@@ -1223,7 +1223,7 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
                     return Ok(());
                 }
             };
-            debug_log!("[copy_stack] database initialized");
+            debug_log!("[clipecho] database initialized");
 
             match db.get_theme() {
                 Ok(theme) => app_handle.set_theme(native_theme(theme)),
@@ -1351,7 +1351,7 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
                     CommandError::new(ErrorCode::StartupFailed, Operation::Startup, false),
                 );
             } else {
-                debug_log!("[copy_stack] tray initialized");
+                debug_log!("[clipecho] tray initialized");
             }
 
             if start_clipboard_event_pipeline(app_handle.clone()).is_err() {
@@ -1398,7 +1398,7 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
                 lifecycle::activate_main_window_on_reopen(app_handle, *has_visible_windows)
             {
                 debug_error!(
-                    "[copy_stack] Dock reopen activation failed: {}",
+                    "[clipecho] Dock reopen activation failed: {}",
                     _error.code()
                 );
             }
@@ -1417,7 +1417,7 @@ pub fn run(startup_options: StartupOptions) -> Result<(), String> {
                             true,
                         );
                         let _ = state.diagnostics.record(&error);
-                        debug_error!("[copy_stack] history mirror shutdown failed");
+                        debug_error!("[clipecho] history mirror shutdown failed");
                     }
                 }
             }

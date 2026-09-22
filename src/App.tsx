@@ -34,8 +34,8 @@ function App() {
     document.documentElement.lang = language;
     document.title =
       activePage === "settings"
-        ? `${messages.settings} — Copy Stack`
-        : "Copy Stack";
+        ? `${messages.settings} — ClipEcho`
+        : "ClipEcho";
   }, [activePage, language, messages.settings]);
 
   useEffect(() => {

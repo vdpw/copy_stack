@@ -83,9 +83,9 @@ For a trusted downloaded artifact that still reports damage after being moved
 to `/Applications`, verify the signature before considering quarantine removal:
 
 ```bash
-codesign --verify --deep --strict --verbose=4 "/Applications/Copy Stack.app"
-xattr -dr com.apple.quarantine "/Applications/Copy Stack.app"
-open "/Applications/Copy Stack.app"
+codesign --verify --deep --strict --verbose=4 "/Applications/ClipEcho.app"
+xattr -dr com.apple.quarantine "/Applications/ClipEcho.app"
+open "/Applications/ClipEcho.app"
 ```
 
 ## Required Pre-Tag Evidence

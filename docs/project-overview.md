@@ -2,7 +2,7 @@
 
 ## Product
 
-Copy Stack is a local-first macOS clipboard manager built with Tauri, React,
+ClipEcho is a local-first macOS clipboard manager built with Tauri, React,
 TypeScript, Rust, and SQLite. It captures eligible clipboard changes, stores a
 bounded local history, restores previous items, and exposes a small recent-item
 view through the menu bar.
@@ -65,7 +65,7 @@ persisted `max_history_bytes` setting, which defaults to 256 MiB. Cleanup remove
 the oldest rows until both limits are satisfied. Settings also contains the
 webview's Clear All action.
 
-On macOS, Settings opens from the Copy Stack application menu or with
+On macOS, Settings opens from the ClipEcho application menu or with
 `Command+,`; the menu bar tray also retains its Settings entry. The main
 content does not expose a History/Settings switcher. A top-left back button in
 Settings returns to History.
@@ -114,7 +114,7 @@ launch at login, paging, and mirror fault behavior.
 
 ## Naming
 
-- Product name: Copy Stack.
-- Package name: `copy_stack`.
+- Product name: ClipEcho.
+- Package name: `clip_echo`.
 - Tauri identifier: `com.copy-stack.desktop`.
 - Clipboard event type: `copy_event_listener::event::Event`.

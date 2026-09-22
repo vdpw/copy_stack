@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="Copy Stack app icon">
+  <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="ClipEcho app icon">
 </p>
 
-<h1 align="center">Copy Stack</h1>
+<h1 align="center">ClipEcho</h1>
 
 <p align="center">
   A private, native-feeling clipboard history for macOS, built with Tauri, React, and Rust.
 </p>
 
-Copy Stack runs quietly in the menu bar, records eligible clipboard content in
+ClipEcho runs quietly in the menu bar, records eligible clipboard content in
 a local SQLite database, and lets you restore recent items without sending
 clipboard data to a remote service.
 
@@ -16,8 +16,8 @@ clipboard data to a remote service.
 
 | View | Light | Dark |
 | --- | --- | --- |
-| Clipboard history | ![Light clipboard history with pinned items and expanded file paths](docs/images/copy-stack-history-light.jpg) | ![Dark clipboard history with pinned items and expanded file paths](docs/images/copy-stack-history-dark.jpg) |
-| Clipboard settings | ![Light clipboard settings with a maximum item size in MiB](docs/images/copy-stack-settings-light.jpg) | ![Dark clipboard settings with a maximum item size in MiB](docs/images/copy-stack-settings-dark.jpg) |
+| Clipboard history | ![Light clipboard history with pinned items and expanded file paths](docs/images/clipecho-history-light.jpg) | ![Dark clipboard history with pinned items and expanded file paths](docs/images/clipecho-history-dark.jpg) |
+| Clipboard settings | ![Light clipboard settings with a maximum item size in MiB](docs/images/clipecho-settings-light.jpg) | ![Dark clipboard settings with a maximum item size in MiB](docs/images/clipecho-settings-dark.jpg) |
 
 > Every clipboard item shown in these screenshots is synthetic QA data.
 
@@ -156,7 +156,7 @@ copy_stack/
 
 ## Platform Status
 
-Copy Stack currently targets macOS. Windows assets are generated for Tauri
+ClipEcho currently targets macOS. Windows assets are generated for Tauri
 packaging compatibility, but Windows clipboard behavior is not implemented or
 supported.
 
@@ -168,4 +168,4 @@ logs, and databases must contain synthetic data only.
 
 ## License
 
-Copy Stack is available under the [MIT License](LICENSE).
+ClipEcho is available under the [MIT License](LICENSE).

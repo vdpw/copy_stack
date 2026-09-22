@@ -2988,7 +2988,7 @@ mod tests {
             .expect("system time should be after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "copy_stack_history_{}_{}.jsonl",
+            "clipecho_history_{}_{}.jsonl",
             std::process::id(),
             now
         ))
@@ -3000,7 +3000,7 @@ mod tests {
             .expect("system time should be after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "copy_stack_preview_{}_{}.png",
+            "clipecho_preview_{}_{}.png",
             std::process::id(),
             now
         ))
@@ -3012,7 +3012,7 @@ mod tests {
             .expect("system time should be after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "copy_stack_preview_{}_{}.mov",
+            "clipecho_preview_{}_{}.mov",
             std::process::id(),
             now
         ))
@@ -3027,7 +3027,7 @@ mod tests {
             .expect("system time should be after epoch")
             .as_nanos();
         let root =
-            std::env::temp_dir().join(format!("copy_stack_{label}_{}_{}", std::process::id(), now));
+            std::env::temp_dir().join(format!("clipecho_{label}_{}_{}", std::process::id(), now));
         let data_dir = root.join("data");
         std::fs::create_dir(&root).expect("private test root should be created");
         std::fs::create_dir(&data_dir).expect("private test data directory should be created");
@@ -3856,7 +3856,7 @@ mod tests {
 
     #[test]
     fn qa_database_override_accepts_only_an_absolute_directory() {
-        let absolute = std::env::temp_dir().join("copy-stack-qa-data");
+        let absolute = std::env::temp_dir().join("clipecho-qa-data");
         assert_eq!(
             Database::qa_database_path(&absolute).unwrap(),
             absolute.join(DB_FILE_NAME)

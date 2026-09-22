@@ -5,7 +5,7 @@ explanations in `docs/` and load them on demand.
 
 ## What This Project Is
 
-`copy_stack` is a Tauri 2 desktop clipboard manager. The UI is React 18,
+`ClipEcho` is a Tauri 2 desktop clipboard manager. The UI is React 18,
 TypeScript, and Vite in `src/`; the backend is Rust in `src-tauri/`; clipboard
 capture comes from the local path dependency `../../copy_event_listener`; local
 history and settings are stored in SQLite via `rusqlite`.

@@ -84,13 +84,13 @@ mod tests {
         let options = StartupOptions::from_args(os_args(&[
             "--ignored-tauri-flag",
             "--copy-stack-history-jsonl",
-            "/tmp/copy-stack.jsonl",
+            "/tmp/clipecho.jsonl",
             "--copy-stack-history-jsonl-max-data-bytes=32",
         ]))
         .expect("options should parse");
         let config = options.history_jsonl.expect("JSONL should be enabled");
 
-        assert_eq!(config.path, PathBuf::from("/tmp/copy-stack.jsonl"));
+        assert_eq!(config.path, PathBuf::from("/tmp/clipecho.jsonl"));
         assert_eq!(config.max_data_bytes, 32);
     }
 

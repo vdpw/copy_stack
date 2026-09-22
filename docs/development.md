@@ -34,8 +34,8 @@ directory in macOS's per-user temporary area and point the debug build at a
 child directory:
 
 ```bash
-COPY_STACK_QA_RUN_DIR="$(mktemp -d)"
-COPY_STACK_QA_DATA_DIR="$COPY_STACK_QA_RUN_DIR/data" pnpm desktop:dev
+CLIPECHO_QA_RUN_DIR="$(mktemp -d)"
+COPY_STACK_QA_DATA_DIR="$CLIPECHO_QA_RUN_DIR/data" pnpm desktop:dev
 ```
 
 This override is compiled only with debug assertions. Relative paths are
@@ -48,9 +48,9 @@ session, then remove it after the app exits.
 Optional JSONL flags:
 
 ```bash
-COPY_STACK_QA_DATA_DIR="$COPY_STACK_QA_RUN_DIR/data" pnpm desktop:dev -- \
+COPY_STACK_QA_DATA_DIR="$CLIPECHO_QA_RUN_DIR/data" pnpm desktop:dev -- \
   -- \
-  --copy-stack-history-jsonl "$COPY_STACK_QA_RUN_DIR/copy_stack_history.jsonl" \
+  --copy-stack-history-jsonl "$CLIPECHO_QA_RUN_DIR/clipecho-history.jsonl" \
   --copy-stack-history-jsonl-max-data-bytes 4096
 ```
 

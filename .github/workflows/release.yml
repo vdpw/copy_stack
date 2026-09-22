@@ -81,7 +81,7 @@ jobs:
         with:
           args: ${{ matrix.args }}
           tagName: ${{ github.ref_name }}
-          releaseName: Copy Stack ${{ github.ref_name }}
+          releaseName: ClipEcho ${{ github.ref_name }}
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
           generateReleaseNotes: true

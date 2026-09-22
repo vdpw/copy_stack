@@ -46,7 +46,7 @@ not participate in the content hash.
 
 ## Combination Precedence
 
-Copy Stack uses the strictest event-wide result:
+ClipEcho uses the strictest event-wide result:
 
 1. Concealed, including the 1Password marker.
 2. Transient, including the three proprietary transient markers.
@@ -61,7 +61,7 @@ deterministic for tests and diagnostics:
 - Source or remote never overrides a skip marker.
 - Remote by itself is not transient and remains recordable.
 
-Copy Stack does not read source metadata from an event after a skip marker has
+ClipEcho does not read source metadata from an event after a skip marker has
 been found. Skip-marker payloads are never inspected.
 
 ## Source Semantics
@@ -81,7 +81,7 @@ first source marker in pasteboard item order is authoritative. A malformed
 first marker is treated as unknown; a later marker is not used to replace it.
 
 Source metadata is informational only. It never participates in normalized
-content hashing or ordering. Copy Stack must not infer source from the active
+content hashing or ordering. ClipEcho must not infer source from the active
 application, resolve an unrelated foreground process, or create an
 application-private source marker.
 

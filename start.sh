@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Copy Stack Desktop Application Startup Script
+# ClipEcho Desktop Application Startup Script
 
-echo "🚀 Starting Copy Stack Desktop Application..."
+echo "🚀 Starting ClipEcho Desktop Application..."
 
 # Check if pnpm is installed
 if ! command -v pnpm &>/dev/null; then
@@ -25,5 +25,5 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # Start the desktop application
-echo "🖥️  Launching Copy Stack..."
+echo "🖥️  Launching ClipEcho..."
 pnpm desktop:dev

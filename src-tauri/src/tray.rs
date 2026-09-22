@@ -53,7 +53,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
 
     TrayIconBuilder::with_id(TRAY_ID)
         .menu(&built_menu.menu)
-        .tooltip("Copy Stack")
+        .tooltip("ClipEcho")
         .show_menu_on_left_click(true)
         .icon(icon)
         .icon_as_template(true)
@@ -279,7 +279,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<BuiltTrayMenu<R>, String
         .enabled(!events.is_empty())
         .build(app)
         .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
-    let quit = MenuItemBuilder::with_id(QUIT_ID, strings.quit_copy_stack)
+    let quit = MenuItemBuilder::with_id(QUIT_ID, strings.quit_clipecho)
         .build(app)
         .map_err(|_| ERROR_MENU_BUILD_FAILED.to_string())?;
 

@@ -1,8 +1,8 @@
-# Copy Stack vNext 开发计划
+# ClipEcho vNext 开发计划
 
 ## 目标
 
-Copy Stack 当前版本已经完成：
+ClipEcho 当前版本已经完成：
 
 -   macOS clipboard 监听
 -   Rust/Tauri backend

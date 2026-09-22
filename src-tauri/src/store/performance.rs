@@ -41,7 +41,7 @@ impl FixtureRoot {
             .expect("system clock should be after the Unix epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "copy-stack-perf-{}-{}-{item_count}-{unique}",
+            "clipecho-perf-{}-{}-{item_count}-{unique}",
             std::process::id(),
             profile.name()
         ));

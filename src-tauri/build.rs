@@ -23,5 +23,5 @@ fn main() {
             "set_theme",
         ]),
     ))
-    .expect("failed to build Copy Stack with scoped command permissions");
+    .expect("failed to build ClipEcho with scoped command permissions");
 }

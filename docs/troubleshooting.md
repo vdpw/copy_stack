@@ -42,7 +42,7 @@ is unavailable.
 
 ## A Second Launch Does Not Create A New Window
 
-This is expected. Copy Stack is single-instance. The later process exits before
+This is expected. ClipEcho is single-instance. The later process exits before
 database, listener, tray, or mirror setup and asks the existing process to show,
 unminimize, and focus its main window.
 
