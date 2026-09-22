@@ -185,3 +185,15 @@ retain gaps for physical trackpad momentum, live system appearance changes,
 accessibility appearance preferences, and complete native tray interaction.
 See [v0.3.0 evidence](qa/release-v0.3.0.md) for scope and measurements.
 The release remains ad-hoc signed and not notarized.
+
+## Direct release: v0.4.0 (2026-09-22)
+
+The release owner requested direct publication of v0.4.0. The release proceeds
+with the incomplete manual coverage documented in
+[the v0.4.0 release record](qa/release-v0.4.0.md); pending manual rows are not
+claimed as passing. The native Apple Silicon and Intel tag-triggered workflows
+retain all automated gates. This decision applies only to v0.4.0.
+
+The product rename does not migrate the old login item. Disable Launch at Login
+in Copy Stack and quit it before replacement, then enable it in ClipEcho if
+desired. The database location and bundle identifier remain unchanged.
